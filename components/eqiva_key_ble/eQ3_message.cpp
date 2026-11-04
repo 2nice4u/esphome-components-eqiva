@@ -173,7 +173,8 @@ std::string eQ3Message::StatusRequestMessage::encode(ClientState *state) {
     std::stringstream ss;
     time_t theTime = time(nullptr);
     struct tm *aTime = localtime(&theTime);
-    ss.put((char) (aTime->tm_year - 2000));
+    // patch: tm_year zählt ab 1900 -> Jahr seit 2000 = tm_year - 100 (vorher tm_year - 2000 = Unsinn)
+    ss.put((char) (aTime->tm_year - 100));
     ss.put((char) (aTime->tm_mon + 1));
     ss.put((char) (aTime->tm_mday));
     ss.put((char) (aTime->tm_hour));

@@ -1,0 +1,326 @@
+# Changelog – Eqiva Smart Lock (ESPHome)
+
+Alle Dateien mit derselben Versionsnummer gehören zusammen:
+`eqiva-smart-lock-1.yaml`, `-fingerprint.yaml`, `-status-led.yaml`, `-stats.yaml`, `-schedule.yaml`, `-simulation.yaml`,
+`eqiva-smart-lock-guide.js` und der Ordner `eqiva_components/`.
+Die Version steht in jeder Datei oben in der Kopfzeile, in der Web-GUI neben „Anleitung & Hilfe“
+und im Start-Log (`patched v…`).
+
+## Versionsnummern
+
+**Hauptversion.Nebenversion.Korrektur**, z. B. 1.3.0:
+
+| Stelle | Wird erhöht bei | Was du tun musst |
+|---|---|---|
+| Korrektur (1.3.**1**) | Fehlerbehebung, kleine Ergänzung | Dateien ersetzen, flashen |
+| Nebenversion (1.**4**.0) | neue Funktion oder neues Paket, Einstellungen bleiben | Dateien ersetzen, flashen |
+| Hauptversion (**2**.0.0) | neu pairen, neu verkabeln, Einstellungen gehen verloren oder eigene YAMLs müssen angepasst werden | siehe „⚠️ Handlungsbedarf“ |
+
+Versionen mit **„⚠️ Handlungsbedarf“** verlangen mehr als Ersetzen und Flashen.
+Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlungsbedarf ist dort nachgetragen.
+
+**Eigene Kopien der Hauptdatei** (z. B. `eqiva-smart-lock-2.yaml`) nie durch die neue Hauptdatei ersetzen –
+dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `guide.js` und `eqiva_components/`
+werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
+
+## 2.1.0 – 2026-11-04
+
+### Neu
+- **„Person umbenennen“** mit Feld **„Neuer Name“**: alle Finger der Person behalten Platz, Hand, Finger und Aktion.
+- Existiert der neue Name schon: Rückfrage, erneut drücken innerhalb von 10 s **führt beide Personen zusammen**.
+  Haben beide denselben Finger (Hand + Finger), wird abgelehnt mit Angabe der Plätze („erst einen davon löschen“).
+- Wird ein Name länger und passt die Sicherung im Sensor nicht mehr, wird abgelehnt.
+
+## 2.0.0 – 2026-11-04
+
+### Neu
+- **16 Personen** (vorher 8), Zuordnung für **alle Plätze 0–199** des R503 (vorher 0–39).
+- Wie viele Finger zugeordnet werden können, bestimmt die Sicherung im Notizspeicher (512 Byte):
+  ca. 55 bei kurzen Namen. **Passt eine neue Zuordnung nicht mehr hinein, wird das Anlernen abgelehnt** –
+  schon vor dem Scannen (ebenso beim Zuordnen).
+- **Warnung bei unter 10 % Rest** (Personen, Sicherung im Sensor, Plätze im R503): ⚠️ in „Letzte Aktion“,
+  „⚠️ fast voll“ am Ende der Übersicht, Warnung im Log.
+- Nach dem Anlernen zeigt „Letzte Aktion“, wie viele Finger noch möglich sind.
+- Beim Anlernen werden nur Plätze genommen, die auch im Sensor frei sind (alte Abdrücke ohne Zuordnung
+  werden nicht mehr überschrieben).
+
+### Geändert
+- „Angelernte Finger“ nach Speicherplatz sortiert: `#0 St R-Daumen ⇄ · #1 St L-Daumen ⇄ · #8 ohne Zuordnung`.
+  Passt nicht alles in 255 Zeichen, endet die Zeile mit „+N weitere (siehe Log)“.
+- Speicherformat im Notizspeicher **FP2** (Person als Hex-Ziffer 0–F). FP1 wird weiterhin gelesen.
+
+### ⚠️ Handlungsbedarf
+- Das Speicherformat auf dem ESP ist neu – nach dem Flashen ist die Zuordnung dort zunächst leer und wird
+  beim Start **automatisch aus dem Notizspeicher des Sensors übernommen** (seit 1.9.0 dort gesichert).
+  Nach dem Update prüfen, ob „Angelernte Finger“ wieder vollständig ist; sonst „Zuordnung aus Sensor laden“ drücken.
+
+## 1.10.1 – 2026-11-04
+
+### Geändert
+- Anlernen mit klarer Ring-Rückmeldung: **lila atmend** = Finger auflegen, **2× grün** = Bild ok
+  (abheben und erneut auflegen), **2× gelb** = schief aufgelegt. Vorher durchgehend lila.
+- „Fingerprint: Letzte Aktion“ zeigt beim Anlernen den Fortschritt („Bild 2 von 5 ok“).
+
+## 1.10.0 – 2026-11-04
+
+### Geändert
+- „Angelernte Finger“ kompakter: je Person und Finger, beide Hände mit gleicher Aktion zusammengefasst –
+  z. B. `Max: Daumen L+R ⇄ · Anna: Daumen L+R ⇄`. Speicherplätze stehen weiterhin im Log.
+
+### Entfernt
+- Web-Export/-Import der Zuordnung („Zuordnung exportieren“, „Zuordnung (Export)“, „Zuordnung (Import)“,
+  „Zuordnung importieren“) – ersetzt durch den Notizspeicher des R503 (am echten Sensor bestätigt).
+
+### Hinweis
+- In Home Assistant erscheinen die vier entfernten Entitäten danach als „nicht verfügbar“ und können dort gelöscht werden.
+
+## 1.9.0 – 2026-11-04
+
+### Neu
+- Zuordnung wird zusätzlich im **Notizspeicher des R503** gesichert (512 Byte, Befehle 0x18/0x19 laut
+  Handbuch V1.4.1) – automatisch einige Sekunden nach jeder Änderung, nur wenn sich etwas geändert hat.
+  Schläft der Sensor, wird er kurz geweckt; klappt es nicht, wird beim nächsten Scan nachgeholt.
+- Beim Start liest der ESP den Notizspeicher: **ESP ohne Zuordnung übernimmt die des Sensors** automatisch
+  (Sensor an neuen ESP umziehen ohne Handgriff). Hat der ESP eine Zuordnung, gilt diese und wird im Sensor gesichert.
+- Button **„Zuordnung aus Sensor laden“**.
+- **Belegungstabelle** des R503 (Befehl 0x1F): „Angelernte Finger“ zeigt auch belegte Plätze ohne Zuordnung
+  (`ohne Zuordnung: #3, #5`).
+
+### Hinweise
+- Die Sensor-Befehle laufen direkt über die serielle Leitung (an ESPHome vorbei) und blockieren kurz
+  (bis ca. 1 s beim Sichern). Eine Log-Warnung „took a long time“ ist dabei unbedenklich.
+- Der Fingerabdruck-Export (Rohdaten) wurde bewusst **nicht** umgesetzt (biometrische Daten).
+
+## 1.8.0 – 2026-11-04
+
+### Neu
+- Fingerzuordnung **exportieren/importieren** in der Web-GUI (für ESP-Wechsel oder als Sicherung):
+  „Zuordnung exportieren“ → Text in „Zuordnung (Export)“ (und im Log),
+  „Zuordnung (Import)“ + „Zuordnung importieren (2× drücken)“.
+  Format: `FP1|Name0,Name1,…|Platz:PersonHandFingerAktion,…` – passt bis ca. 20 Finger in 255 Zeichen.
+- Personennamen dürfen kein `,` oder `|` enthalten (wird automatisch durch Leerzeichen ersetzt).
+
+## 1.7.0 – 2026-11-04
+
+### Neu
+- **„Klingel-Pause“** einstellbar (0–600 s, Standard 30 s), vorher fest 30 s.
+- R503-Ring zeigt auch Bedienung **ohne Finger** (HA, Web-GUI, Zeitplan, Schlüssel/Knauf):
+  grün atmend = zugeschlossen, rot atmend = aufgeschlossen, blau atmend = geöffnet (je 2×).
+  Abschaltbar mit „Ring-Anzeige bei Bedienung ohne Finger“ (Standard an).
+
+## 1.6.0 – 2026-11-04
+
+### Neu
+- Auswahl **„Klingel-Anzeige“** (Fingerprint Einstellungen): Regenbogen (Standard), Weiß atmen,
+  Blau blinken, Rot/Blau Wechsel, Gelb/Grün Wechsel oder Aus. Jeweils ca. 3 s.
+
+## 1.5.4 – 2026-11-04
+
+### Geändert
+- Klingel am R503-Ring als **Regenbogen** (rot, gelb, grün, cyan, blau, lila – 2 Durchläufe, ca. 3 s)
+  statt weiß atmend.
+
+## 1.5.3 – 2026-11-04
+
+### Geändert
+- R503: Die 2-s-Bestätigung nach der Motorfahrt zeigt jetzt das Ergebnis –
+  **grün = verriegelt**, **rot = aufgeschlossen/geöffnet** (vorher immer grün).
+- Status-LED am ESP passend dazu: **grün = verriegelt**, **rot = aufgeschlossen** (vorher umgekehrt),
+  blau = geöffnet, orange pulsierend = Motor läuft, unbekannt jetzt lila blinkend (vorher rot).
+- Anleitung: Ring-Farben und Status-LED aktualisiert.
+
+## 1.5.2 – 2026-11-04
+
+### Behoben
+- Beim Anlernen wurde ein schief aufgelegter Finger als „unbekannt“ gewertet und die Klingel vorgemerkt
+  (nur die Klingel-Pause hat sie verhindert). Während des Anlernens wird jetzt nie geklingelt,
+  eine vorgemerkte Klingel wird beim Start des Anlernens verworfen.
+- Beim Anlernen überschrieb das blaue „Finger wird gelesen“ das lila Anlern-Licht. Jetzt bleibt es lila.
+
+## 1.5.1 – 2026-11-03
+
+### Behoben
+- Testmodus, Energiemodus „Sparsam“: Die simulierte Verbindung wurde direkt nach dem Verbinden wieder
+  getrennt (Zeit-Unterlauf), dadurch dauerte „Umschalten“ unnötig länger.
+
+### Geändert
+- Klingel wird auch bei **schlecht aufgelegtem** Finger (gelb) vorgemerkt – mit derselben Verzögerung,
+  ein danach erkannter Finger bricht sie ab.
+- HA-Event `esphome.eqiva_smart_lock_fingerprint` ist jetzt optional (`fp_ha_events`, Standard `"false"`).
+  Damit verschwinden die Warnungen „event dropped“. Für die Klingel reicht die Entität „Klingel“.
+
+### Optional
+- Wer das HA-Event nutzt: `fp_ha_events: "true"` unter `substitutions` der Hauptdatei setzen und in HA bei der
+  ESPHome-Integration „Dem Gerät erlauben, Home-Assistant-Aktionen auszuführen“ einschalten.
+
+## 1.5.0 – 2026-11-03
+
+### Neu
+- **Klingel bei unbekanntem Finger** (Schalter, Standard aus) mit **„Klingel-Verzögerung“** (Standard 5 s):
+  wird in dieser Zeit ein bekannter Finger erkannt, klingelt es nicht (eigener Finger schlecht gelesen).
+  Danach 30 s Klingel-Pause.
+- Event-Entität **„Klingel“** (`device_class: doorbell`) – kommt in Home Assistant ohne Zusatzrechte an.
+  Das bisherige HA-Event `esphome.eqiva_smart_lock_fingerprint` bleibt zusätzlich bestehen.
+
+### Geändert
+- R503-Ring: blau = Finger wird gelesen, grün atmend = erkannt/Aktion läuft (für alle Aktionen),
+  grün 2 s = bestätigt, rot atmend = nicht erkannt, rot blinkend = Fehler, lila blinkend = abgewiesen/gesperrt,
+  gelb blinkend = schlecht aufgelegt, weiß atmend = Klingel.
+- „Nur Klingel“-Finger lösen dieselbe Klingel aus (Entität + Event).
+- Anleitung: Ring-Farben und Klingel aktualisiert.
+
+## 1.4.0 – 2026-11-03
+
+### Neu
+- **Testmodus** ohne Schloss: `use_simulation: "true"` in der Hauptdatei. Die Komponente
+  (`simulate: true`) baut keine BLE-Verbindung auf und bildet das Schloss nach – Zuschließen,
+  Aufschließen, Öffnen mit MOVING und Fahrzeit, Sparmodus mit simuliertem Verbindungsaufbau.
+- Paket `eqiva-smart-lock-simulation.yaml` (nur im Testmodus geladen): „Simulation: Fahrzeit“ und
+  „Simulation: Schloss erreichbar“ (aus = Befehle verfallen, testet die Fehleranzeige).
+- „Einrichtungsstatus“ zeigt im Testmodus 🧪 TESTMODUS.
+- Anleitung: Abschnitt „10. Testmodus“.
+
+### Optional für eigene Kopien der Hauptdatei
+- Testmodus nutzen: `use_simulation: "false"` unter `substitutions`, `simulate: ${use_simulation}`
+  unter `eqiva_key_ble:` und den Paket-Eintrag für `eqiva-smart-lock-simulation.yaml` übernehmen.
+  Ohne diese Zeilen läuft alles wie bisher.
+
+## 1.3.1 – 2026-11-03
+
+### Dokumentation
+- Grenzen dokumentiert (Anleitung in der Web-GUI, README, Kopf der Fingerprint-YAML):
+  8 Personen, 40 Finger mit Zuordnung, 200 Abdrücke im R503, Übersicht ab ca. 12 Fingern gekürzt.
+- Hinweis: für Haushalte gedacht, nicht als Zutrittskontrolle für Firmen.
+
+## 1.3.0 – 2026-11-03
+
+### Neu
+- Pakete oben in der Hauptdatei per Schalter ein-/ausschalten:
+  `use_fingerprint`, `use_status_led`, `use_stats`, `use_schedule` (`true`/`false`).
+  Technisch über `!include` mit `condition:` – ein ausgeschaltetes Paket wird gar nicht geladen.
+
+### Geändert
+- `packages:` als Liste mit Bedingung statt einzelner Zeilen zum Auskommentieren.
+  **Benötigt eine ESPHome-Version mit `condition` für Pakete.**
+
+### ⚠️ Handlungsbedarf
+- In eigenen Kopien der Hauptdatei den kompletten `packages:`-Block durch den neuen ersetzen
+  und oben unter `substitutions` die vier Zeilen `use_fingerprint` … `use_schedule` ergänzen.
+
+## 1.2.4 – 2026-11-03
+
+### Neu
+- Web-GUI: **„Speicherplatz löschen“** mit Feld „Speicherplatz (Nr.)“ – löscht jeden Platz 0–199,
+  auch alte Finger ohne Zuordnung.
+- Web-GUI: **„Alle Finger löschen (2× drücken)“** – Sicherung: zweiter Druck innerhalb von 10 s.
+
+## 1.2.3 – 2026-11-03
+
+### Neu
+- „Angelernte Finger“ zeigt den Speicherplatz (`R-Daumen ⇄ #3`).
+- Ausführliche Liste Platz → Person/Hand/Finger/Aktion im Log nach jedem Start und jeder Änderung.
+
+## 1.2.2 – 2026-11-03
+
+### Neu
+- Fingerprint: Button **„Letzten Finger zuordnen“** – früher angelernte Finger ohne Zuordnung
+  (Anzeige „Platz X (ohne Zuordnung)“) nachträglich Person/Hand/Finger/Aktion zuweisen, ohne neu anzulernen.
+- Anleitung um den Ablauf ergänzt.
+
+## 1.2.1 – 2026-11-03
+
+### Behoben
+- Kompilierfehler „call of overloaded RestoringGlobalsComponent … is ambiguous“ bei den
+  Fingerprint-Globals `fp_map` und `fp_persons` (Startwert jetzt mit Typ angegeben).
+
+### Geändert
+- Web-GUI-Anmeldung mit `type: digest` statt `basic` (Passwort nicht mehr im Klartext übers Netz).
+
+### Empfohlen
+- In eigenen Kopien der Hauptdatei unter `web_server:` → `auth:` die Zeile `type: digest` ergänzen
+  (sonst nur eine Warnung; ab ESPHome 2027.1 ohnehin Standard).
+
+## 1.2.0 – 2026-11-02
+
+### Neu
+- Paket **Zeitplan** (`eqiva-smart-lock-schedule.yaml`): zwei Zeitpläne mit Uhrzeit, Wochentagen
+  (Text, z. B. `Mo-Fr`, `Sa,So`, `täglich`) und Aktion (Zuschließen/Aufschließen), alles in der Web-GUI.
+- Anzeige „Zeitplan“: nächster Termin und letztes Ergebnis (✓/✗), nur bei Änderung gesendet.
+- Bis zu 3 Wiederholungen im Minutenabstand, wenn das Schloss nicht bestätigt.
+- Uhrzeit per SNTP (Zeitzone/Server als Substitution), ersatzweise von Home Assistant.
+- Anleitung: Abschnitt „9. Zeitplan“.
+
+### ⚠️ Handlungsbedarf
+- Neue Datei `eqiva-smart-lock-schedule.yaml` in den ESPHome-Ordner kopieren.
+- In eigenen Kopien der Hauptdatei unter `packages:` die Zeile für das Zeitplan-Paket ergänzen
+  (ab 1.3.0 ersetzt durch den neuen `packages:`-Block).
+
+## 1.1.1 – 2026-11-02
+
+### Neu
+- Pinbelegung aller Pakete zentral als `substitutions` in der Hauptdatei
+  (R503, Status-LED, reserviert: Reedkontakt GPIO4, Taster GPIO3, Wiegand GPIO0/1).
+- R503-Stromabschaltung über PNP-Transistor (BC559C/BC327): `sensor_power_pin` (invertiert),
+  Sensor nur bei Berührung an, `idle_period_to_sleep: 40s`.
+- Status-LED: mehrere WS2812 in Reihe über `status_led_count`.
+
+### Geändert
+- Standard-Pins R503: TX GPIO20, RX GPIO21, WAKEUP GPIO6, Strom GPIO7.
+
+### ⚠️ Handlungsbedarf
+- Pinbelegung prüfen: Wer den R503 noch nach 1.0.0 verkabelt hat (TX GPIO7, RX GPIO6, WAKEUP GPIO5),
+  muss die Pins in den Substitutions der Hauptdatei anpassen oder umverkabeln.
+- Ohne PNP-Transistor: in `eqiva-smart-lock-fingerprint.yaml` `sensor_power_pin` und `idle_period_to_sleep` entfernen.
+- In eigenen Kopien der Hauptdatei den Pin-Block unter `substitutions` übernehmen.
+
+## 1.1.0 – 2026-11-02
+
+### Neu
+- Fingerprint: Anlernen über **Person + Hand + Finger** statt Speicherplatz-Nummer.
+  Gleiche Auswahl erneut anlernen überschreibt denselben Platz.
+- Aktion pro Finger: Standard, Umschalten, Aufschließen, Zuschließen, Öffnen, Nur Klingel, Gesperrt.
+- **Umschalten**: zu → öffnen (beachtet „Türgriff außen“), offen → zuschließen;
+  ohne Verbindung wird zuerst der aktuelle Status geholt.
+- Ring-Rückmeldung: atmen in Aktionsfarbe während der Ausführung, 2 s Dauerlicht bei Bestätigung,
+  rot blinkend bei Fehler/Zeitüberschreitung (35 s).
+- Scan-Pause nach einer Aktion (einstellbar, Standard 3 s) – kein doppeltes Umschalten.
+- Text-Sensoren „Angelernte Finger“ (Übersicht) und „Fingerprint: Letzte Aktion“ (mit Uhrzeit).
+- Buttons „Aktion übernehmen“ und „Finger löschen“; HA-Aktion `fp_enroll` mit Person/Hand/Finger/Aktion.
+- HA-Event enthält den Fingernamen; neues Ergebnis `doorbell`.
+- Anleitung: Abschnitt „8. Fingerprint“ mit Aktionen und Ring-Farben.
+
+### Geändert
+- „Aktion bei gültigem Finger“ → „Standard-Aktion (Finger ohne Zuordnung)“ (neu einstellen, Standard „Öffnen“).
+- „Letzte Finger-ID“ und „Letzte Übereinstimmung“ in die Diagnose verschoben.
+
+### Entfernt
+- „Anlern-Slot (Finger-ID)“ und „Finger in Slot löschen“ (ersetzt durch die Finger-Auswahl).
+
+### ⚠️ Handlungsbedarf
+- „Standard-Aktion (Finger ohne Zuordnung)“ prüfen – steht nach dem Update auf „Öffnen“.
+- Vorhandene Finger laufen als „ohne Zuordnung“ weiter; zuordnen (ab 1.2.2 „Letzten Finger zuordnen“)
+  oder neu anlernen.
+- Automationen in HA, die die entfernten Entitäten nutzen, anpassen (das Event enthält `finger_id` weiterhin).
+
+## 1.0.0 – 2026-11-02
+
+Erste versionierte Fassung.
+
+### Komponente (eqiva_key_ble, gepatcht)
+- Sicherer User Key aus dem Hardware-Zufallsgenerator.
+- Befehle verfallen nach `command_timeout`, haben Vorrang vor Status-Abfragen.
+- Watchdog: Nonce-Retry, Write-Timeout, Neuaushandeln nach Auth-Fehler, Reset beim Disconnect.
+- Speicherfehler behoben (Initialwerte, `delete` statt `free`, Null-Checks, Längenprüfung).
+- Keine Schlüssel mehr im Log; Sensoren nur bei Änderung veröffentlicht.
+- Klare Meldungen „nicht im Pairing-Modus“ / „nicht angelernt“, kein Dauer-Reconnect.
+- Energiemodi Schnell/Ausgewogen/Sparsam, live umschaltbar; schneller Verbindungsaufbau.
+- Optionaler RSSI-Sensor; Auslöser `on_paired`.
+- Pairing mit anderem Schloss trennt zuerst die alte Verbindung.
+
+### Konfiguration
+- MAC/Keys nur in der Web-GUI, Auto-Übernahme nach dem Pairing, Pairing-Info und Einrichtungsstatus.
+- Auswahl „Türgriff außen“ (Knauf/Türklinke) für die Öffnen-Funktion.
+- Pakete: R503-Fingerprint, WS2812-Status-LED, Statistik.
+- Flash-schonend (`flash_write_interval: 5min`, Statistik im RAM), wenig HA-Traffic.
+- Log-Stufe zur Laufzeit umschaltbar.
+- Anleitung als aufklappbarer Text in der Web-GUI (ohne Entitäten).

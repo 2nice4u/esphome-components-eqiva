@@ -5,6 +5,7 @@ from esphome.components import esp32_ble_tracker, esp32_ble_client
 from esphome.const import (
     CONF_ID,
     CONF_MAC_ADDRESS,
+    CONF_TRIGGER_ID,
 )
 
 CONF_EQIVA_KEY_BLE_ID = "eqiva_key_ble_id"
@@ -15,8 +16,11 @@ CONF_CARD_KEY = "card_key"
 CONF_TURN_LEFT = "turn_left"
 CONF_KEY_HORIZONTAL = "key_horizontal"
 CONF_LOCK_TURNS = "lock_turns"
+CONF_COMMAND_TIMEOUT = "command_timeout"
+CONF_ON_PAIRED = "on_paired"
+CONF_SIMULATE = "simulate"
 
-AUTO_LOAD = ["esp32_ble_client", "text_sensor"]
+AUTO_LOAD = ["esp32_ble_client", "text_sensor", "sensor"]
 DEPENDENCIES = ["esp32_ble_tracker"]
 CODEOWNERS = ["@digaus"]
 
@@ -31,6 +35,7 @@ EqivaPair = eqiva_key_ble_ns.class_("EqivaPair", automation.Action)
 EqivaConnect = eqiva_key_ble_ns.class_("EqivaConnect", automation.Action)
 EqivaDisconnect = eqiva_key_ble_ns.class_("EqivaDisconnect", automation.Action)
 EqivaSettings = eqiva_key_ble_ns.class_("EqivaSettings", automation.Action)
+PairedTrigger = eqiva_key_ble_ns.class_("PairedTrigger", automation.Trigger.template(cg.int_))
 
 CONFIG_SCHEMA = cv.ensure_list(
     cv.Schema(
@@ -39,6 +44,14 @@ CONFIG_SCHEMA = cv.ensure_list(
             cv.Optional(CONF_MAC_ADDRESS): cv.templatable(cv.mac_address),
             cv.Optional(CONF_USER_ID, default=255): cv.one_of(0, 1, 2, 3, 4, 5, 6, 7, 255),
             cv.Optional(CONF_USER_KEY, default=""): cv.string,
+            # Patch: wartende Befehle (z.B. "open") verfallen nach dieser Zeit
+            cv.Optional(CONF_COMMAND_TIMEOUT, default="20s"): cv.positive_time_period_milliseconds,
+            # Simulation: kein echtes Schloss, Zustände werden nachgebildet (Testaufbau)
+            cv.Optional(CONF_SIMULATE, default=False): cv.boolean,
+            # Patch: Automation, wenn das Schloss ein Pairing bestätigt hat (Variable: user_id)
+            cv.Optional(CONF_ON_PAIRED): automation.validate_automation(
+                {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(PairedTrigger)}
+            ),
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -56,6 +69,11 @@ async def to_code(configs):
         cg.add(var.set_user_id(config[CONF_USER_ID]))
         cg.add(var.set_user_key(config[CONF_USER_KEY]))
         cg.add(var.set_auto_connect(True))
+        cg.add(var.set_command_timeout(config[CONF_COMMAND_TIMEOUT]))
+        cg.add(var.set_simulate(config[CONF_SIMULATE]))
+        for conf in config.get(CONF_ON_PAIRED, []):
+            trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
+            await automation.build_automation(trigger, [(cg.int_, "user_id")], conf)
 
 
 @automation.register_action(

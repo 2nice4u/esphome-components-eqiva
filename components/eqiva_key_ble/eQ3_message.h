@@ -27,6 +27,7 @@ public:
         char id;
         std::string data;
         Message(std::string data = "");
+        virtual ~Message() = default;  // patch: erlaubt sauberes delete über Basisklassen-Zeiger
         virtual std::string encode(ClientState *state);
         bool isSecure();
         static bool isTypeSecure(char type);
