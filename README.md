@@ -1,3 +1,38 @@
+# esphome-components-eqiva (Fork mit Stabilitäts-, Sicherheits- und Komfort-Patches)
+
+Fork von [digaus/esphome-components-eqiva](https://github.com/digaus/esphome-components-eqiva).
+Protokoll und Verschlüsselung sind unverändert. Die wichtigsten Änderungen:
+
+- **Sicherheit:** User Key beim Pairing aus dem Hardware-Zufallsgenerator (vorher per `rand()` erratbar), keine Schlüssel mehr im Log
+- **Zuverlässigkeit:** Watchdog für verlorene Antworten, Befehle verfallen statt verspätet ausgeführt zu werden, Speicherfehler und Abstürze behoben
+- **Energiemodi:** Schnell / Ausgewogen / Sparsam, live umschaltbar
+- **Neu:** RSSI-Sensor der Verbindung, `on_paired`-Auslöser, klare Meldungen bei fehlendem Pairing oder Pairing-Modus
+- **Beispiel-Konfiguration** mit Web-GUI-Anleitung, Pairing-Info, optionalem R503-Fingerprint und Status-LED in [`examples/`](examples/)
+
+Alle Details: [FORK-CHANGES.md](FORK-CHANGES.md)
+
+## Einsatzbereich und Grenzen
+
+Gedacht für **private Haushalte und kleine Gruppen**, nicht als Zutrittskontrolle für Firmen.
+
+| Was | Grenze |
+|---|---|
+| Personen (Fingerprint) | 16, Name max. 15 Zeichen |
+| Finger mit Zuordnung (Person/Hand/Finger/Aktion) | ca. 55 (begrenzt durch die Sicherung im Notizspeicher des R503, 512 Byte; abhängig von der Namenslänge) – darüber wird das Anlernen abgelehnt |
+| Abdrücke im R503 | 200 (Plätze 0–199) |
+| Übersicht „Angelernte Finger“ | ca. 10–13 Finger, danach „+N weitere“ (Home Assistant: max. 255 Zeichen); vollständige Liste im Log |
+| Zeitpläne | 2 |
+| Schloss pro ESP | 1 (für jedes Schloss ein eigener ESP) |
+
+Außerdem fehlen für einen Firmeneinsatz: Protokoll, wer wann geöffnet hat (nur „Letzte Aktion“),
+Benutzerverwaltung mit Rollen, Ablaufdatum für Zugänge und eine Notfall-Freigabe über eine zentrale Stelle.
+Der Fingerprint-Sensor ist außerdem kein zertifiziertes Sicherheitsprodukt.
+
+
+---
+
+## Original-README
+
 Big thanks to previous work done by:  [@MariusSchiffer](https://github.com/MariusSchiffer/esp32-keyble), [@tc-maxx](https://github.com/tc-maxx/esp32-keyble), [@lumokitho](https://github.com/lumokitho/esp32-keyble) and the original creator [@oyooyo](https://github.com/oyooyo/keyble)
 
 
@@ -312,3 +347,5 @@ The user_id and user_key can only be retrieved while pairing for which we need t
 5. Press Pair Button on UI
 6. ESP should pair and display the user_key and user_id via UI
 7. Copy the values to the respective inputs
+
+Änderungen je Version: siehe [CHANGELOG.md](CHANGELOG.md).

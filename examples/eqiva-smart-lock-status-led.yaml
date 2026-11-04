@@ -1,0 +1,65 @@
+# ---------------------------------------------------------------
+# Status-LED (WS2812/RGB) – Paket für eqiva-smart-lock-<nr>.yaml
+# Version 2.1.0 (2026-11-04) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Einbinden:   packages:
+#                status_led: !include eqiva-smart-lock-status-led.yaml
+# Nur für Boards mit (oder mit angeschlossener) WS2812-LED.
+#
+# Pin anpassen: in der Hauptdatei unter substitutions "status_led_pin: GPIOxx"
+# setzen, sonst gilt der Standard unten (GPIO8 = eingebaute LED vieler C3-Boards).
+# Mehrere LEDs: "status_led_count" setzen (DIN der 2. LED an DOUT der 1.).
+# ---------------------------------------------------------------
+
+substitutions:
+  status_led_pin: GPIO8
+  status_led_count: "1"     # mehrere WS2812 in Reihe: alle zeigen dieselbe Farbe
+
+light:
+  - platform: esp32_rmt_led_strip
+    id: status_led
+    name: "Status LED"
+    pin: ${status_led_pin}
+    num_leds: ${status_led_count}
+    channel_colors: GRB
+    chipset: ws2812
+    effects:
+      - pulse:
+          name: "pulse"
+      - strobe:
+          name: "strobe"
+    web_server:
+      sorting_group_id: sg_diag
+
+# Interner Spiegel des Lock-Status: so muss die Hauptdatei nichts von der LED wissen.
+text_sensor:
+  - platform: copy
+    source_id: lock_status
+    id: lock_status_led
+    internal: true
+    on_value:
+      then:
+        - if:
+            condition:
+              lambda: 'return x == "LOCKED";'
+            then:
+              - light.turn_on: { id: status_led, effect: "none", red: 0%, green: 100%, blue: 0%, brightness: 30% }   # grün = verriegelt
+        - if:
+            condition:
+              lambda: 'return x == "UNLOCKED";'
+            then:
+              - light.turn_on: { id: status_led, effect: "none", red: 100%, green: 0%, blue: 0%, brightness: 30% }   # rot = aufgeschlossen
+        - if:
+            condition:
+              lambda: 'return x == "OPENED";'
+            then:
+              - light.turn_on: { id: status_led, effect: "none", red: 0%, green: 0%, blue: 100%, brightness: 30% }
+        - if:
+            condition:
+              lambda: 'return x == "MOVING";'
+            then:
+              - light.turn_on: { id: status_led, effect: "pulse", red: 100%, green: 50%, blue: 0% }
+        - if:
+            condition:
+              lambda: 'return x == "UNKNOWN";'
+            then:
+              - light.turn_on: { id: status_led, effect: "strobe", red: 60%, green: 0%, blue: 100% }   # lila blinken = unbekannt

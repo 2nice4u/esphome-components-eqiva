@@ -3,10 +3,13 @@
 #include "esphome/components/esp32_ble_client/ble_client_base.h"
 #include "esphome/components/esp32_ble_tracker/esp32_ble_tracker.h"
 #include "esphome/components/text_sensor/text_sensor.h"
+#include "esphome/components/sensor/sensor.h"
 #include "esphome/core/component.h"
 #include "esphome/core/automation.h"
+#include "esphome/core/hal.h"
 
 #include <queue>
+#include <vector>
 #include "eQ3_constants.h"
 #include "eQ3_message.h"
 #include "eQ3_util.h"
@@ -21,7 +24,29 @@ namespace eqiva_key_ble {
 
 using namespace esp32_ble_client;
 
+// Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
+#define EQIVA_PATCH_VERSION "2.1.0"
+
+// Patch-Konstanten
+static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
+static const uint8_t MAX_NONCE_RETRIES = 3;        // danach Verbindung neu aufbauen
+static const uint8_t MSG_ID_STATUS_REQUEST = 0x82;
+static const uint32_t KEEPALIVE_MS = 240000;       // Schloss trennt nach ~5 min Inaktivität
+
+// Patch: Energiemodi
+enum PowerMode : uint8_t {
+    POWER_FAST = 0,       // Dauerverbindung, kurzer Verbindungsabstand
+    POWER_BALANCED = 1,   // Dauerverbindung, längerer Verbindungsabstand
+    POWER_ECO = 2,        // nur bei Bedarf verbinden, trennen nach Leerlauf
+};
+
 class EqivaKeyBle;
+
+// Patch: Auslöser, wenn das Schloss ein Pairing bestätigt hat (Variable: user_id)
+class PairedTrigger : public Trigger<int> {
+ public:
+  explicit PairedTrigger(EqivaKeyBle *parent);
+};
 
 class EqivaKeyBle : public BLEClientBase {
     bool sendMessage(eQ3Message::Message *msg, bool nonce);
@@ -30,17 +55,61 @@ class EqivaKeyBle : public BLEClientBase {
     void init();
     void finishPair();
 
-    std::queue<eQ3Message::MessageFragment> sendQueue;
-    BLECharacteristic *write;
-    BLECharacteristic *read;
-    bool sendingNonce;
-    unsigned long sending;
-    eQ3Message::Message *currentMsg;
-    bool requestPair;
-
-    unsigned long getTime() {
-        return millis() / 1000;
+    // --- Patch: Hilfsfunktionen ---
+    void watchdog_();
+    void reset_session_();
+    void retain_(eQ3Message::Message *msg);
+    void clear_pending_();
+    void publish_(text_sensor::TextSensor *sensor, const std::string &value) {
+        if (sensor != nullptr && sensor->get_state() != value)
+            sensor->publish_state(value);
     }
+
+    std::queue<eQ3Message::MessageFragment> sendQueue;
+    // Patch: alle Member initialisiert (vorher undefinierte Startwerte)
+    BLECharacteristic *write{nullptr};
+    BLECharacteristic *read{nullptr};
+    bool sendingNonce{false};
+    uint32_t sending{0};                 // millis() des Fragments in Arbeit, 0 = frei
+    eQ3Message::Message *currentMsg{nullptr};
+    uint32_t current_msg_time_{0};       // wann die zurückgehaltene Nachricht entstand
+    bool requestPair{false};
+    uint32_t nonce_sent_time_{0};
+    uint8_t nonce_retries_{0};
+    uint32_t command_timeout_{20000};
+    uint32_t pair_started_{0};
+    uint32_t last_rssi_read_{0};
+    // Energiemodi
+    uint8_t power_mode_{POWER_FAST};
+    uint32_t balanced_interval_ms_{100};
+    uint32_t idle_timeout_{30000};
+    uint32_t eco_poll_interval_{1800000};
+    uint32_t last_activity_{0};
+    uint32_t last_eco_poll_{0};
+    bool eco_poll_done_{false};
+    bool conn_params_applied_{false};
+    uint32_t connect_requested_at_{0};   // für Zeitmessung im Sparmodus
+    std::vector<PairedTrigger *> paired_triggers_;
+    // --- Simulation (ohne Schloss, zum Testen von Fingerprint/Zeitplan/LED) ---
+    bool simulate_{false};
+    bool sim_reachable_{true};
+    bool sim_connected_{false};
+    bool sim_connecting_{false};
+    uint32_t sim_conn_ready_{0};
+    uint8_t sim_state_{3};               // 2 = UNLOCKED, 3 = LOCKED, 4 = OPENED
+    uint8_t sim_target_{0};              // Zielzustand während MOVING (0 = keine Fahrt)
+    uint32_t sim_move_end_{0};
+    uint32_t sim_travel_ms_{3000};
+    int sim_pending_{-1};                // wartender Befehl bis die simulierte Verbindung steht
+    uint32_t sim_pending_since_{0};
+    void sim_tick_();
+    void sim_execute_(int cmd);
+    void sim_publish_state_(uint8_t st);
+    void sim_set_connected_(bool c);
+    void apply_conn_params_();
+    void touch_() { last_activity_ = millis(); }
+    void request_connect_();
+
     std::string getClientState() {
         std::string client_state;
         switch(this->state()) {
@@ -72,14 +141,28 @@ class EqivaKeyBle : public BLEClientBase {
                 client_state = "ESTABLISHED";
                 break;
             }
+            default: {
+                client_state = "OTHER";
+                break;
+            }
         }
         return client_state;
     }
     public:
         ClientState clientState;
+        void setup() override;
+        void connect() override;   // Patch: schnelle Parameter für Verbindungsaufbau + Service Discovery
         void startPair();
         void applySettings();
         void sendCommand(CommandType command);
+        void set_command_timeout(uint32_t ms) { this->command_timeout_ = ms; }
+        void add_on_paired_trigger(PairedTrigger *t) { this->paired_triggers_.push_back(t); }
+        // Patch: Energiemodus (0 = schnell, 1 = ausgewogen, 2 = sparsam), live umschaltbar
+        void set_power_mode(int mode);
+        void set_balanced_interval_ms(uint32_t ms);
+        void set_idle_timeout(uint32_t ms) { this->idle_timeout_ = ms < 5000 ? 5000 : ms; }
+        void set_eco_poll_interval(uint32_t ms) { this->eco_poll_interval_ = ms < 60000 ? 60000 : ms; }
+        uint8_t get_power_mode() const { return this->power_mode_; }
         void set_user_id(int user_id) {
             clientState.user_id = user_id;
         }
@@ -89,11 +172,15 @@ class EqivaKeyBle : public BLEClientBase {
             }
         }
         void set_card_key(std::string card_key) {
-            if (card_key.length() > 0) {
-                for(char &c : card_key)
-                    c = tolower(c);
-                clientState.card_key = card_key.substr(14, 32);
+            // Patch: Länge prüfen, sonst wirft substr() -> Absturz bei Tippfehler
+            if (card_key.length() < 46) {
+                ESP_LOGE("eqiva_key_ble", "Card Key zu kurz (%u Zeichen) - bitte kompletten QR-Code-Inhalt eingeben", (unsigned) card_key.length());
+                clientState.card_key.clear();
+                return;
             }
+            for(char &c : card_key)
+                c = tolower(c);
+            clientState.card_key = card_key.substr(14, 32);
         }
         void set_turn_left(bool turn_left) { clientState.turn_left = turn_left; }
         void set_key_horizontal(bool key_horizontal) { clientState.key_horizontal = key_horizontal; }
@@ -106,25 +193,37 @@ class EqivaKeyBle : public BLEClientBase {
         void set_user_key_sensor(text_sensor::TextSensor *user_key_sensor) { this->user_key_sensor_ = user_key_sensor; }
         void set_user_id_sensor(text_sensor::TextSensor *user_id_sensor) { this->user_id_sensor_ = user_id_sensor; }
         void set_mac_address_sensor(text_sensor::TextSensor *mac_address_sensor) { this->mac_address_sensor_ = mac_address_sensor; }
+        void set_rssi_sensor(sensor::Sensor *rssi_sensor) { this->rssi_sensor_ = rssi_sensor; }
+        // Simulation: kein BLE, Schloss wird nachgebildet (Zustände, Fahrzeit, Sparmodus-Verbindung)
+        void set_simulate(bool s) { this->simulate_ = s; }
+        bool is_simulated() const { return this->simulate_; }
+        void set_sim_reachable(bool r) { this->sim_reachable_ = r; }
+        void set_sim_travel_ms(uint32_t ms) { this->sim_travel_ms_ = ms < 500 ? 500 : ms; }
+        void sim_connect();
+        void sim_disconnect();
 
-        void set_state(esphome::esp32_ble_tracker::ClientState st) {
+        void set_state(esphome::esp32_ble_tracker::ClientState st) override {
             BLEClientBase::set_state(st);
-            this->lock_ble_state_sensor_->publish_state(getClientState()); 
+            this->publish_(this->lock_ble_state_sensor_, getClientState());
         };
         void dump_config() override;
         bool gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
                                 esp_ble_gattc_cb_param_t *param) override;
+        void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) override;
 
-    protected: 
-        text_sensor::TextSensor *lock_ble_state_sensor_{nullptr};                
+    protected:
+        text_sensor::TextSensor *lock_ble_state_sensor_{nullptr};
         text_sensor::TextSensor *low_battery_sensor_{nullptr};
         text_sensor::TextSensor *lock_status_sensor_{nullptr};
         text_sensor::TextSensor *user_key_sensor_{nullptr};
         text_sensor::TextSensor *user_id_sensor_{nullptr};
         text_sensor::TextSensor *mac_address_sensor_{nullptr};
+        sensor::Sensor *rssi_sensor_{nullptr};   // Patch: Empfang der aktiven Verbindung
 
 };
 
+
+inline PairedTrigger::PairedTrigger(EqivaKeyBle *parent) { parent->add_on_paired_trigger(this); }
 
 template<typename... Ts>
 class EqivaSettings : public Action<Ts...>, public Parented<EqivaKeyBle> {
@@ -132,7 +231,8 @@ class EqivaSettings : public Action<Ts...>, public Parented<EqivaKeyBle> {
     TEMPLATABLE_VALUE(bool, key_horizontal)
     TEMPLATABLE_VALUE(int, lock_turns)
     public:
-        void play(const Ts &...x) override { 
+        void play(const Ts &...x) override {
+            if (this->parent_->is_simulated()) { ESP_LOGI("eqiva_key_ble", "Simulation: Schloss-Einstellungen übernommen"); return; }
             auto turn_left = this->turn_left_.value(x...);
             auto key_horizontal = this->key_horizontal_.value(x...);
             auto lock_turns = this->lock_turns_.value(x...);
@@ -150,7 +250,7 @@ class EqivaConnect : public Action<Ts...>, public Parented<EqivaKeyBle> {
     TEMPLATABLE_VALUE(std::string, user_key)
     public:
         void play(const Ts &...x) override {
-
+            if (this->parent_->is_simulated()) { this->parent_->sim_connect(); return; }
             auto mac_address = this->mac_address_.value(x...);
             auto current_mac_address = this->parent_->get_address();
             if (current_mac_address != 0 && (string_to_mac(mac_address) < current_mac_address || string_to_mac(mac_address) > current_mac_address)) {
@@ -161,6 +261,7 @@ class EqivaConnect : public Action<Ts...>, public Parented<EqivaKeyBle> {
             this->parent_->set_user_id(user_id);
             this->parent_->set_user_key(user_key);
             this->parent_->set_address(string_to_mac(mac_address));
+            this->parent_->set_auto_connect(true);   // Patch: ggf. nach "nicht angelernt" wieder aktivieren
             this->parent_->connect();
             ESP_LOGD("ESP Eqiva", " Address: %s, %s", this->parent_->address_str(), mac_address.c_str());
 
@@ -170,9 +271,8 @@ class EqivaConnect : public Action<Ts...>, public Parented<EqivaKeyBle> {
 template<typename... Ts>
 class EqivaDisconnect : public Action<Ts...>, public Parented<EqivaKeyBle> {
     public:
-        void play(const Ts &...x) {
-            // this->parent_->set_user_id(255);
-            // this->parent_->set_user_key("");
+        void play(const Ts &...x) override {
+            if (this->parent_->is_simulated()) { this->parent_->sim_disconnect(); return; }
             this->parent_->disconnect();
             this->parent_->set_address(1);
         }
@@ -183,37 +283,48 @@ class EqivaPair : public Action<Ts...>, public Parented<EqivaKeyBle> {
     TEMPLATABLE_VALUE(std::string, card_key)
     TEMPLATABLE_VALUE(std::string, mac_address)
     public:
-        void play(const Ts &...x) { 
+        void play(const Ts &...x) override {
+            if (this->parent_->is_simulated()) { ESP_LOGW("eqiva_key_ble", "Simulation: Pairing nicht möglich/nötig"); return; }
             auto card_key = this->card_key_.value(x...);
             auto mac_address = this->mac_address_.value(x...);
+            // Patch: Bei Wechsel auf ein anderes Schloss erst die alte Verbindung trennen,
+            // sonst ginge der Pairing-Versuch zuerst an das alte Schloss.
+            const uint64_t new_mac = string_to_mac(mac_address);
+            const uint64_t cur_mac = this->parent_->get_address();
+            if (cur_mac > 1 && new_mac != cur_mac) {
+                ESP_LOGI("eqiva_key_ble", "Pairing mit anderem Schloss - trenne alte Verbindung");
+                this->parent_->disconnect();
+            }
+            // Patch: Adresse vor dem Pairing setzen (vorher erst danach)
+            this->parent_->set_address(new_mac);
+            this->parent_->set_auto_connect(true);   // Patch: ggf. nach "nicht angelernt" wieder aktivieren
             this->parent_->set_card_key(card_key);
             this->parent_->startPair();
-            this->parent_->set_address(string_to_mac(mac_address));
         }
 };
 
 template<typename... Ts>
 class EqivaLock : public Action<Ts...>, public Parented<EqivaKeyBle> {
  public:
-  void play(const Ts &...x) { this->parent_->sendCommand(LOCK); }
+  void play(const Ts &...x) override { this->parent_->sendCommand(LOCK); }
 };
 
 template<typename... Ts>
 class EqivaUnlock : public Action<Ts...>, public Parented<EqivaKeyBle> {
  public:
-  void play(const Ts &...x) { this->parent_->sendCommand(UNLOCK); }
+  void play(const Ts &...x) override { this->parent_->sendCommand(UNLOCK); }
 };
 
 template<typename... Ts>
 class EqivaOpen : public Action<Ts...>, public Parented<EqivaKeyBle> {
  public:
-  void play(const Ts &...x) { this->parent_->sendCommand(OPEN); }
+  void play(const Ts &...x) override { this->parent_->sendCommand(OPEN); }
 };
 
 template<typename... Ts>
 class EqivaStatus : public Action<Ts...>, public Parented<EqivaKeyBle> {
  public:
-  void play(const Ts &...x) { this->parent_->sendCommand(REQUEST_STATUS); }
+  void play(const Ts &...x) override { this->parent_->sendCommand(REQUEST_STATUS); }
 };
 
 

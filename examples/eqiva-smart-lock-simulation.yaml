@@ -1,0 +1,59 @@
+# ---------------------------------------------------------------
+# Testmodus (Simulation) – Paket für eqiva-smart-lock-<nr>.yaml
+# Version 2.1.0 (2026-11-04) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Wird automatisch geladen, wenn in der Hauptdatei use_simulation: "true" gesetzt ist.
+#
+# Es wird KEIN echtes Schloss angesteuert. Die Komponente bildet das Schloss nach:
+#   Zuschließen/Aufschließen/Öffnen mit MOVING und einstellbarer Fahrzeit,
+#   Sparmodus mit Verbindungsaufbau (ca. 2 s) und Trennen nach Leerlauf,
+#   "nicht erreichbar" zum Testen von Zeitüberschreitung und Fehleranzeige.
+# Status-LED und R503-Ring zeigen die Zustände wie im echten Betrieb.
+# Angelernte Finger und Einstellungen bleiben beim Wechsel zurück in den Normalbetrieb erhalten.
+# ---------------------------------------------------------------
+
+web_server:
+  sorting_groups:
+    - id: sg_sim
+      name: "🧪 Testmodus (Simulation)"
+      sorting_weight: -40          # ganz oben
+
+switch:
+  - platform: template
+    name: "Simulation: Schloss erreichbar"
+    id: sim_reachable
+    icon: "mdi:bluetooth-off"
+    optimistic: true
+    restore_mode: ALWAYS_ON
+    turn_on_action:
+      - lambda: 'id(key_ble)->set_sim_reachable(true);'
+    turn_off_action:
+      - lambda: 'id(key_ble)->set_sim_reachable(false);'
+    web_server:
+      sorting_group_id: sg_sim
+
+number:
+  - platform: template
+    name: "Simulation: Fahrzeit"
+    id: sim_travel
+    icon: "mdi:timer-cog"
+    unit_of_measurement: "s"
+    mode: box
+    min_value: 1
+    max_value: 30
+    step: 1
+    initial_value: 3
+    optimistic: true
+    restore_value: true
+    set_action:
+      - lambda: 'id(key_ble)->set_sim_travel_ms((uint32_t) (x * 1000));'
+    web_server:
+      sorting_group_id: sg_sim
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          static bool done = false;   // gespeicherte Fahrzeit einmal nach dem Start übernehmen
+          if (done) return;
+          done = true;
+          id(key_ble)->set_sim_travel_ms((uint32_t) (id(sim_travel).state * 1000));

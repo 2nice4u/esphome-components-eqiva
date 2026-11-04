@@ -6,6 +6,7 @@
 #define DOOR_OPENER_CONST_H
 
 #include <string>
+#include <cstdint>
 
 typedef struct {
     std::string card_key;

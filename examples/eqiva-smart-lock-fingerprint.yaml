@@ -1,0 +1,1687 @@
+# ---------------------------------------------------------------
+# R503 Fingerprint – Paket für eqiva-smart-lock-<nr>.yaml
+# Version 2.1.0 (2026-11-04) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Einbinden: packages: fingerprint: !include eqiva-smart-lock-fingerprint.yaml
+# Nutzt ${name}, lock_status, ble_state, door_handle und ha_time aus der Hauptdatei.
+#
+# Finger werden über Person + Hand + Finger angelernt, nicht über Speicherplatz-Nummern.
+# Jeder Finger hat eine eigene Aktion (Umschalten, Aufschließen, Zuschließen, Öffnen,
+# Nur Klingel, Gesperrt oder Standard). Gleiche Auswahl erneut anlernen = derselbe
+# Speicherplatz wird überschrieben (z. B. wenn ein Finger schlecht erkannt wird).
+#
+# Gespeichert pro Platz: 2 Byte (Person, Hand, Finger, Aktion) + max. 16 Personennamen.
+# Zusätzlich im Notizspeicher des R503 (512 Byte), damit die Zuordnung mit dem Sensor umzieht.
+# Flash wird nur beim Anlernen, Ändern oder Löschen beschrieben.
+#
+# GRENZEN (für Haushalte gedacht, nicht für Firmen):
+#   16 Personen (Name max. 15 Zeichen) · Plätze 0-199 (R503 speichert 200 Abdrücke)
+#   Finger mit Zuordnung: so viele, wie in den Notizspeicher (512 Byte) passen – ca. 55 bei kurzen Namen.
+#   Passt eine neue Zuordnung nicht mehr hinein, wird das Anlernen abgelehnt. Warnung bei < 10 % Rest.
+#   Übersicht "Angelernte Finger" ab ca. 10-13 Fingern gekürzt ("+N weitere", HA: max. 255 Zeichen), volle Liste im Log
+# ---------------------------------------------------------------
+
+api:
+  actions:
+    # Anlernen aus HA, z. B. person: "Stephan", hand: "Rechts", finger: "Daumen", aktion: "Umschalten"
+    - action: fp_enroll
+      variables:
+        person: string
+        hand: string
+        finger: string
+        aktion: string
+      then:
+        - lambda: |-
+            id(fp_person).make_call().set_value(person).perform();
+            id(fp_hand).make_call().set_option(hand).perform();
+            id(fp_finger).make_call().set_option(finger).perform();
+            id(fp_enroll_action).make_call().set_option(aktion).perform();
+        - button.press: fp_enroll_btn
+    - action: fp_cancel_enroll
+      then:
+        - button.press: fp_cancel_btn
+    # Einzelnen Speicherplatz per Nummer löschen (z. B. alte Finger ohne Zuordnung)
+    - action: fp_delete
+      variables:
+        finger_id: int
+      then:
+        - fingerprint_grow.delete:
+            finger_id: !lambda 'return finger_id;'
+        - lambda: |-
+            if (finger_id >= 0 && finger_id < 200) id(fp_map_v2)[finger_id] = 0;
+            global_preferences->sync();
+        - script.execute: fp_changed
+    - action: fp_delete_all          # in der Web-GUI: "Alle Finger löschen (2× drücken)"
+      then:
+        - fingerprint_grow.delete_all:
+        - lambda: |-
+            id(fp_map_v2).fill(0);
+            for (auto &p : id(fp_persons_v2)) p.fill(0);
+            global_preferences->sync();
+        - script.execute: fp_changed
+
+web_server:
+  sorting_groups:
+    - id: sg_fp
+      name: "Fingerprint"
+      sorting_weight: -20
+    - id: sg_fp_cfg
+      name: "Fingerprint Einstellungen"
+      sorting_weight: -15
+    - id: sg_fp_enroll
+      name: "Fingerprint Anlernen"
+      sorting_weight: -10
+
+# Standard-Pins; in der Hauptdatei unter substitutions überschreibbar
+substitutions:
+  fp_tx_pin: GPIO20        # -> R503 RXD (grün bzw. braun)
+  fp_rx_pin: GPIO21        # <- R503 TXD (gelb)
+  fp_sensing_pin: GPIO6    # <- R503 WAKEUP (blau)
+  fp_power_pin: GPIO7      # -> 10 kΩ -> Basis PNP-Transistor (schaltet R503 rot)
+  # HA-Event "esphome.eqiva_smart_lock_fingerprint" bei jedem Scan senden (true/false).
+  # Braucht in HA die Freigabe "Dem Gerät erlauben, Home-Assistant-Aktionen auszuführen",
+  # sonst nur Warnungen im Log. Für die Klingel reicht die Entität "Klingel".
+  fp_ha_events: "false"
+
+uart:
+  id: uart_fp
+  tx_pin: ${fp_tx_pin}
+  rx_pin: ${fp_rx_pin}
+  baud_rate: 57600
+
+# R503-Ring: state 1=atmen 2=blinken 3=an 4=aus | Farbe 1=rot 2=blau 3=lila 4=grün 5=gelb 6=cyan 7=weiß
+# Bedeutung: blau = Finger wird gelesen · grün atmen = erkannt, Aktion läuft
+#            danach 2 s an: grün = verriegelt, rot = aufgeschlossen/geöffnet
+#            rot atmen = nicht erkannt · rot blinken = Fehler/Schloss nicht erreicht
+#            lila blinken = abgewiesen/gesperrt · gelb blinken = Finger schlecht aufgelegt
+#            ohne Finger bedient: grün atmen = zu, rot atmen = auf, blau atmen = geöffnet
+#            Klingel = auswählbar (Standard Regenbogen) · Anlernen: lila atmen = auflegen, 2× grün = Bild ok (abheben), 2× gelb = schief
+globals:
+  # --- Zuordnung (bleibt erhalten) ---
+  # Bit 15 = belegt, 12-14 = Person, 11 = Hand (0 links, 1 rechts), 8-10 = Finger, 0-3 = Aktion
+  - id: fp_map_v2
+    type: std::array<uint16_t, 200>
+    restore_value: true
+    initial_value: 'std::array<uint16_t, 200>{}'
+  - id: fp_persons_v2
+    type: std::array<std::array<char, 16>, 16>
+    restore_value: true
+    initial_value: 'std::array<std::array<char, 16>, 16>{}'
+  # --- Laufzeit ---
+  - id: fp_failed_attempts
+    type: int
+    initial_value: '0'
+  - id: fp_locked
+    type: bool
+    initial_value: 'false'
+  - id: fp_lock_start
+    type: uint32_t
+    initial_value: '0'
+  - id: fp_act                # auszuführende Aktion (1 Umschalten, 2 Auf, 3 Zu, 4 Öffnen)
+    type: int
+    initial_value: '0'
+  - id: fp_start_exec
+    type: bool
+    initial_value: 'false'
+  - id: fp_who                # z. B. "Stephan, rechter Daumen"
+    type: std::string
+    initial_value: '""'
+  - id: fp_pending_cmd        # 0 nichts, 1 aufschließen, 2 zuschließen, 3 öffnen
+    type: int
+    initial_value: '0'
+  - id: fp_pending_since
+    type: uint32_t
+    initial_value: '0'
+  - id: fp_cd_start           # Scan-Pause: Start + Dauer (überlaufsicher)
+    type: uint32_t
+    initial_value: '0'
+  - id: fp_cd_ms
+    type: uint32_t
+    initial_value: '0'
+  - id: fp_status_seq         # zählt jede Statusmeldung des Schlosses
+    type: uint32_t
+    initial_value: '0'
+  - id: fp_seq_mark
+    type: uint32_t
+    initial_value: '0'
+  - id: fp_was_connected
+    type: bool
+    initial_value: 'false'
+  - id: fp_ev_result
+    type: std::string
+    initial_value: '""'
+  - id: fp_ev_finger
+    type: int
+    initial_value: '0'
+  - id: fp_ev_conf
+    type: int
+    initial_value: '0'
+  # --- Anlernen/Löschen ---
+  - id: fp_enroll_target
+    type: int
+    initial_value: '-1'
+  - id: fp_enroll_code
+    type: uint16_t
+    initial_value: '0'
+  - id: fp_enroll_pidx
+    type: int
+    initial_value: '-1'
+  - id: fp_enroll_name
+    type: std::string
+    initial_value: '""'
+  - id: fp_del_target
+    type: int
+    initial_value: '-1'
+  - id: fp_last_slot          # zuletzt erkannter Speicherplatz (-1 = keiner seit Start)
+    type: int
+    initial_value: '-1'
+  - id: fp_delall_armed       # "Alle Finger löschen": Zeitpunkt des ersten Drucks (0 = nicht scharf)
+    type: uint32_t
+    initial_value: '0'
+  # Klingel
+  - id: fp_bell_pending
+    type: bool
+    initial_value: 'false'
+  - id: fp_bell_since
+    type: uint32_t
+    initial_value: '0'
+  - id: fp_bell_last
+    type: uint32_t
+    initial_value: '0'
+  - id: fp_bell_used
+    type: bool
+    initial_value: 'false'
+  - id: fp_last_finish        # Ende der letzten Finger-Aktion (für Ring-Anzeige ohne Finger)
+    type: uint32_t
+    initial_value: '0'
+  # --- Notizspeicher des R503 (512 Byte) und Belegungstabelle ---
+  - id: fp_rename_armed       # "Person umbenennen" (Zusammenführen): Zeitpunkt des ersten Drucks
+    type: uint32_t
+    initial_value: '0'
+  - id: fp_rename_pair        # für welches Namenspaar die Rückfrage gilt
+    type: std::string
+    initial_value: '""'
+  - id: fp_np_last            # zuletzt gelesener/geschriebener Inhalt (verhindert unnötiges Schreiben)
+    type: std::string
+    initial_value: '""'
+  - id: fp_np_ready           # Notizspeicher nach dem Start gelesen
+    type: bool
+    initial_value: 'false'
+  - id: fp_np_rc              # Ergebnis des letzten Zugriffs: 0 ok, -1 keine Antwort, sonst Fehlercode
+    type: int
+    initial_value: '0'
+  - id: fp_np_dirty           # Schreiben ausstehend (Sensor war nicht erreichbar)
+    type: bool
+    initial_value: 'false'
+  - id: fp_idx                # Belegungstabelle Plätze 0-255 (1 Bit je Platz)
+    type: std::array<uint8_t, 32>
+    initial_value: 'std::array<uint8_t, 32>{}'
+  - id: fp_idx_valid
+    type: bool
+    initial_value: 'false'
+  # Zuordnung als Text (für den Notizspeicher): FP2|Name0,Name1,…|Platz:PersonHandFingerAktion,…
+  # Person als Hex-Ziffer 0-F, Hand L/R, Finger 0-4, Aktion 0-6. Beispiel: FP2|St,Cl|0:0R01,4:1R12
+  - id: fp_export_str
+    type: std::function<std::string(const std::array<uint16_t, 200> &, const std::array<std::array<char, 16>, 16> &)>
+    initial_value: |-
+      [](const std::array<uint16_t, 200> &map, const std::array<std::array<char, 16>, 16> &persons) -> std::string {
+        std::string out = "FP2|";
+        int last_p = -1;
+        for (int p = 0; p < 16; p++) if (persons[p][0] != 0) last_p = p;
+        for (int p = 0; p <= last_p; p++) {
+          if (p > 0) out += ",";
+          out += std::string(persons[p].data(), strnlen(persons[p].data(), 15));
+        }
+        out += "|";
+        bool first = true;
+        for (int i = 0; i < 200; i++) {
+          const uint16_t c = map[i];
+          if (!(c & 0x8000)) continue;
+          char b[16];
+          snprintf(b, sizeof(b), "%s%d:%X%c%d%d", first ? "" : ",", i, (((c >> 12) & 7) | ((c >> 1) & 8)),
+                   ((c >> 11) & 1) ? 'R' : 'L', (c >> 8) & 7, c & 0x0F);
+          out += b;
+          first = false;
+        }
+        return out;
+      }
+  # Text aus dem Notizspeicher einlesen; true = gültig (map/persons gefüllt), sonst Fehlertext in err
+  - id: fp_parse_str
+    type: std::function<bool(const std::string &, std::array<uint16_t, 200> &, std::array<std::array<char, 16>, 16> &, std::string &, int &)>
+    initial_value: |-
+      [](const std::string &in, std::array<uint16_t, 200> &nm, std::array<std::array<char, 16>, 16> &np,
+         std::string &err, int &count) -> bool {
+        nm.fill(0);
+        for (auto &p : np) p.fill(0);
+        count = 0;
+        // FP2 (aktuell) und FP1 (bis 1.10, Person 0-7) werden gelesen
+        if (in.rfind("FP2|", 0) != 0 && in.rfind("FP1|", 0) != 0) { err = "kein FP1/FP2-Inhalt"; return false; }
+        const size_t bar = in.find('|', 4);
+        if (bar == std::string::npos) { err = "zweites | fehlt"; return false; }
+        const std::string names = in.substr(4, bar - 4), entries = in.substr(bar + 1);
+        int p = 0;
+        size_t pos = 0;
+        while (!names.empty()) {
+          size_t e = names.find(',', pos);
+          std::string n = names.substr(pos, e == std::string::npos ? std::string::npos : e - pos);
+          if (p >= 16) { err = "mehr als 16 Personen"; return false; }
+          strncpy(np[p].data(), n.c_str(), 15);
+          p++;
+          if (e == std::string::npos) break;
+          pos = e + 1;
+        }
+        pos = 0;
+        while (pos < entries.size()) {
+          size_t e = entries.find(',', pos);
+          std::string t = entries.substr(pos, e == std::string::npos ? std::string::npos : e - pos);
+          pos = (e == std::string::npos) ? entries.size() : e + 1;
+          if (t.empty()) continue;
+          int slot, fi, ai; char pc, hc;
+          const bool ok = sscanf(t.c_str(), "%d:%c%c%1d%d", &slot, &pc, &hc, &fi, &ai) == 5;
+          const int pi = (pc >= '0' && pc <= '9') ? pc - '0' : ((pc >= 'A' && pc <= 'F') ? pc - 'A' + 10 : -1);
+          if (!ok || slot < 0 || slot >= 200 ||
+              pi < 0 || pi >= 16 || (hc != 'L' && hc != 'R') || fi < 0 || fi > 4 || ai < 0 || ai > 6 || np[pi][0] == 0) {
+            err = "ungültiger Eintrag " + t;
+            return false;
+          }
+          nm[slot] = 0x8000 | ((pi & 7) << 12) | ((pi & 8) << 1) | ((hc == 'R') << 11) | (fi << 8) | ai;
+          count++;
+        }
+        return true;
+      }
+  # Kapazität prüfen: "" = alles gut, sonst Warntext (eine Grenze unter 10 %)
+  #   Personen 16 · Notizspeicher 512 Byte (Sicherung im Sensor) · Plätze im R503 200
+  - id: fp_cap_warn
+    type: std::function<std::string(const std::array<uint16_t, 200> &, const std::array<std::array<char, 16>, 16> &, const std::array<uint8_t, 32> &, bool)>
+    initial_value: |-
+      [](const std::array<uint16_t, 200> &map, const std::array<std::array<char, 16>, 16> &persons,
+         const std::array<uint8_t, 32> &idx, bool idx_valid) -> std::string {
+        std::string w;
+        int pers = 0;
+        for (auto &p : persons) if (p[0] != 0) pers++;
+        if (pers >= 15) w += "Personen fast voll (" + std::to_string(pers) + " von 16). ";
+        // Größe des Notizspeicher-Inhalts (wie fp_export_str, ohne Text zu bauen)
+        size_t bytes = 4 + 1 + 1;   // "FP2|" + "|" + 0-Byte
+        int last_p = -1;
+        for (int p = 0; p < 16; p++) if (persons[p][0] != 0) last_p = p;
+        for (int p = 0; p <= last_p; p++) bytes += strnlen(persons[p].data(), 15) + (p > 0 ? 1 : 0);
+        int entries = 0;
+        for (int i = 0; i < 200; i++) if (map[i] & 0x8000) { bytes += std::to_string(i).size() + 5 + (entries ? 1 : 0); entries++; }
+        if (bytes > 512 - 51) {
+          const int left = bytes >= 512 ? 0 : (int) ((512 - bytes) / 8);
+          w += "Sicherung im Sensor fast voll (noch ca. " + std::to_string(left) + " Finger). ";
+        }
+        if (idx_valid) {
+          int used = 0;
+          for (int i = 0; i < 200; i++) if ((idx[i / 8] >> (i % 8)) & 1) used++;
+          if (200 - used < 20) w += "Fingerprint-Speicher fast voll (" + std::to_string(200 - used) + " Plätze frei). ";
+        }
+        if (!w.empty()) w.pop_back();
+        return w;
+      }
+  # Direkter Zugriff auf den R503 (Befehle laut Handbuch V1.4.1, an ESPHome vorbei, blockierend):
+  # op 0 = Notizspeicher schreiben (0x18), 1 = Notizspeicher lesen (0x19), 2 = Belegungstabelle (0x1F)
+  # Rückgabe: 0 ok, -1 keine Antwort (Sensor aus/schläft), -2 ungültige Antwort, >0 Fehlercode des Sensors
+  - id: fp_np_io
+    type: std::function<int(esphome::uart::UARTComponent *, int, std::string &, std::array<uint8_t, 32> &)>
+    initial_value: |-
+      [](esphome::uart::UARTComponent *u, int op, std::string &data, std::array<uint8_t, 32> &idx) -> int {
+        auto xfer = [u](uint8_t ins, const std::vector<uint8_t> &prm, std::vector<uint8_t> &rep) -> int {
+          const uint16_t len = 1 + prm.size() + 2;
+          std::vector<uint8_t> p = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x01,
+                                    (uint8_t) (len >> 8), (uint8_t) (len & 0xFF), ins};
+          uint16_t sum = 0x01 + (len >> 8) + (len & 0xFF) + ins;
+          for (auto b : prm) { p.push_back(b); sum += b; }
+          p.push_back(sum >> 8);
+          p.push_back(sum & 0xFF);
+          uint8_t junk;
+          while (u->available()) u->read_byte(&junk);
+          u->write_array(p);
+          u->flush();
+          std::vector<uint8_t> r;
+          const uint32_t start = esphome::millis();
+          while (esphome::millis() - start < 600) {
+            uint8_t b;
+            while (u->available() && u->read_byte(&b)) r.push_back(b);
+            if (r.size() >= 9 && r.size() >= 9u + (((uint16_t) r[7] << 8) | r[8])) break;
+            esphome::delay(2);
+          }
+          if (r.size() < 12) return -1;
+          const uint16_t L = ((uint16_t) r[7] << 8) | r[8];
+          if (r[0] != 0xEF || r[1] != 0x01 || r[6] != 0x07 || L < 3 || r.size() < 9u + L) return -2;
+          uint16_t s = r[6] + r[7] + r[8];
+          for (size_t i = 9; i < 9u + L - 2; i++) s += r[i];
+          if ((((uint16_t) r[9 + L - 2] << 8) | r[9 + L - 1]) != s) return -2;
+          rep.assign(r.begin() + 10, r.begin() + 9 + L - 2);
+          return r[9];
+        };
+        std::vector<uint8_t> rep;
+        if (op == 0) {   // schreiben: Text + 0-Byte, seitenweise à 32 Byte
+          std::string d = data;
+          d.push_back('\0');
+          if (d.size() > 512) return -3;
+          for (size_t page = 0; page * 32 < d.size(); page++) {
+            std::vector<uint8_t> prm(33, 0);
+            prm[0] = (uint8_t) page;
+            for (size_t i = 0; i < 32 && page * 32 + i < d.size(); i++) prm[1 + i] = (uint8_t) d[page * 32 + i];
+            const int rc = xfer(0x18, prm, rep);
+            if (rc != 0) return rc;
+          }
+          return 0;
+        }
+        if (op == 1) {   // lesen bis zum 0-Byte
+          data.clear();
+          for (uint8_t page = 0; page < 16; page++) {
+            const int rc = xfer(0x19, {page}, rep);
+            if (rc != 0) return rc;
+            if (rep.size() < 32) return -2;
+            for (size_t i = 0; i < 32; i++) {
+              if (rep[i] == 0x00 || rep[i] == 0xFF) return 0;   // Ende (0xFF = nie beschrieben)
+              data.push_back((char) rep[i]);
+            }
+          }
+          return 0;
+        }
+        const int rc = xfer(0x1F, {0}, rep);   // Belegungstabelle Plätze 0-255
+        if (rc != 0) return rc;
+        if (rep.size() < 32) return -2;
+        std::copy(rep.begin(), rep.begin() + 32, idx.begin());
+        return 0;
+      }
+
+script:
+  # Meldung in "Fingerprint: Letzte Aktion" (mit Uhrzeit, wenn bekannt)
+  - id: fp_msg
+    mode: queued
+    parameters:
+      text: string
+    then:
+      - lambda: |-
+          auto t = id(ha_time).now();
+          std::string s = t.is_valid() ? t.strftime("%H:%M ") : "";
+          s += text;
+          ESP_LOGI("fp", "%s", s.c_str());
+          id(fp_last).publish_state(s);
+
+  # Übersicht "Angelernte Finger" neu aufbauen (nur nach Änderungen)
+  - id: fp_overview
+    mode: queued
+    then:
+      - lambda: |-
+          static const char *const fs[] = {"Daumen", "Zeige", "Mittel", "Ring", "Klein"};
+          static const char *const sym[] = {"", " ⇄", " 🔓", " 🔒", " 🚪", " 🔔", " ⛔"};
+          // Nach Speicherplatz sortiert: "#0 St R-Daumen ⇄ · #8 ohne Zuordnung · …"
+          std::vector<std::string> items;
+          int count = 0;
+          for (int i = 0; i < 200; i++) {
+            const uint16_t c = id(fp_map_v2)[i];
+            const bool mapped = c & 0x8000;
+            const bool used = id(fp_idx_valid) && ((id(fp_idx)[i / 8] >> (i % 8)) & 1);
+            if (mapped) {
+              const char *n = id(fp_persons_v2)[(((c >> 12) & 7) | ((c >> 1) & 8))].data();
+              const uint8_t a = c & 0x0F;
+              items.push_back("#" + to_string(i) + " " + std::string(n, strnlen(n, 15)) + " " +
+                              (((c >> 11) & 1) ? "R-" : "L-") + fs[((c >> 8) & 7) % 5] + sym[a <= 6 ? a : 0]);
+              count++;
+            } else if (used) {
+              items.push_back("#" + to_string(i) + " ohne Zuordnung");
+            }
+          }
+          // Kapazitätswarnung (eine Grenze unter 10 %)
+          const std::string warn = id(fp_cap_warn)(id(fp_map_v2), id(fp_persons_v2), id(fp_idx), id(fp_idx_valid));
+          const std::string tail = warn.empty() ? "" : " · ⚠️ fast voll";
+          // Home Assistant nimmt max. 255 Zeichen: ganze Einträge, Rest als "+N weitere"
+          std::string out;
+          size_t shown = 0;
+          for (; shown < items.size(); shown++) {
+            const std::string add = (out.empty() ? "" : " · ") + items[shown];
+            const size_t rest = items.size() - shown - 1;
+            const size_t reserve = tail.size() + (rest > 0 ? 34 : 0);   // Platz für " … +N weitere (siehe Log)"
+            if (out.size() + add.size() + reserve > 255) break;
+            out += add;
+          }
+          if (shown < items.size()) out += " … +" + to_string(items.size() - shown) + " weitere (siehe Log)";
+          if (out.empty()) out = "keine";
+          out += tail;
+          if (!warn.empty()) ESP_LOGW("fp", "%s", warn.c_str());
+          ESP_LOGI("fp", "Angelernte Finger (%d): %s", count, out.c_str());
+          // Ausführliche Liste Platz -> Zuordnung im Log
+          static const char *const fl[] = {"Daumen", "Zeigefinger", "Mittelfinger", "Ringfinger", "Kleiner Finger"};
+          static const char *const an[] = {"Standard", "Umschalten", "Aufschließen", "Zuschließen", "Öffnen", "Nur Klingel", "Gesperrt"};
+          for (int i = 0; i < 200; i++) {
+            const uint16_t c = id(fp_map_v2)[i];
+            if (!(c & 0x8000)) continue;
+            const char *n = id(fp_persons_v2)[(((c >> 12) & 7) | ((c >> 1) & 8))].data();
+            const uint8_t a = c & 0x0F;
+            ESP_LOGI("fp", "  Platz %2d: %.15s, %s, %s – %s", i, n, ((c >> 11) & 1) ? "Rechts" : "Links",
+                     fl[((c >> 8) & 7) % 5], an[a <= 6 ? a : 0]);
+          }
+          id(fp_overview_txt).publish_state(out);
+
+  # Aktion ausführen (läuft lokal, ohne HA)
+  - id: fp_execute
+    mode: single
+    then:
+      - lambda: |-
+          id(fp_seq_mark) = id(fp_status_seq);
+          id(fp_was_connected) = id(ble_state).state == "ESTABLISHED";
+      # Umschalten ohne Verbindung: erst aktuellen Status holen (Sparmodus / Handbedienung)
+      - if:
+          condition:
+            lambda: 'return id(fp_act) == 1 && !id(fp_was_connected);'
+          then:
+            - lambda: 'id(fp)->aura_led_control(1, 60, 4, 0);'   # grün atmen = erkannt, wird ausgeführt
+            - eqiva_key_ble.status:
+            - wait_until:
+                condition:
+                  lambda: 'return id(fp_status_seq) != id(fp_seq_mark) && id(lock_status).state != "MOVING";'
+                timeout: 20s
+      - lambda: |-
+          const std::string &st = id(lock_status).state;
+          int act = id(fp_act), cmd = 0;
+          std::string err;
+          if (act == 1) {
+            const bool fresh = id(fp_was_connected) || id(fp_status_seq) != id(fp_seq_mark);
+            if (!fresh) err = "Schloss nicht erreichbar";
+            else if (st == "LOCKED") cmd = 3;
+            else if (st == "UNLOCKED" || st == "OPENED") cmd = 2;
+            else err = "Schlossstatus unbekannt (" + st + ")";
+          } else if (act == 2) cmd = 1;
+          else if (act == 3) cmd = 2;
+          else if (act == 4) cmd = 3;
+          // Öffnen nur bei Türgriff außen = Knauf, sonst nur aufschließen
+          if (cmd == 3 && id(door_handle).current_option() != "Knauf") cmd = 1;
+          if (cmd == 0) {
+            id(fp)->aura_led_control(2, 25, 1, 4);
+            id(fp_cd_start) = millis(); id(fp_cd_ms) = (uint32_t) id(fp_cooldown).state * 1000UL;
+            id(fp_msg).execute("Nichts ausgeführt: " + (err.empty() ? std::string("keine Aktion") : err) + " – " + id(fp_who));
+            return;
+          }
+          id(fp_pending_cmd) = cmd;
+          id(fp_pending_since) = millis();
+          id(fp)->aura_led_control(1, 60, 4, 0);   // grün atmen = erkannt, wird ausgeführt
+      - if:
+          condition:
+            lambda: 'return id(fp_pending_cmd) == 1;'
+          then:
+            - eqiva_key_ble.unlock:
+      - if:
+          condition:
+            lambda: 'return id(fp_pending_cmd) == 2;'
+          then:
+            - eqiva_key_ble.lock:
+      - if:
+          condition:
+            lambda: 'return id(fp_pending_cmd) == 3;'
+          then:
+            - eqiva_key_ble.open:
+
+  # Klingel-Anzeige am Ring, auswählbar über "Klingel-Anzeige" (Fingerprint Einstellungen)
+  - id: fp_bell_rainbow
+    mode: restart
+    then:
+      # Regenbogen: rot, gelb, grün, cyan, blau, lila – 2 Durchläufe
+      - if:
+          condition:
+            lambda: 'return id(fp_bell_style).active_index().value_or(0) == 0;'
+          then:
+            - repeat:
+                count: 2
+                then:
+                  - lambda: 'id(fp)->aura_led_control(3, 0, 1, 0);'
+                  - delay: 250ms
+                  - lambda: 'id(fp)->aura_led_control(3, 0, 5, 0);'
+                  - delay: 250ms
+                  - lambda: 'id(fp)->aura_led_control(3, 0, 4, 0);'
+                  - delay: 250ms
+                  - lambda: 'id(fp)->aura_led_control(3, 0, 6, 0);'
+                  - delay: 250ms
+                  - lambda: 'id(fp)->aura_led_control(3, 0, 2, 0);'
+                  - delay: 250ms
+                  - lambda: 'id(fp)->aura_led_control(3, 0, 3, 0);'
+                  - delay: 250ms
+      # Weiß atmen (3×)
+      - if:
+          condition:
+            lambda: 'return id(fp_bell_style).active_index().value_or(0) == 1;'
+          then:
+            - lambda: 'id(fp)->aura_led_control(1, 100, 7, 3);'
+            - delay: 3s
+      # Blau blinken
+      - if:
+          condition:
+            lambda: 'return id(fp_bell_style).active_index().value_or(0) == 2;'
+          then:
+            - lambda: 'id(fp)->aura_led_control(2, 30, 2, 8);'
+            - delay: 3s
+      # Rot/Blau im Wechsel
+      - if:
+          condition:
+            lambda: 'return id(fp_bell_style).active_index().value_or(0) == 3;'
+          then:
+            - repeat:
+                count: 6
+                then:
+                  - lambda: 'id(fp)->aura_led_control(3, 0, 1, 0);'
+                  - delay: 250ms
+                  - lambda: 'id(fp)->aura_led_control(3, 0, 2, 0);'
+                  - delay: 250ms
+      # Gelb/Grün im Wechsel
+      - if:
+          condition:
+            lambda: 'return id(fp_bell_style).active_index().value_or(0) == 4;'
+          then:
+            - repeat:
+                count: 6
+                then:
+                  - lambda: 'id(fp)->aura_led_control(3, 0, 5, 0);'
+                  - delay: 250ms
+                  - lambda: 'id(fp)->aura_led_control(3, 0, 4, 0);'
+                  - delay: 250ms
+      # Index 5 = "Aus": keine Anzeige
+      - lambda: 'if (id(fp_pending_cmd) == 0) id(fp)->aura_led_control(4, 0, 0, 0);'
+
+  # Ring beim Anlernen: kind 0 = Bild ok (2× grün), 1 = schief aufgelegt (2× gelb); danach lila atmen
+  - id: fp_enroll_led
+    mode: restart
+    parameters:
+      kind: int
+    then:
+      - lambda: 'id(fp)->aura_led_control(2, 20, kind == 0 ? 4 : 5, 2);'
+      - delay: 800ms
+      - lambda: 'if (id(fp_enrolling).state) id(fp)->aura_led_control(1, 100, 3, 0);'
+
+  - id: fp_bad_scan
+    mode: queued
+    then:
+      - lambda: |-
+          if (id(fp_pending_cmd) != 0) return;
+          if (id(fp_enrolling).state) { id(fp_enroll_led).execute(1); return; }   // Anlernen: gelb, dann lila
+          id(fp)->aura_led_control(2, 25, 5, 2);
+          // beim Anlernen nie klingeln
+          if (id(fp_bell_unknown).state && id(fp_enabled).state && !id(fp_locked) && !id(fp_bell_pending)
+              && !id(fp_enrolling).state) {
+            id(fp_bell_pending) = true;
+            id(fp_bell_since) = millis();
+          }
+
+  # Nach jeder Änderung der Zuordnung: Übersicht neu + im Notizspeicher des Sensors sichern
+  - id: fp_changed
+    mode: queued
+    then:
+      - script.execute: fp_overview
+      - lambda: 'if (id(fp_np_ready)) id(fp_np_save).execute();'
+
+  # Sensor kurz wecken (nur wenn gerade keine Ring-Anzeige läuft)
+  - id: fp_np_wake
+    mode: single
+    then:
+      - lambda: |-
+          if (id(fp_pending_cmd) == 0 && !id(fp_enrolling).state && !id(fp_execute).is_running() &&
+              !id(fp_bell_rainbow).is_running())
+            id(fp)->aura_led_control(4, 0, 0, 0);   // "Ring aus" weckt den Sensor
+      - delay: 1500ms
+
+  # Zuordnung in den Notizspeicher schreiben (nur wenn geändert)
+  - id: fp_np_save
+    mode: restart
+    then:
+      - delay: 3s
+      - lambda: |-
+          std::string d = id(fp_export_str)(id(fp_map_v2), id(fp_persons_v2));
+          if (d == id(fp_np_last)) {
+            // Zuordnung unverändert (z. B. nur ein Platz ohne Zuordnung gelöscht): nur Belegung auffrischen
+            id(fp_np_rc) = 0;
+            id(fp_np_dirty) = false;
+            std::string unused;
+            if (id(fp_np_io)(id(uart_fp), 2, unused, id(fp_idx)) == 0) { id(fp_idx_valid) = true; id(fp_overview).execute(); }
+            id(fp_np_rc) = -10;   // Markierung: nichts geschrieben, Abschluss überspringen
+            return;
+          }
+          std::array<uint8_t, 32> dummy{};
+          id(fp_np_rc) = id(fp_np_io)(id(uart_fp), 0, d, dummy);
+      - if:
+          condition:
+            lambda: 'return id(fp_np_rc) == -1;'   # keine Antwort -> Sensor schläft: wecken, nochmal
+          then:
+            - script.execute: fp_np_wake
+            - script.wait: fp_np_wake
+            - lambda: |-
+                std::string d = id(fp_export_str)(id(fp_map_v2), id(fp_persons_v2));
+                std::array<uint8_t, 32> dummy{};
+                id(fp_np_rc) = id(fp_np_io)(id(uart_fp), 0, d, dummy);
+      - lambda: |-
+          if (id(fp_np_rc) == -10) {
+            id(fp_np_rc) = 0;   // unverändert, siehe oben
+            return;
+          }
+          if (id(fp_np_rc) == 0) {
+            id(fp_np_last) = id(fp_export_str)(id(fp_map_v2), id(fp_persons_v2));
+            id(fp_np_dirty) = false;
+            ESP_LOGI("fp", "Zuordnung im Sensor gesichert (%u Byte)", (unsigned) id(fp_np_last).size());
+            // Belegungstabelle gleich mit aktualisieren (Sensor ist wach)
+            std::string unused;
+            if (id(fp_np_io)(id(uart_fp), 2, unused, id(fp_idx)) == 0) { id(fp_idx_valid) = true; id(fp_overview).execute(); }
+          } else {
+            id(fp_np_dirty) = true;   // beim nächsten Scan erneut versuchen
+            ESP_LOGW("fp", "Sichern im Sensor fehlgeschlagen (Code %d) – wird später wiederholt", id(fp_np_rc));
+          }
+
+  # Nach dem Start: Belegungstabelle und Notizspeicher lesen; ESP ohne Zuordnung übernimmt die des Sensors
+  - id: fp_np_boot
+    mode: single
+    then:
+      - delay: 8s
+      - script.execute: fp_np_wake
+      - script.wait: fp_np_wake
+      - lambda: |-
+          std::string data;
+          int rc = id(fp_np_io)(id(uart_fp), 2, data, id(fp_idx));
+          if (rc == 0) id(fp_idx_valid) = true;
+          rc = id(fp_np_io)(id(uart_fp), 1, data, id(fp_idx));
+          id(fp_np_ready) = true;
+          if (rc != 0) {
+            ESP_LOGW("fp", "Notizspeicher nicht lesbar (Code %d)", rc);
+            id(fp_overview).execute();
+            return;
+          }
+          bool esp_empty = true;
+          for (auto c : id(fp_map_v2)) if (c & 0x8000) esp_empty = false;
+          std::array<uint16_t, 200> nm{};
+          std::array<std::array<char, 16>, 16> np{};
+          std::string err;
+          int count = 0;
+          const bool valid = id(fp_parse_str)(data, nm, np, err, count);
+          if (valid) id(fp_np_last) = data;
+          if (esp_empty && valid && count > 0) {
+            id(fp_map_v2) = nm;
+            id(fp_persons_v2) = np;
+            global_preferences->sync();
+            id(fp_msg).execute("Zuordnung aus dem Sensor übernommen: " + to_string(count) + " Finger");
+          } else if (!valid && !data.empty()) {
+            ESP_LOGW("fp", "Notizspeicher enthält keine gültige Zuordnung (%s)", err.c_str());
+          } else {
+            ESP_LOGI("fp", "Notizspeicher gelesen (%u Byte)", (unsigned) data.size());
+          }
+          id(fp_overview).execute();
+          // ESP hat eine (andere) Zuordnung -> ESP gilt, im Sensor sichern
+          if (!esp_empty) id(fp_np_save).execute();
+
+  # Klingel: Event-Entität "Klingel" (ohne Sonderrechte in HA) + HA-Event, Ring weiß atmen
+  - id: fp_bell
+    mode: single
+    parameters:
+      who: string
+    then:
+      - lambda: |-
+          id(fp_bell_last) = millis();
+          id(fp_bell_used) = true;
+          id(fp_msg).execute("🔔 Klingel – " + who);
+      - script.execute: fp_bell_rainbow
+      - event.trigger:
+          id: fp_bell_evt
+          event_type: klingel
+      - if:
+          condition:
+            lambda: 'return ${fp_ha_events};'
+          then:
+            - homeassistant.event:
+                event: esphome.eqiva_smart_lock_fingerprint
+                data:
+                  device: ${name}
+                  result: doorbell
+                  finger: !lambda 'return who;'
+
+  # Abschluss: Schloss hat bestätigt (ok) oder Zeit abgelaufen
+  - id: fp_finish
+    mode: restart
+    parameters:
+      ok: bool
+    then:
+      - lambda: |-
+          const int cmd = id(fp_pending_cmd);
+          if (cmd == 0) return;
+          id(fp_pending_cmd) = 0;
+          id(fp_last_finish) = millis();
+          id(fp_cd_start) = millis(); id(fp_cd_ms) = (uint32_t) id(fp_cooldown).state * 1000UL;
+          static const char *const verbs[] = {"", "Aufgeschlossen", "Zugeschlossen", "Geöffnet"};
+          if (ok) {
+            // 2 s Dauerlicht = erledigt: grün = verriegelt, rot = aufgeschlossen/geöffnet
+            id(fp)->aura_led_control(3, 0, cmd == 2 ? 4 : 1, 0);
+            id(fp_msg).execute(std::string(verbs[cmd]) + " – " + id(fp_who));
+          } else {
+            id(fp)->aura_led_control(2, 25, 1, 4);      // rot blinken = fehlgeschlagen
+            id(fp_msg).execute(std::string("Fehlgeschlagen (") + verbs[cmd] + ", Schloss nicht erreicht) – " + id(fp_who));
+          }
+      - delay: 2s
+      - lambda: 'if (id(fp_pending_cmd) == 0) id(fp)->aura_led_control(4, 0, 0, 0);'
+
+# Bestätigung durch das Schloss + Zeitüberwachung
+text_sensor:
+  - platform: copy
+    source_id: lock_status
+    id: fp_lock_mirror
+    internal: true
+    on_value:
+      - lambda: |-
+          id(fp_status_seq)++;
+          const int cmd = id(fp_pending_cmd);
+          // Bedienung ohne Finger (HA, Web-GUI, Zeitplan, Schlüssel): Ring kurz atmen lassen
+          static std::string prev;
+          const bool changed = x != prev, first = prev.empty();
+          const std::string before = prev;
+          prev = x;
+          if (cmd == 0) {
+            if (!changed || first || !id(fp_ring_remote).state || id(fp_enrolling).state) return;
+            if (id(fp_execute).is_running() || id(fp_bell_rainbow).is_running()) return;
+            if (millis() - id(fp_last_finish) < 5000UL) return;     // gehört noch zur Finger-Aktion
+            if (before == "OPENED" && x == "UNLOCKED") return;     // nach "Öffnen" kein zweites Signal
+            if (x == "LOCKED")        id(fp)->aura_led_control(1, 100, 4, 2);   // grün = zugeschlossen
+            else if (x == "UNLOCKED") id(fp)->aura_led_control(1, 100, 1, 2);   // rot = aufgeschlossen
+            else if (x == "OPENED")   id(fp)->aura_led_control(1, 100, 2, 2);   // blau = geöffnet
+            return;
+          }
+          const bool done = (cmd == 2) ? (x == "LOCKED") : (x == "UNLOCKED" || x == "OPENED");
+          if (done) id(fp_finish).execute(true);
+
+  - platform: template
+    name: "Fingerprint: Letzte Aktion"
+    id: fp_last
+    icon: "mdi:history"
+    update_interval: never
+    web_server:
+      sorting_group_id: sg_fp
+
+  - platform: template
+    name: "Angelernte Finger"
+    id: fp_overview_txt
+    icon: "mdi:hand-back-right"
+    update_interval: never
+    web_server:
+      sorting_group_id: sg_fp_enroll
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          static bool boot_done = false;   // einmal nach dem Start: Übersicht + Notizspeicher
+          if (!boot_done) { boot_done = true; id(fp_overview).execute(); id(fp_np_boot).execute(); }
+          // Klingel für unbekannten Finger nach Verzögerung auslösen
+          if (id(fp_bell_pending) && id(fp_enrolling).state) id(fp_bell_pending) = false;   // Anlernen: keine Klingel
+          if (id(fp_bell_pending) && (millis() - id(fp_bell_since)) >= (uint32_t) id(fp_bell_delay).state * 1000UL) {
+            id(fp_bell_pending) = false;
+            if (!id(fp_bell_used) || (millis() - id(fp_bell_last)) >= (uint32_t) id(fp_bell_pause).state * 1000UL)
+              id(fp_bell).execute(std::string("unbekannter Finger"));
+            else
+              ESP_LOGD("fp", "Klingel-Pause aktiv");
+          }
+          if (id(fp_pending_cmd) == 0) return;
+          if (millis() - id(fp_pending_since) < 35000UL) return;   // > command_timeout (30 s)
+          const std::string &st = id(lock_status).state;
+          const bool done = (id(fp_pending_cmd) == 2) ? (st == "LOCKED") : (st == "UNLOCKED" || st == "OPENED");
+          id(fp_finish).execute(done);
+
+fingerprint_grow:
+  id: fp
+  uart_id: uart_fp
+  sensing_pin: ${fp_sensing_pin}
+  # Sensor nur bei Berührung einschalten (PNP: LOW = an -> invertiert).
+  # Weiß (3.3VT, Touch) hängt dauerhaft an 3,3 V, rot (VCC) hinter dem Transistor.
+  # Ohne Transistor: sensor_power_pin (2 Zeilen darunter) und idle_period_to_sleep entfernen.
+  sensor_power_pin:
+    number: ${fp_power_pin}
+    inverted: true
+  # Lange genug an lassen, damit der Ring die Bestätigung des Schlosses noch anzeigt
+  # (Zeitüberschreitung im Sparmodus nach 35 s)
+  idle_period_to_sleep: 40s
+  # Sensor-Passwort: 1. einmal mit new_password flashen,
+  # 2. new_password entfernen und denselben Wert bei password eintragen.
+  # new_password: 0x1A2B3C4D
+  # password: 0x1A2B3C4D
+
+  on_finger_scan_start:
+    - lambda: 'if (id(fp_pending_cmd) == 0 && !id(fp_enrolling).state) id(fp)->aura_led_control(3, 0, 2, 0);'   # blau = Finger wird gelesen
+  # Schlecht aufgelegt: gelb blinken. Auch hier wird die Klingel (mit Verzögerung) vorgemerkt –
+  # ein Besucher legt oft schief auf. Wird danach ein bekannter Finger erkannt, entfällt sie.
+  on_finger_scan_misplaced:
+    - script.execute: fp_bad_scan
+  on_finger_scan_invalid:
+    - script.execute: fp_bad_scan
+
+  on_finger_scan_matched:
+    - lambda: |-
+          id(fp_ev_result) = "";
+          id(fp_start_exec) = false;
+          id(fp_ev_finger) = finger_id;
+          id(fp_ev_conf) = confidence;
+          id(fp_last_slot) = finger_id;   // für "Letzten Finger zuordnen"
+          id(fp_bell_pending) = false;    // eigener Finger doch erkannt -> keine Klingel
+          if (id(fp_np_dirty)) id(fp_np_save).execute();   // Sensor ist wach: ausstehendes Sichern nachholen
+          // Läuft noch eine Aktion oder Sperrzeit danach? -> Scan ignorieren (kein zweites Umschalten)
+          if (id(fp_pending_cmd) != 0 || id(fp_execute).is_running() || (millis() - id(fp_cd_start)) < id(fp_cd_ms)) {
+            ESP_LOGD("fp", "Scan ignoriert (Aktion läuft / Sperrzeit)");
+            return;
+          }
+          // abgelaufene Fehlversuch-Sperre aufheben (überlaufsicher)
+          const uint32_t lock_ms = (uint32_t) id(fp_lock_minutes).state * 60000UL;
+          if (id(fp_locked) && (millis() - id(fp_lock_start)) >= lock_ms) {
+            id(fp_locked) = false;
+            id(fp_failed_attempts) = 0;
+          }
+          // Wer ist es?
+          static const char *const fl[] = {"Daumen", "Zeigefinger", "Mittelfinger", "Ringfinger", "kleiner Finger"};
+          const uint16_t c = finger_id < 200 ? id(fp_map_v2)[finger_id] : 0;
+          if (c & 0x8000) {
+            const char *n = id(fp_persons_v2)[(((c >> 12) & 7) | ((c >> 1) & 8))].data();
+            const bool r = (c >> 11) & 1;
+            const int f = ((c >> 8) & 7) % 5;
+            id(fp_who) = std::string(n, strnlen(n, 15)) + ", " + (r ? "rechter " : "linker ") + fl[f];
+          } else {
+            id(fp_who) = "Platz " + to_string(finger_id) + " (ohne Zuordnung)";
+          }
+          if (!id(fp_enabled).state || id(fp_locked) || confidence < (int) id(fp_min_confidence).state) {
+            id(fp)->aura_led_control(2, 25, 3, 3);
+            id(fp_ev_result) = "blocked";
+            id(fp_msg).execute("Abgewiesen (" + std::string(!id(fp_enabled).state ? "Fingerprint aus" : (id(fp_locked) ? "gesperrt" : "Übereinstimmung zu gering")) + ") – " + id(fp_who));
+            return;
+          }
+          id(fp_failed_attempts) = 0;
+          int act = (c & 0x8000) ? (c & 0x0F) : 0;
+          if (act == 0) {   // Standard-Aktion
+            const auto def = id(fp_action).current_option();
+            act = def == "Umschalten" ? 1 : (def == "Aufschließen" ? 2 : 4);
+          }
+          if (act == 6) {   // Gesperrt
+            id(fp)->aura_led_control(2, 25, 3, 3);
+            id(fp_ev_result) = "blocked";
+            id(fp_msg).execute("Finger gesperrt – " + id(fp_who));
+            return;
+          }
+          if (act == 5) {   // Nur Klingel (Event kommt aus dem Skript fp_bell)
+            id(fp_cd_start) = millis(); id(fp_cd_ms) = (uint32_t) id(fp_cooldown).state * 1000UL;
+            if (!id(fp_bell_used) || (millis() - id(fp_bell_last)) >= (uint32_t) id(fp_bell_pause).state * 1000UL)
+              id(fp_bell).execute(id(fp_who));
+            else id(fp_msg).execute("Klingel-Pause aktiv – " + id(fp_who));
+            return;
+          }
+          id(fp_ev_result) = "matched";
+          id(fp_act) = act;
+          id(fp_start_exec) = true;
+    - if:
+        condition:
+          lambda: 'return id(fp_start_exec);'
+        then:
+          - script.execute: fp_execute
+    - if:
+        condition:
+          lambda: 'return ${fp_ha_events} && !id(fp_ev_result).empty();'
+        then:
+          - homeassistant.event:              # nur Info an HA, wird ohne HA einfach verworfen
+              event: esphome.eqiva_smart_lock_fingerprint
+              data:
+                device: ${name}
+                result: !lambda 'return id(fp_ev_result);'
+                finger: !lambda 'return id(fp_who);'
+                finger_id: !lambda 'return to_string(id(fp_ev_finger));'
+                confidence: !lambda 'return to_string(id(fp_ev_conf));'
+
+  on_finger_scan_unmatched:
+    - if:
+        condition:
+          lambda: 'return id(fp_pending_cmd) == 0;'
+        then:
+          - lambda: |-
+              id(fp_failed_attempts)++;
+              if (id(fp_failed_attempts) >= (int) id(fp_max_attempts).state && !id(fp_locked)) {
+                id(fp_locked) = true;
+                id(fp_lock_start) = millis();
+                ESP_LOGW("fp", "Zu viele Fehlversuche - Fingerprint gesperrt");
+              }
+              id(fp)->aura_led_control(1, 100, 1, 2);   // rot atmen = nicht erkannt
+              // Klingel erst nach Verzögerung: wird der eigene Finger beim nächsten Versuch
+              // erkannt, wird sie abgebrochen (siehe interval)
+              if (id(fp_bell_unknown).state && id(fp_enabled).state && !id(fp_locked) && !id(fp_enrolling).state) {
+                id(fp_bell_pending) = true;
+                id(fp_bell_since) = millis();
+              }
+          - if:
+              condition:
+                lambda: 'return ${fp_ha_events};'
+              then:
+                - homeassistant.event:
+                    event: esphome.eqiva_smart_lock_fingerprint
+                    data:
+                      device: ${name}
+                      result: unmatched
+
+  # Anlernen: Bild ok -> 2× grün blinken, dann wieder lila atmen = "abheben und erneut auflegen"
+  on_enrollment_scan:
+    - lambda: |-
+        id(fp_msg).execute("Anlernen: Bild " + to_string(scan_num) + " von " + to_string((int) id(fp_enroll_scans).state) +
+                           " ok – Finger abheben und erneut auflegen");
+    - script.execute:
+        id: fp_enroll_led
+        kind: 0
+  on_enrollment_done:
+    - lambda: |-
+        id(fp)->aura_led_control(1, 100, 4, 3);
+        const int slot = id(fp_enroll_target);
+        id(fp_enroll_target) = -1;
+        if (slot < 0 || slot >= 200 || finger_id != slot) {
+          id(fp_msg).execute("Angelernt auf Platz " + to_string(finger_id) + " (ohne Zuordnung)");
+          return;
+        }
+        // Person erst jetzt eintragen (bei Fehlschlag bleibt die Liste sauber)
+        const int p = id(fp_enroll_pidx);
+        if (id(fp_persons_v2)[p][0] == 0) {
+          id(fp_persons_v2)[p].fill(0);
+          strncpy(id(fp_persons_v2)[p].data(), id(fp_enroll_name).c_str(), 15);
+        }
+        id(fp_map_v2)[slot] = id(fp_enroll_code);
+        if (id(fp_idx_valid)) id(fp_idx)[slot / 8] |= 1 << (slot % 8);   // Platz im Sensor jetzt belegt
+        global_preferences->sync();
+        id(fp_changed).execute();
+        // Rest anzeigen: knappste Grenze ist meist die Sicherung im Sensor (ca. 8 Byte pro Finger)
+        const size_t used = id(fp_export_str)(id(fp_map_v2), id(fp_persons_v2)).size() + 1;
+        const int left = used >= 512 ? 0 : (int) ((512 - used) / 8);
+        const std::string warn = id(fp_cap_warn)(id(fp_map_v2), id(fp_persons_v2), id(fp_idx), id(fp_idx_valid));
+        id(fp_msg).execute(std::string(warn.empty() ? "" : "⚠️ ") + "Angelernt: " + id(fp_enroll_name) + ", " +
+                           id(fp_hand).current_option() + ", " + id(fp_finger).current_option() + " (" +
+                           id(fp_enroll_action).current_option() + ") auf Platz " + to_string(slot) +
+                           (warn.empty() ? " – noch ca. " + to_string(left) + " Finger möglich" : " – " + warn));
+  on_enrollment_failed:
+    - lambda: |-
+        id(fp)->aura_led_control(2, 15, 1, 4);
+        id(fp_enroll_target) = -1;
+        id(fp_msg).execute("Anlernen fehlgeschlagen – bitte erneut versuchen");
+
+event:
+  - platform: template
+    name: "Klingel"
+    id: fp_bell_evt
+    icon: "mdi:doorbell"
+    device_class: doorbell
+    event_types: ["klingel"]
+    web_server:
+      sorting_group_id: sg_fp
+
+switch:
+  - platform: template
+    name: "Ring-Anzeige bei Bedienung ohne Finger"
+    id: fp_ring_remote
+    icon: "mdi:led-on"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_cfg
+
+  - platform: template
+    name: "Klingel bei unbekanntem Finger"
+    id: fp_bell_unknown
+    icon: "mdi:doorbell-video"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_cfg
+
+  - platform: template
+    name: "Fingerprint aktiv"
+    id: fp_enabled
+    icon: "mdi:fingerprint"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    web_server:
+      sorting_group_id: sg_fp
+
+button:
+  - platform: template
+    name: "Fingerprint Sperre aufheben"
+    icon: "mdi:lock-reset"
+    web_server:
+      sorting_group_id: sg_fp
+    on_press:
+      - lambda: |-
+          id(fp_locked) = false;
+          id(fp_failed_attempts) = 0;
+
+  # Anlernen: Person + Hand + Finger -> vorhandenen Platz wiederverwenden, sonst nächsten freien
+  - platform: template
+    name: "Finger anlernen"
+    id: fp_enroll_btn
+    icon: "mdi:fingerprint"
+    web_server:
+      sorting_group_id: sg_fp_enroll
+    on_press:
+      - lambda: |-
+          id(fp_enroll_target) = -1;
+          id(fp_bell_pending) = false;   // vorgemerkte Klingel verwerfen
+          std::string name = id(fp_person).state;
+          name.erase(0, name.find_first_not_of(" "));
+          name.erase(name.find_last_not_of(" ") + 1);
+          for (auto &ch : name) if (ch == ',' || ch == '|') ch = ' ';   // Trennzeichen für Export
+          if (name.size() > 15) name.resize(15);
+          if (name.empty()) { id(fp_msg).execute("Bitte zuerst eine Person eintragen"); return; }
+          const int h = id(fp_hand).active_index().value_or(0);
+          const int f = id(fp_finger).active_index().value_or(0);
+          const int a = id(fp_enroll_action).active_index().value_or(1);
+          int p = -1, free_p = -1;
+          for (int i = 0; i < 16; i++) {
+            const char *n = id(fp_persons_v2)[i].data();
+            if (n[0] == 0) { if (free_p < 0) free_p = i; continue; }
+            if (std::string(n, strnlen(n, 15)) == name) { p = i; break; }
+          }
+          if (p < 0) p = free_p;
+          if (p < 0) { id(fp_msg).execute("Kein Platz für weitere Personen (max. 16)"); return; }
+          const uint16_t key = 0x8000 | ((p & 7) << 12) | ((p & 8) << 1) | (h << 11) | (f << 8);
+          int slot = -1;
+          for (int i = 0; i < 200; i++)
+            if ((id(fp_map_v2)[i] & 0xFFF0) == key) { slot = i; break; }
+          const bool again = slot >= 0;
+          // freien Platz wählen: ohne Zuordnung UND im Sensor leer (alte Abdrücke nicht überschreiben)
+          if (slot < 0)
+            for (int i = 0; i < 200; i++) {
+              const bool used = id(fp_idx_valid) && ((id(fp_idx)[i / 8] >> (i % 8)) & 1);
+              if (!(id(fp_map_v2)[i] & 0x8000) && !used) { slot = i; break; }
+            }
+          if (slot < 0) { id(fp_msg).execute("Kein freier Speicherplatz im Fingerprint-Sensor"); return; }
+          // Passt die neue Zuordnung noch in den Notizspeicher (512 Byte)? Sonst VOR dem Scannen ablehnen.
+          {
+            auto tm = id(fp_map_v2);
+            auto tp = id(fp_persons_v2);
+            if (tp[p][0] == 0) strncpy(tp[p].data(), name.c_str(), 15);
+            tm[slot] = key | a;
+            if (id(fp_export_str)(tm, tp).size() + 1 > 512) {
+              id(fp_msg).execute("Kein Platz mehr für die Sicherung im Sensor – kürzere Namen verwenden oder Finger löschen");
+              return;
+            }
+          }
+          id(fp_enroll_target) = slot;
+          id(fp_enroll_code) = key | a;
+          id(fp_enroll_pidx) = p;
+          id(fp_enroll_name) = name;
+          id(fp_msg).execute(std::string(again ? "Neu anlernen: " : "Anlernen: ") + name + ", "
+                             + id(fp_hand).current_option() + ", " + id(fp_finger).current_option()
+                             + " – Finger " + to_string((int) id(fp_enroll_scans).state) + "× auflegen");
+      - if:
+          condition:
+            lambda: 'return id(fp_enroll_target) >= 0;'
+          then:
+            - fingerprint_grow.enroll:
+                finger_id: !lambda 'return id(fp_enroll_target);'
+                num_scans: !lambda 'return (int) id(fp_enroll_scans).state;'
+            - lambda: 'id(fp)->aura_led_control(1, 100, 3, 0);'   # lila atmen = Finger auflegen
+
+  - platform: template
+    name: "Anlernen abbrechen"
+    id: fp_cancel_btn
+    icon: "mdi:cancel"
+    web_server:
+      sorting_group_id: sg_fp_enroll
+    on_press:
+      - fingerprint_grow.cancel_enroll:
+      - lambda: 'id(fp_enroll_target) = -1;'
+
+  # Nur die Aktion des gewählten Fingers ändern (ohne neu anzulernen)
+  - platform: template
+    name: "Aktion übernehmen"
+    icon: "mdi:check"
+    web_server:
+      sorting_group_id: sg_fp_enroll
+    on_press:
+      - lambda: |-
+          std::string name = id(fp_person).state;
+          name.erase(0, name.find_first_not_of(" "));
+          name.erase(name.find_last_not_of(" ") + 1);
+          for (auto &ch : name) if (ch == ',' || ch == '|') ch = ' ';   // Trennzeichen für Export
+          const int h = id(fp_hand).active_index().value_or(0);
+          const int f = id(fp_finger).active_index().value_or(0);
+          const int a = id(fp_enroll_action).active_index().value_or(1);
+          for (int p = 0; p < 16; p++) {
+            const char *n = id(fp_persons_v2)[p].data();
+            if (n[0] == 0 || std::string(n, strnlen(n, 15)) != name) continue;
+            const uint16_t key = 0x8000 | ((p & 7) << 12) | ((p & 8) << 1) | (h << 11) | (f << 8);
+            for (int i = 0; i < 200; i++) {
+              if ((id(fp_map_v2)[i] & 0xFFF0) != key) continue;
+              id(fp_map_v2)[i] = key | a;
+              global_preferences->sync();
+              id(fp_changed).execute();
+              id(fp_msg).execute("Aktion geändert: " + name + ", " + id(fp_hand).current_option() + ", "
+                                 + id(fp_finger).current_option() + " → " + id(fp_enroll_action).current_option());
+              return;
+            }
+          }
+          id(fp_msg).execute("Finger nicht gefunden – erst anlernen");
+
+  # Bereits angelernten Finger nachträglich zuordnen: Finger auflegen (am besten mit
+  # "Fingerprint aktiv" = aus, dann passiert am Schloss nichts), Person/Hand/Finger/Aktion
+  # wählen und diesen Button drücken. Der zuletzt erkannte Platz bekommt die Zuordnung.
+  - platform: template
+    name: "Letzten Finger zuordnen"
+    icon: "mdi:link-variant"
+    web_server:
+      sorting_group_id: sg_fp_enroll
+    on_press:
+      - lambda: |-
+          const int slot = id(fp_last_slot);
+          if (slot < 0) { id(fp_msg).execute("Erst einen Finger auflegen"); return; }
+          if (slot >= 200) { id(fp_msg).execute("Platz " + to_string(slot) + " liegt außerhalb 0-39 – bitte neu anlernen"); return; }
+          std::string name = id(fp_person).state;
+          name.erase(0, name.find_first_not_of(" "));
+          name.erase(name.find_last_not_of(" ") + 1);
+          for (auto &ch : name) if (ch == ',' || ch == '|') ch = ' ';   // Trennzeichen für Export
+          if (name.size() > 15) name.resize(15);
+          if (name.empty()) { id(fp_msg).execute("Bitte zuerst eine Person eintragen"); return; }
+          const int h = id(fp_hand).active_index().value_or(0);
+          const int f = id(fp_finger).active_index().value_or(0);
+          const int a = id(fp_enroll_action).active_index().value_or(1);
+          int p = -1, free_p = -1;
+          for (int i = 0; i < 16; i++) {
+            const char *n = id(fp_persons_v2)[i].data();
+            if (n[0] == 0) { if (free_p < 0) free_p = i; continue; }
+            if (std::string(n, strnlen(n, 15)) == name) { p = i; break; }
+          }
+          if (p < 0) p = free_p;
+          if (p < 0) { id(fp_msg).execute("Kein Platz für weitere Personen (max. 16)"); return; }
+          const uint16_t key = 0x8000 | ((p & 7) << 12) | ((p & 8) << 1) | (h << 11) | (f << 8);
+          for (int i = 0; i < 200; i++)
+            if (i != slot && (id(fp_map_v2)[i] & 0xFFF0) == key) {
+              id(fp_msg).execute("Dieser Finger ist schon Platz " + to_string(i) + " – dort erst löschen");
+              return;
+            }
+          // Passt die Zuordnung noch in den Notizspeicher? Sonst ablehnen.
+          {
+            auto tm = id(fp_map_v2);
+            auto tp = id(fp_persons_v2);
+            if (tp[p][0] == 0) strncpy(tp[p].data(), name.c_str(), 15);
+            tm[slot] = key | a;
+            if (id(fp_export_str)(tm, tp).size() + 1 > 512) {
+              id(fp_msg).execute("Kein Platz mehr für die Sicherung im Sensor – kürzere Namen verwenden oder Finger löschen");
+              return;
+            }
+          }
+          const int old_p = (id(fp_map_v2)[slot] & 0x8000) ? ((((id(fp_map_v2)[slot] >> 12) & 7) | ((id(fp_map_v2)[slot] >> 1) & 8))) : -1;
+          if (id(fp_persons_v2)[p][0] == 0) {
+            id(fp_persons_v2)[p].fill(0);
+            strncpy(id(fp_persons_v2)[p].data(), name.c_str(), 15);
+          }
+          id(fp_map_v2)[slot] = key | a;
+          // Person, die durch die Neuzuordnung keinen Finger mehr hat, entfernen
+          if (old_p >= 0 && old_p != p) {
+            bool used = false;
+            for (auto c : id(fp_map_v2)) if ((c & 0x8000) && ((((c >> 12) & 7) | ((c >> 1) & 8))) == old_p) used = true;
+            if (!used) id(fp_persons_v2)[old_p].fill(0);
+          }
+          global_preferences->sync();
+          id(fp_changed).execute();
+          id(fp_msg).execute("Zugeordnet: Platz " + to_string(slot) + " = " + name + ", " + id(fp_hand).current_option()
+                             + ", " + id(fp_finger).current_option() + " (" + id(fp_enroll_action).current_option() + ")");
+
+  # Beliebigen Speicherplatz per Nummer löschen (auch alte Finger ohne Zuordnung)
+  - platform: template
+    name: "Speicherplatz löschen"
+    icon: "mdi:delete-outline"
+    web_server:
+      sorting_group_id: sg_fp_enroll
+    on_press:
+      - fingerprint_grow.delete:
+          finger_id: !lambda 'return (int) id(fp_slot_nr).state;'
+      - lambda: |-
+          const int slot = (int) id(fp_slot_nr).state;
+          if (slot < 200 && (id(fp_map_v2)[slot] & 0x8000)) {
+            const int p = (((id(fp_map_v2)[slot] >> 12) & 7) | ((id(fp_map_v2)[slot] >> 1) & 8));
+            id(fp_map_v2)[slot] = 0;
+            bool used = false;
+            for (auto c : id(fp_map_v2)) if ((c & 0x8000) && ((((c >> 12) & 7) | ((c >> 1) & 8))) == p) used = true;
+            if (!used) id(fp_persons_v2)[p].fill(0);
+            global_preferences->sync();
+            id(fp_changed).execute();
+          }
+          id(fp_msg).execute("Speicherplatz " + to_string(slot) + " gelöscht");
+
+  # Zuordnung aus dem Notizspeicher des Sensors laden (ersetzt die Zuordnung auf dem ESP)
+  - platform: template
+    name: "Zuordnung aus Sensor laden"
+    icon: "mdi:database-arrow-down"
+    web_server:
+      sorting_group_id: sg_fp_enroll
+    on_press:
+      - script.execute: fp_np_wake
+      - script.wait: fp_np_wake
+      - lambda: |-
+          std::string data;
+          const int rc = id(fp_np_io)(id(uart_fp), 1, data, id(fp_idx));
+          if (rc != 0) { id(fp_msg).execute("Sensor-Speicher nicht lesbar (Code " + to_string(rc) + ")"); return; }
+          std::array<uint16_t, 200> nm{};
+          std::array<std::array<char, 16>, 16> np{};
+          std::string err;
+          int count = 0;
+          if (!id(fp_parse_str)(data, nm, np, err, count)) {
+            id(fp_msg).execute(data.empty() ? std::string("Im Sensor ist keine Zuordnung gespeichert") : "Sensor-Speicher ungültig: " + err);
+            return;
+          }
+          id(fp_np_last) = data;
+          id(fp_map_v2) = nm;
+          id(fp_persons_v2) = np;
+          global_preferences->sync();
+          std::string unused;
+          if (id(fp_np_io)(id(uart_fp), 2, unused, id(fp_idx)) == 0) id(fp_idx_valid) = true;
+          id(fp_overview).execute();
+          id(fp_msg).execute("Zuordnung aus dem Sensor geladen: " + to_string(count) + " Finger");
+
+  # Alle Finger löschen – Sicherung: innerhalb von 10 s zweimal drücken
+  - platform: template
+    name: "Alle Finger löschen (2× drücken)"
+    icon: "mdi:delete-sweep"
+    web_server:
+      sorting_group_id: sg_fp_enroll
+    on_press:
+      - if:
+          condition:
+            lambda: 'return id(fp_delall_armed) != 0 && (millis() - id(fp_delall_armed)) < 10000UL;'
+          then:
+            - lambda: 'id(fp_delall_armed) = 0;'
+            - fingerprint_grow.delete_all:
+            - lambda: |-
+                id(fp_map_v2).fill(0);
+                for (auto &p : id(fp_persons_v2)) p.fill(0);
+                global_preferences->sync();
+                id(fp_changed).execute();
+                id(fp_msg).execute("Alle Finger gelöscht");
+          else:
+            - lambda: |-
+                id(fp_delall_armed) = millis() | 1;   // nie 0
+                id(fp_msg).execute("Wirklich ALLE Finger löschen? Zum Bestätigen innerhalb von 10 s erneut drücken");
+
+  # Person umbenennen: "Person" = alter Name, "Neuer Name" = neuer Name. Finger, Plätze und Aktionen bleiben.
+  # Existiert der neue Name schon: Rückfrage, 2× drücken (10 s) führt beide Personen zusammen.
+  - platform: template
+    name: "Person umbenennen"
+    icon: "mdi:account-edit"
+    web_server:
+      sorting_group_id: sg_fp_enroll
+    on_press:
+      - lambda: |-
+          auto trim = [](std::string n) {
+            n.erase(0, n.find_first_not_of(" "));
+            n.erase(n.find_last_not_of(" ") + 1);
+            for (auto &ch : n) if (ch == ',' || ch == '|') ch = ' ';
+            if (n.size() > 15) n.resize(15);
+            return n;
+          };
+          const std::string oldn = trim(id(fp_person).state), newn = trim(id(fp_new_name).state);
+          if (oldn.empty()) { id(fp_msg).execute("Bitte bei „Person“ den bisherigen Namen eintragen"); return; }
+          if (newn.empty()) { id(fp_msg).execute("Bitte bei „Neuer Name“ einen Namen eintragen"); return; }
+          if (newn == oldn) { id(fp_msg).execute("Neuer Name ist gleich dem alten"); return; }
+          auto &per = id(fp_persons_v2);
+          auto &map = id(fp_map_v2);
+          int po = -1, pn = -1;
+          for (int i = 0; i < 16; i++) {
+            const std::string n(per[i].data(), strnlen(per[i].data(), 15));
+            if (per[i][0] == 0) continue;
+            if (n == oldn) po = i;
+            if (n == newn) pn = i;
+          }
+          if (po < 0) { id(fp_msg).execute("Person „" + oldn + "“ nicht gefunden"); return; }
+          auto pers_of = [](uint16_t c) { return (int) (((c >> 12) & 7) | ((c >> 1) & 8)); };
+          int fingers = 0;
+          for (auto c : map) if ((c & 0x8000) && pers_of(c) == po) fingers++;
+          if (pn < 0) {
+            // Umbenennen: passt der (evtl. längere) Name noch in die Sicherung im Sensor?
+            auto tp = per;
+            tp[po].fill(0);
+            strncpy(tp[po].data(), newn.c_str(), 15);
+            if (id(fp_export_str)(map, tp).size() + 1 > 512) {
+              id(fp_msg).execute("Kein Platz mehr für die Sicherung im Sensor – kürzeren Namen verwenden");
+              return;
+            }
+            per = tp;
+            id(fp_rename_armed) = 0;
+            global_preferences->sync();
+            id(fp_changed).execute();
+            id(fp_person).make_call().set_value(newn).perform();
+            id(fp_msg).execute("Umbenannt: " + oldn + " → " + newn + " (" + to_string(fingers) + " Finger)");
+            return;
+          }
+          // Neuer Name existiert schon -> Zusammenführen nur nach Bestätigung (2× drücken in 10 s)
+          const std::string pair = oldn + "|" + newn;
+          if (id(fp_rename_armed) == 0 || (millis() - id(fp_rename_armed)) >= 10000UL || id(fp_rename_pair) != pair) {
+            id(fp_rename_armed) = millis() | 1;
+            id(fp_rename_pair) = pair;
+            id(fp_msg).execute("„" + newn + "“ existiert bereits – zum Zusammenführen innerhalb von 10 s erneut drücken");
+            return;
+          }
+          id(fp_rename_armed) = 0;
+          // Gleicher Finger (Hand + Finger) bei beiden Personen? Dann ablehnen.
+          static const char *const fs[] = {"Daumen", "Zeige", "Mittel", "Ring", "Klein"};
+          std::string clash;
+          for (int i = 0; i < 200; i++) {
+            const uint16_t a = map[i];
+            if (!(a & 0x8000) || pers_of(a) != po) continue;
+            for (int j = 0; j < 200; j++) {
+              const uint16_t b = map[j];
+              if (!(b & 0x8000) || pers_of(b) != pn) continue;
+              if (((a >> 8) & 0x0F) == ((b >> 8) & 0x0F)) {   // Hand (Bit 11) + Finger (Bit 8-10)
+                if (!clash.empty()) clash += ", ";
+                clash += std::string(((a >> 11) & 1) ? "R-" : "L-") + fs[((a >> 8) & 7) % 5] +
+                         " (#" + to_string(i) + " und #" + to_string(j) + ")";
+              }
+            }
+          }
+          if (!clash.empty()) {
+            id(fp_msg).execute("Zusammenführen nicht möglich – beide haben " + clash + ". Erst einen davon löschen.");
+            return;
+          }
+          for (auto &c : map)
+            if ((c & 0x8000) && pers_of(c) == po)
+              c = (c & ~0x7010) | ((pn & 7) << 12) | ((pn & 8) << 1);   // Person-Bits ersetzen
+          per[po].fill(0);
+          global_preferences->sync();
+          id(fp_changed).execute();
+          id(fp_person).make_call().set_value(newn).perform();
+          id(fp_msg).execute("Zusammengeführt: " + oldn + " → " + newn + " (" + to_string(fingers) + " Finger)");
+
+  - platform: template
+    name: "Finger löschen"
+    icon: "mdi:delete"
+    web_server:
+      sorting_group_id: sg_fp_enroll
+    on_press:
+      - lambda: |-
+          id(fp_del_target) = -1;
+          std::string name = id(fp_person).state;
+          name.erase(0, name.find_first_not_of(" "));
+          name.erase(name.find_last_not_of(" ") + 1);
+          for (auto &ch : name) if (ch == ',' || ch == '|') ch = ' ';   // Trennzeichen für Export
+          const int h = id(fp_hand).active_index().value_or(0);
+          const int f = id(fp_finger).active_index().value_or(0);
+          for (int p = 0; p < 16 && id(fp_del_target) < 0; p++) {
+            const char *n = id(fp_persons_v2)[p].data();
+            if (n[0] == 0 || std::string(n, strnlen(n, 15)) != name) continue;
+            const uint16_t key = 0x8000 | ((p & 7) << 12) | ((p & 8) << 1) | (h << 11) | (f << 8);
+            for (int i = 0; i < 200; i++)
+              if ((id(fp_map_v2)[i] & 0xFFF0) == key) { id(fp_del_target) = i; break; }
+          }
+          if (id(fp_del_target) < 0) id(fp_msg).execute("Finger nicht gefunden");
+      - if:
+          condition:
+            lambda: 'return id(fp_del_target) >= 0;'
+          then:
+            - fingerprint_grow.delete:
+                finger_id: !lambda 'return id(fp_del_target);'
+            - lambda: |-
+                const int slot = id(fp_del_target);
+                const int p = (((id(fp_map_v2)[slot] >> 12) & 7) | ((id(fp_map_v2)[slot] >> 1) & 8));
+                id(fp_map_v2)[slot] = 0;
+                // Person ohne Finger aus der Liste entfernen
+                bool used = false;
+                for (auto c : id(fp_map_v2)) if ((c & 0x8000) && ((((c >> 12) & 7) | ((c >> 1) & 8))) == p) used = true;
+                if (!used) id(fp_persons_v2)[p].fill(0);
+                global_preferences->sync();
+                id(fp_changed).execute();
+                id(fp_msg).execute("Gelöscht: " + id(fp_person).state + ", " + id(fp_hand).current_option()
+                                   + ", " + id(fp_finger).current_option());
+                id(fp_del_target) = -1;
+
+text:
+  - platform: template
+    name: "Person"
+    id: fp_person
+    icon: "mdi:account"
+    mode: text
+    max_length: 15
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_enroll
+
+  - platform: template
+    name: "Neuer Name"
+    id: fp_new_name
+    icon: "mdi:account-edit-outline"
+    mode: text
+    max_length: 15
+    optimistic: true
+    initial_value: ""
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_enroll
+
+select:
+  - platform: template
+    name: "Hand"
+    id: fp_hand
+    icon: "mdi:hand-back-left"
+    options: ["Links", "Rechts"]
+    initial_option: "Rechts"
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_enroll
+
+  - platform: template
+    name: "Finger"
+    id: fp_finger
+    icon: "mdi:fingerprint"
+    options: ["Daumen", "Zeigefinger", "Mittelfinger", "Ringfinger", "Kleiner Finger"]
+    initial_option: "Daumen"
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_enroll
+
+  # Reihenfolge = gespeicherter Code (0-6), nicht ändern
+  - platform: template
+    name: "Aktion dieses Fingers"
+    id: fp_enroll_action
+    icon: "mdi:gesture-tap"
+    options: ["Standard", "Umschalten", "Aufschließen", "Zuschließen", "Öffnen", "Nur Klingel", "Gesperrt"]
+    initial_option: "Umschalten"
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_enroll
+
+  # Reihenfolge = Index im Skript fp_bell_rainbow, nicht ändern
+  - platform: template
+    name: "Klingel-Anzeige"
+    id: fp_bell_style
+    icon: "mdi:palette"
+    options: ["Regenbogen", "Weiß atmen", "Blau blinken", "Rot/Blau Wechsel", "Gelb/Grün Wechsel", "Aus"]
+    initial_option: "Regenbogen"
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_cfg
+
+  - platform: template
+    name: "Standard-Aktion (Finger ohne Zuordnung)"
+    id: fp_action
+    icon: "mdi:door-open"
+    options: ["Umschalten", "Öffnen", "Aufschließen"]
+    initial_option: "Öffnen"
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_cfg
+
+number:
+  - platform: template
+    name: "Max. Fehlversuche"
+    id: fp_max_attempts
+    icon: "mdi:counter"
+    mode: box
+    min_value: 1
+    max_value: 20
+    step: 1
+    initial_value: 5
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_cfg
+
+  - platform: template
+    name: "Sperrzeit nach Fehlversuchen"
+    id: fp_lock_minutes
+    icon: "mdi:timer-lock"
+    unit_of_measurement: "min"
+    mode: box
+    min_value: 1
+    max_value: 120
+    step: 1
+    initial_value: 5
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_cfg
+
+  - platform: template
+    name: "Min. Übereinstimmung"
+    id: fp_min_confidence
+    icon: "mdi:shield-check"
+    mode: box
+    min_value: 0
+    max_value: 300
+    step: 1
+    initial_value: 50
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_cfg
+
+  # Nach einer Aktion werden weitere Scans so lange ignoriert (kein Doppel-Umschalten)
+  - platform: template
+    name: "Scan-Pause nach Aktion"
+    id: fp_cooldown
+    icon: "mdi:timer-pause"
+    unit_of_measurement: "s"
+    mode: box
+    min_value: 0
+    max_value: 30
+    step: 1
+    initial_value: 3
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_cfg
+
+  # Wartezeit vor der Klingel: wird in dieser Zeit ein bekannter Finger erkannt
+  # (z. B. eigener Finger beim zweiten Versuch), klingelt es nicht
+  - platform: template
+    name: "Klingel-Verzögerung"
+    id: fp_bell_delay
+    icon: "mdi:timer-sand"
+    unit_of_measurement: "s"
+    mode: box
+    min_value: 0
+    max_value: 15
+    step: 1
+    initial_value: 5
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_cfg
+
+  - platform: template
+    name: "Klingel-Pause"
+    id: fp_bell_pause
+    icon: "mdi:bell-sleep"
+    unit_of_measurement: "s"
+    mode: box
+    min_value: 0
+    max_value: 600
+    step: 5
+    initial_value: 30
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_cfg
+
+  - platform: template
+    name: "Speicherplatz (Nr.)"
+    id: fp_slot_nr
+    icon: "mdi:numeric"
+    mode: box
+    min_value: 0
+    max_value: 199
+    step: 1
+    initial_value: 0
+    optimistic: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_enroll
+
+  - platform: template
+    name: "Anlern-Scans"
+    id: fp_enroll_scans
+    icon: "mdi:repeat"
+    mode: box
+    min_value: 1
+    max_value: 6
+    step: 1
+    initial_value: 3
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_enroll
+
+sensor:
+  - platform: fingerprint_grow
+    fingerprint_count:
+      name: "Fingerabdrücke gespeichert"
+      web_server:
+        sorting_group_id: sg_fp_enroll
+    last_finger_id:
+      name: "Letzte Finger-ID"
+      entity_category: diagnostic
+      web_server:
+        sorting_group_id: sg_diag
+    last_confidence:
+      name: "Letzte Übereinstimmung"
+      entity_category: diagnostic
+      web_server:
+        sorting_group_id: sg_diag
+    status:
+      name: "Fingerprint Status"
+      entity_category: diagnostic
+      web_server:
+        sorting_group_id: sg_diag
+    capacity:
+      name: "Fingerprint Kapazität"
+      entity_category: diagnostic
+      web_server:
+        sorting_group_id: sg_diag
+    security_level:
+      name: "Fingerprint Sicherheitsstufe"
+      entity_category: diagnostic
+      web_server:
+        sorting_group_id: sg_diag
+
+binary_sensor:
+  - platform: fingerprint_grow
+    id: fp_enrolling
+    name: "Fingerprint Anlernen aktiv"
+    web_server:
+      sorting_group_id: sg_fp_enroll
+  - platform: template
+    name: "Fingerprint gesperrt"
+    icon: "mdi:fingerprint-off"
+    lambda: |-
+      uint32_t lock_ms = (uint32_t) id(fp_lock_minutes).state * 60000UL;
+      return id(fp_locked) && (millis() - id(fp_lock_start)) < lock_ms;
+    web_server:
+      sorting_group_id: sg_fp

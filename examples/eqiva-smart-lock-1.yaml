@@ -1,0 +1,688 @@
+# ---------------------------------------------------------------
+# Eqiva Smart Lock – ESP32-C3 + optional R503 Fingerprint
+# Version 2.1.0 (2026-11-04) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Für ein weiteres Schloss: Datei kopieren (eqiva-smart-lock-2.yaml),
+# lock_nr ändern und die vier !secret-Namen unten auf _2_ anpassen.
+# Schloss-spezifisches (MAC, Keys) wird nur in der Web-GUI eingetragen.
+# (!secret kann keine Substitutions verwenden).
+# ---------------------------------------------------------------
+substitutions:
+  config_version: "2.1.0"   # Version dieser Konfiguration (siehe Kopfzeile)
+  lock_nr: "1"
+  # --- Funktionen ein-/ausschalten: true = an, false = aus ---
+  # (Nicht vorhandene Hardware einfach auf false setzen, sonst nichts ändern.)
+  use_fingerprint: "true"   # R503 Fingerprint
+  use_status_led: "true"    # WS2812 Status-LED
+  use_stats: "true"         # Statistik (Motorfahrten, Verbindungen)
+  use_schedule: "true"      # Zeitplan (Uhrzeit + Wochentage)
+  # TESTMODUS: true = kein echtes Schloss, Zustände werden simuliert (Fingerprint/LED/Zeitplan testen).
+  # Für den Betrieb am Schloss unbedingt wieder auf false stellen!
+  use_simulation: "false"
+  # use_door: "false"       # Reedkontakt / Auto-Lock (folgt)
+  # use_button: "false"     # Taster innen (folgt)
+  # use_keypad: "false"     # Wiegand-Keypad (folgt)
+  # --- Pinbelegung ESP32-C3 (alle Pakete, an einer Stelle) ---
+  # Strapping-Pins 2, 8, 9 möglichst meiden (8 = eingebaute LED, 9 = BOOT-Taste).
+  fp_tx_pin: GPIO20         # R503 braun  (RX des Sensors)
+  fp_rx_pin: GPIO21         # R503 gelb   (TX des Sensors)
+  fp_sensing_pin: GPIO6     # R503 blau   (WAKEUP)
+  fp_power_pin: GPIO7       # 10 kΩ -> Basis BC559C (PNP schaltet R503 rot); weiß an 3,3 V
+  status_led_pin: GPIO8     # eingebaute LED; externe WS2812-Kette: GPIO10
+  status_led_count: "1"     # Anzahl WS2812 in Reihe (DIN -> DOUT)
+  # Reserviert für spätere Pakete:
+  door_contact_pin: GPIO4   # Reedkontakt gegen GND (geschlossen = Tür zu)
+  button_pin: GPIO3         # Taster innen gegen GND
+  wiegand_d0_pin: GPIO0     # Keypad D0 (grün) – nur mit Pegelanpassung!
+  wiegand_d1_pin: GPIO1     # Keypad D1 (weiß) – nur mit Pegelanpassung!
+  # frei: GPIO5 (z. B. DS18B20/Buzzer), GPIO10 (falls keine externe LED)
+  name: eqiva-smart-lock-${lock_nr}
+  friendly_name: Eqiva Smart Lock ${lock_nr}
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  # Erscheint im Start-Log und in den Geräteinformationen in Home Assistant
+  project:
+    name: "eqiva.smart-lock"
+    version: ${config_version}
+  on_boot:
+    # Energiemodus und zugehörige Werte aus den (gespeicherten) Einstellungen übernehmen
+    - priority: -50
+      then:
+        - lambda: |-
+            auto opt = id(power_mode).current_option();
+            id(key_ble)->set_power_mode(opt == "Sparsam" ? 2 : (opt == "Ausgewogen" ? 1 : 0));
+            id(key_ble)->set_balanced_interval_ms((uint32_t) id(balanced_interval).state);
+            id(key_ble)->set_idle_timeout((uint32_t) id(eco_idle_timeout).state * 1000UL);
+            id(key_ble)->set_eco_poll_interval((uint32_t) id(eco_poll_interval).state * 60000UL);
+    # Fallback: Kommt nach 60 s kein WLAN, BLE trotzdem starten,
+    # damit das Schloss (und der Fingerprint) auch ohne WLAN/HA funktioniert.
+    - priority: -100
+      then:
+        - delay: 60s
+        - if:
+            condition:
+              not:
+                wifi.connected:
+            then:
+              - logger.log:
+                  level: WARN
+                  format: "Kein WLAN - starte BLE im Offline-Modus"
+              - script.execute: ble_start
+
+esp32:
+  board: esp32-c3-devkitm-1
+  variant: esp32c3
+  flash_size: 4MB
+  framework:
+    type: esp-idf
+    version: recommended
+    sdkconfig_options:
+      # vom Repo-Beispiel empfohlen, verhindert Watchdog-Reboots beim Verschlüsseln
+      CONFIG_BOOTLOADER_WDT_TIME_MS: "60000"
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG   # Log über USB, UART bleibt frei für den R503
+  level: DEBUG          # eingebaute Stufe: DEBUG ist in der Firmware verfügbar ...
+  initial_level: INFO   # ... aktiv ist nach dem Start aber nur INFO.
+                        # Umschalten im Betrieb: Web-GUI/HA -> "Log-Stufe" (Diagnose)
+
+api:
+  encryption:
+    key: !secret eqiva_smart_lock_1_api_key
+  reboot_timeout: 0s               # kein Neustart, wenn HA weg ist
+
+ota:
+  - platform: esphome
+    password: !secret eqiva_smart_lock_1_ota_password
+
+safe_mode:
+
+# Änderungen gebündelt alle 5 min in den Flash schreiben (schont den Flash).
+# Wichtige Daten (User Key/ID nach dem Pairing, Pairing-Info) werden zusätzlich
+# sofort gespeichert (global_preferences->sync()), bei Neustart/OTA ohnehin.
+preferences:
+  flash_write_interval: 5min
+
+web_server:
+  version: 3
+  port: 80
+  local: false
+  # Anleitung (Werksreset & Pairing) als aufklappbarer Textblock oben in der Web-GUI.
+  # Datei liegt neben dieser YAML und wird in die Firmware eingebettet.
+  js_include: eqiva-smart-lock-guide.js
+  auth:
+    type: digest          # Passwort nicht im Klartext übers Netz (Standard ab ESPHome 2027.1)
+    username: admin
+    password: !secret eqiva_smart_lock_1_web_password
+  sorting_groups:
+    - id: sg_lock
+      name: "Schloss"
+      sorting_weight: -30
+    - id: sg_guide
+      name: "Einrichtung"
+      sorting_weight: -6
+    - id: sg_power
+      name: "Energiemodus"
+      sorting_weight: -3
+    - id: sg_ble
+      name: "Eqiva Verbindung / Pairing"
+      sorting_weight: -5
+    - id: sg_lock_cfg
+      name: "Schloss Einstellungen"
+      sorting_weight: -4
+    - id: sg_diag
+      name: "Diagnose"
+      sorting_weight: 0
+
+wifi:
+  ssid: !secret iot_wifi_ssid
+  password: !secret iot_wifi_password
+  reboot_timeout: 0s               # ohne WLAN nicht alle 15 min neu starten -> Fingerprint läuft weiter
+  ap:
+    ssid: "Eqiva-Smart-Lock-${lock_nr}"
+    password: !secret eqiva_smart_lock_1_ap_password
+  # BLE erst nach WLAN starten (esphome/issues#2941), danach dauerhaft laufen lassen.
+  # Kein stop_scan bei WLAN-Verlust mehr: sonst wäre das Schloss offline nicht erreichbar.
+  on_connect:
+    - script.execute: ble_start
+
+# captive_portal:   # weggelassen, spart Flash (Fallback-WLAN + Web-GUI gehen trotzdem)
+
+# ---------------------------------------------------------------
+# Optionale Hardware als Pakete (für alle Schlösser gemeinsam nutzbar).
+# Ein/aus über die use_…-Schalter oben unter substitutions – hier nichts ändern.
+# Ein ausgeschaltetes Paket wird gar nicht geladen (kein Flash, keine Entitäten).
+# ---------------------------------------------------------------
+packages:
+  - !include
+    file: eqiva-smart-lock-fingerprint.yaml   # R503 Fingerprint
+    condition: ${use_fingerprint}
+  - !include
+    file: eqiva-smart-lock-status-led.yaml    # WS2812 Status-LED (Pin: status_led_pin)
+    condition: ${use_status_led}
+  - !include
+    file: eqiva-smart-lock-stats.yaml         # Statistik (Motorfahrten, Verbindungen)
+    condition: ${use_stats}
+  - !include
+    file: eqiva-smart-lock-schedule.yaml      # Zeitplan (Uhrzeit + Wochentage)
+    condition: ${use_schedule}
+  - !include
+    file: eqiva-smart-lock-simulation.yaml    # Testmodus: Bedienelemente für das simulierte Schloss
+    condition: ${use_simulation}
+
+# Komponente direkt aus dem Fork laden (2nice4u ersetzen).
+# Alternativ lokal: source: { type: local, path: eqiva_components }
+external_components:
+  - source: github://2nice4u/esphome-components-eqiva@main
+    refresh: 1d
+
+# ---------------------------------------------------------------
+# Eqiva BLE
+# ---------------------------------------------------------------
+esp32_ble_tracker:
+  scan_parameters:
+    window: 300ms
+    continuous: false
+
+# Nur zur Diagnose: meldet jedes gefundene Eqiva-Schloss im Log ("Found Eqiva device ...").
+# Für den Betrieb nicht nötig (MAC kommt aus dem QR-Code). Bei Bedarf wieder einkommentieren.
+# eqiva_ble:
+
+eqiva_key_ble:
+  id: key_ble
+  simulate: ${use_simulation}   # Testmodus (siehe substitutions)
+  command_timeout: 30s   # Befehl verfällt, wenn das Schloss so lange nicht erreichbar ist (Sparmodus braucht Puffer)
+  # Pairing-Info dauerhaft merken, sobald das Schloss ein Pairing bestätigt hat
+  on_paired:
+    - globals.set:
+        id: paired_uid
+        value: !lambda 'return user_id;'
+    - text.set:
+        id: pairing_info_store
+        value: !lambda |-
+          // Seriennummer steht am Ende des QR-Texts (M<MAC>K<Key><Seriennr.>)
+          const std::string &q = id(card_key).state;
+          std::string sn = q.size() >= 56 ? q.substr(46) : std::string("?");
+          char date[16] = "";
+          auto now = id(ha_time).now();
+          if (now.is_valid())
+            snprintf(date, sizeof(date), " am %02d.%02d.%04d", now.day_of_month, now.month, now.year);
+          char buf[100];
+          snprintf(buf, sizeof(buf), "User %d · %s · SN %s%s", user_id, id(mac_address).state.c_str(), sn.c_str(), date);
+          return std::string(buf);
+    - lambda: 'global_preferences->sync();'   # sofort sichern
+
+script:
+  # startet Scan + Verbindung genau einmal pro Boot
+  - id: ble_start
+    mode: single
+    then:
+      - if:
+          condition:
+            lambda: 'return !id(ble_started);'
+          then:
+            - lambda: 'id(ble_started) = true;'
+            - esp32_ble_tracker.start_scan:
+                continuous: true
+            - eqiva_key_ble.connect:
+                mac_address: !lambda 'return id(mac_address).state;'
+                user_id: !lambda 'return id(user_id).state;'
+                user_key: !lambda 'return id(user_key).state;'
+
+globals:
+  - id: ble_started
+    type: bool
+    initial_value: 'false'
+  # User-ID, mit der dieses Schloss gekoppelt wurde (-1 = unbekannt)
+  - id: paired_uid
+    type: int
+    restore_value: true
+    initial_value: '-1'
+
+# Datum für die Pairing-Info (von Home Assistant)
+time:
+  - platform: homeassistant
+    id: ha_time
+
+# Keepalive bzw. periodische Status-Abfrage übernimmt jetzt die Komponente selbst,
+# abhängig vom Energiemodus (Schnell/Ausgewogen: alle 4 min, Sparsam: einstellbar).
+
+# ---------------------------------------------------------------
+# Buttons
+# ---------------------------------------------------------------
+button:
+  - platform: restart
+    name: "ESP Restart"
+    icon: "mdi:restart"
+    web_server:
+      sorting_group_id: sg_diag
+
+  # --- Eqiva ---
+  - platform: template
+    id: ble_settings
+    name: BLE Settings _Save_
+    icon: "mdi:content-save"
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_ble
+    on_press:
+      - eqiva_key_ble.connect:
+          mac_address: !lambda 'return id(mac_address).state;'
+          user_id: !lambda 'return id(user_id).state;'
+          user_key: !lambda 'return id(user_key).state;'
+
+  - platform: template
+    id: ble_disconnect
+    name: BLE Settings _Disconnect_
+    icon: "mdi:close"
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_ble
+    on_press:
+      - eqiva_key_ble.disconnect:
+
+  - platform: template
+    id: ble_pair
+    name: BLE Pair _Start_
+    icon: "mdi:check-underline"
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_ble
+    on_press:
+      # MAC automatisch aus dem QR-Text übernehmen (Format: M<12 Hex-MAC>K<Card Key><Seriennr.>)
+      - if:
+          condition:
+            lambda: |-
+              const std::string &q = id(card_key).state;
+              return q.size() >= 46 && (q[0] == 'M' || q[0] == 'm') && (q[13] == 'K' || q[13] == 'k');
+          then:
+            - text.set:
+                id: mac_address
+                value: !lambda |-
+                  const std::string &q = id(card_key).state;
+                  std::string m;
+                  for (int i = 1; i <= 12; i++) {
+                    m += (char) toupper((unsigned char) q[i]);
+                    if (i % 2 == 0 && i < 12) m += ':';
+                  }
+                  return m;
+      - eqiva_key_ble.pair:
+          card_key: !lambda 'return id(card_key).state;'
+          mac_address: !lambda 'return id(mac_address).state;'
+
+  - platform: template
+    id: lock_settings
+    name: Lock Settings _Apply_
+    icon: "mdi:check-underline"
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_lock_cfg
+    on_press:
+      - eqiva_key_ble.settings:
+          turn_left: !lambda 'return id(direction).current_option() == "Left";'
+          key_horizontal: !lambda 'return id(position).current_option() == "Horizontal";'
+          lock_turns: !lambda 'return atoi(id(turns).current_option().str().c_str());'
+
+# ---------------------------------------------------------------
+# Einstellungen (alle in der Web-GUI, im Flash gespeichert)
+# ---------------------------------------------------------------
+number:
+  # --- Energiemodus ---
+  - platform: template
+    name: "Ausgewogen: Verbindungsabstand"
+    id: balanced_interval
+    icon: "mdi:timer-sand"
+    unit_of_measurement: "ms"
+    mode: box
+    min_value: 30
+    max_value: 1000
+    step: 10
+    initial_value: 100
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_power
+    on_value:
+      - lambda: 'id(key_ble)->set_balanced_interval_ms((uint32_t) x);'
+
+  - platform: template
+    name: "Sparsam: Trennen nach Leerlauf"
+    id: eco_idle_timeout
+    icon: "mdi:link-off"
+    unit_of_measurement: "s"
+    mode: box
+    min_value: 10
+    max_value: 300
+    step: 5
+    initial_value: 30
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_power
+    on_value:
+      - lambda: 'id(key_ble)->set_idle_timeout((uint32_t) x * 1000UL);'
+
+  - platform: template
+    name: "Sparsam: Status-Abfrage alle"
+    id: eco_poll_interval
+    icon: "mdi:update"
+    unit_of_measurement: "min"
+    mode: box
+    min_value: 5
+    max_value: 240
+    step: 5
+    initial_value: 30
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_power
+    on_value:
+      - lambda: 'id(key_ble)->set_eco_poll_interval((uint32_t) x * 60000UL);'
+
+  # --- Eqiva ---
+  - platform: template
+    mode: box
+    name: BLE Settings User ID
+    id: user_id
+    min_value: 0
+    max_value: 7
+    step: 1
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_ble
+
+text:
+  # Gespeicherte Pairing-Info (intern, Anzeige über den Text-Sensor "Pairing-Info")
+  - platform: template
+    id: pairing_info_store
+    internal: true
+    mode: text
+    max_length: 100
+    optimistic: true
+    restore_value: true
+  - platform: template
+    mode: text
+    name: BLE Settings Mac Address
+    id: mac_address
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_ble
+  - platform: template
+    mode: password
+    name: BLE Settings User Key
+    id: user_key
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_ble
+  - platform: template
+    mode: password
+    name: BLE Pair Card Key
+    id: card_key
+    optimistic: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_ble
+
+select:
+  # Wie verhält sich "Öffnen"? Hängt davon ab, was außen an der Tür ist.
+  - platform: template
+    name: "Türgriff außen"
+    id: door_handle
+    icon: "mdi:door"
+    options: ["Knauf", "Türklinke"]
+    initial_option: "Knauf"
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_lock_cfg
+  # Log-Stufe im laufenden Betrieb umschalten (bis maximal "logger: level")
+  - platform: logger
+    name: "Log-Stufe"
+    entity_category: diagnostic
+    web_server:
+      sorting_group_id: sg_diag
+  # Energiemodus (live umschaltbar, wird gespeichert)
+  #  Schnell:    Dauerverbindung, schnellste Reaktion, höchster Batterieverbrauch im Schloss
+  #  Ausgewogen: Dauerverbindung mit längerem Verbindungsabstand (siehe unten)
+  #  Sparsam:    verbindet nur bei Bedarf, trennt nach Leerlauf, Status periodisch
+  - platform: template
+    name: "Energiemodus"
+    id: power_mode
+    icon: "mdi:battery-heart-variant"
+    options: ["Schnell", "Ausgewogen", "Sparsam"]
+    initial_option: "Schnell"
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_power
+    on_value:
+      - lambda: 'id(key_ble)->set_power_mode(i);'
+  - platform: template
+    name: Lock Settings Close Direction
+    id: direction
+    options: ["Left", "Right"]
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_lock_cfg
+  - platform: template
+    name: Lock Settings Key Position
+    id: position
+    options: ["Vertical", "Horizontal"]
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_lock_cfg
+  - platform: template
+    name: Lock Settings Turns
+    id: turns
+    options: ["1", "2", "3", "4"]
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_lock_cfg
+
+# ---------------------------------------------------------------
+# Sensoren
+# ---------------------------------------------------------------
+sensor:
+  # Bluetooth-Empfang der aktiven Verbindung zum Schloss (live, alle 15 s, keine MAC nötig)
+  - platform: eqiva_key_ble
+    rssi:
+      name: "Schloss Signal"
+      id: lock_rssi
+      # Bewertung: siehe Anleitung in der Web-GUI (>= -70 gut, -70 bis -85 mittel, < -85 schlecht)
+      filters:
+        - delta: 2.0   # nur senden, wenn sich der Wert um mindestens 2 dBm ändert (glättet Rauschen)
+      web_server:
+        sorting_group_id: sg_lock
+  - platform: wifi_signal
+    name: "WLAN Signal"
+    update_interval: 60s
+    entity_category: diagnostic
+    web_server:
+      sorting_group_id: sg_diag
+  - platform: uptime
+    name: "Uptime"
+    entity_category: diagnostic
+    web_server:
+      sorting_group_id: sg_diag
+  - platform: internal_temperature
+    name: "ESP Temperatur"
+    entity_category: diagnostic
+    web_server:
+      sorting_group_id: sg_diag
+
+binary_sensor:
+  - platform: template
+    name: "Batterie schwach"
+    device_class: battery
+    lambda: 'return id(low_battery_txt).state == "true";'
+    web_server:
+      sorting_group_id: sg_lock
+text_sensor:
+  # Mit welcher User-ID und welchem Schloss gekoppelt wurde (dauerhaft gespeichert)
+  - platform: template
+    name: "Pairing-Info"
+    icon: "mdi:card-account-details"
+    update_interval: 10s
+    lambda: |-
+      // Nur bei Änderung an HA/Web-GUI senden (spart Funkverkehr)
+      static std::string last;
+      const std::string s = [&]() -> std::string {
+        if (id(pairing_info_store).state.empty())
+          return std::string("noch unbekannt");
+        return id(pairing_info_store).state;
+      }();
+      if (s == last) return {};
+      last = s;
+      return s;
+    web_server:
+      sorting_group_id: sg_guide
+  # Zeigt, welcher Einrichtungsschritt als Nächstes dran ist
+  - platform: template
+    name: "Einrichtungsstatus"
+    icon: "mdi:list-status"
+    update_interval: 5s
+    lambda: |-
+      // Nur bei Änderung an HA/Web-GUI senden (spart Funkverkehr)
+      static std::string last;
+      const std::string s = [&]() -> std::string {
+        if (id(key_ble)->is_simulated())
+          return std::string("🧪 TESTMODUS – kein echtes Schloss (use_simulation: false zum Betrieb)");
+        if (id(mac_address).state.empty())
+          return std::string("① Nicht eingerichtet: Card Key eintragen (Schritt 2)");
+        if (id(paired_uid) >= 0 && (int) id(user_id).state != id(paired_uid)) {
+          char b[100];
+          snprintf(b, sizeof(b), "⚠️ User ID %d eingestellt, gekoppelt wurde User %d (siehe Pairing-Info)",
+                   (int) id(user_id).state, id(paired_uid));
+          return std::string(b);
+        }
+        if (id(user_key).state.size() != 32)
+          return std::string("② Nicht gekoppelt: Pairing durchführen (Schritt 3)");
+        const bool eco = id(power_mode).current_option() == "Sparsam";
+        if (id(ble_state).state != "ESTABLISHED") {
+          if (eco && !id(lock_status).state.empty())
+            return std::string("✅ Gekoppelt (Sparsam: verbindet nur bei Bedarf)");
+          return std::string("🔄 Keine Verbindung: Empfang prüfen, 'BLE Settings _Save_' drücken oder neu pairen");
+        }
+        if (id(lock_status).state.empty())
+          return std::string("⏳ Verbunden, warte auf Antwort vom Schloss …");
+        return std::string("✅ Gekoppelt und verbunden");
+      }();
+      if (s == last) return {};
+      last = s;
+      return s;
+    web_server:
+      sorting_group_id: sg_guide
+  - platform: eqiva_key_ble
+    mac_address:
+      name: "Mac Address"
+      entity_category: diagnostic
+      web_server:
+        sorting_group_id: sg_diag
+    lock_status:
+      name: "Lock Status"
+      id: lock_status
+      web_server:
+        sorting_group_id: sg_lock
+      # Bestehendes Pairing nachträglich erkennen: eine gültige Antwort beweist,
+      # dass eingestellte User-ID und Schlüssel zum Schloss passen.
+      on_value:
+        - if:
+            condition:
+              lambda: 'return id(paired_uid) < 0 && !x.empty();'
+            then:
+              - globals.set:
+                  id: paired_uid
+                  value: !lambda 'return (int) id(user_id).state;'
+              - text.set:
+                  id: pairing_info_store
+                  value: !lambda |-
+                    char buf[100];
+                    snprintf(buf, sizeof(buf), "User %d · %s (nachträglich erkannt)",
+                             (int) id(user_id).state, id(mac_address).state.c_str());
+                    return std::string(buf);
+    low_battery:
+      id: low_battery_txt
+      internal: true
+    lock_ble_state:
+      name: "Lock BLE State"
+      id: ble_state
+      entity_category: diagnostic
+      web_server:
+        sorting_group_id: sg_diag
+    user_id:
+      name: "User ID"
+      entity_category: diagnostic
+      web_server:
+        sorting_group_id: sg_diag
+      on_value:
+        - if:
+            condition:
+              lambda: 'return !x.empty() && atoi(x.c_str()) != (int) id(user_id).state;'
+            then:
+              - number.set:
+                  id: user_id
+                  value: !lambda 'return atoi(x.c_str());'
+              - lambda: 'global_preferences->sync();'   # sofort sichern
+    user_key:
+      id: user_key_txt   # Pflicht bei internal ohne name
+      internal: true
+      on_value:
+        - if:
+            condition:
+              lambda: 'return !x.empty() && x != id(user_key).state;'
+            then:
+              - text.set:
+                  id: user_key
+                  value: !lambda 'return x;'
+              - logger.log: "User Key nach Pairing übernommen"
+              - lambda: 'global_preferences->sync();'   # sofort sichern, nicht erst nach 5 min
+
+# ---------------------------------------------------------------
+# Lock-Entität (HA + Web-GUI)
+# ---------------------------------------------------------------
+lock:
+  - platform: template
+    name: "Schloss"   # HA zeigt: "Eqiva Smart Lock 1 Schloss"
+    web_server:
+      sorting_group_id: sg_lock
+    lambda: |-
+      const auto &s = id(lock_status).state;
+      if (s == "LOCKED") return LOCK_STATE_LOCKED;
+      if (s == "UNLOCKED" || s == "OPENED") return LOCK_STATE_UNLOCKED;
+      if (s == "UNKNOWN") return LOCK_STATE_JAMMED;
+      return {};
+    lock_action:
+      - eqiva_key_ble.lock:
+    unlock_action:
+      - eqiva_key_ble.unlock:
+    # "Öffnen" hängt vom Türgriff ab (Auswahl "Türgriff außen"):
+    #   Knauf     -> komplett öffnen (aufschließen + Falle ziehen), Tür lässt sich aufziehen
+    #   Türklinke -> nur aufschließen, die Klinke drückt man selbst
+    open_action:
+      - if:
+          condition:
+            lambda: 'return id(door_handle).current_option() == "Knauf";'
+          then:
+            - eqiva_key_ble.open:
+          else:
+            - logger.log: "Türgriff außen = Türklinke - schließe nur auf"
+            - eqiva_key_ble.unlock:
+
