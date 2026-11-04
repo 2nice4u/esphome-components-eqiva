@@ -90,7 +90,7 @@ const GUIDE_HTML = `
   <ul>
     <li><b>Finger wird schlecht erkannt:</b> dieselbe Person/Hand/Finger wählen und erneut <b>Finger anlernen</b> –
         der alte Abdruck wird überschrieben.</li>
-    <li><b>Person umbenennen</b> (z.&nbsp;B. „Stephan“ → „St“): bei <b>Person</b> den alten, bei <b>Neuer Name</b> den
+    <li><b>Person umbenennen</b> (z.&nbsp;B. „Maximilian“ → „Max“): bei <b>Person</b> den alten, bei <b>Neuer Name</b> den
         neuen Namen eintragen, <b>Person umbenennen</b> drücken. Finger, Plätze und Aktionen bleiben, nichts neu anlernen.
         Gibt es den neuen Namen schon, fragt der ESP nach: innerhalb von 10&nbsp;s erneut drücken führt beide Personen
         zusammen. Haben beide denselben Finger (z.&nbsp;B. beide R-Daumen), wird abgelehnt – erst einen davon löschen.</li>

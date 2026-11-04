@@ -65,7 +65,7 @@ werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
 ### Geändert
 - „Angelernte Finger“ kompakter: je Person und Finger, beide Hände mit gleicher Aktion zusammengefasst –
-  z. B. `Stephan: Daumen L+R ⇄ · Claudi: Daumen L+R ⇄`. Speicherplätze stehen weiterhin im Log.
+  z. B. `Max: Daumen L+R ⇄ · Anna: Daumen L+R ⇄`. Speicherplätze stehen weiterhin im Log.
 
 ### Entfernt
 - Web-Export/-Import der Zuordnung („Zuordnung exportieren“, „Zuordnung (Export)“, „Zuordnung (Import)“,

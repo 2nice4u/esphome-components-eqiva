@@ -22,7 +22,7 @@
 
 api:
   actions:
-    # Anlernen aus HA, z. B. person: "Stephan", hand: "Rechts", finger: "Daumen", aktion: "Umschalten"
+    # Anlernen aus HA, z. B. person: "Max", hand: "Rechts", finger: "Daumen", aktion: "Umschalten"
     - action: fp_enroll
       variables:
         person: string
@@ -122,7 +122,7 @@ globals:
   - id: fp_start_exec
     type: bool
     initial_value: 'false'
-  - id: fp_who                # z. B. "Stephan, rechter Daumen"
+  - id: fp_who                # z. B. "Max, rechter Daumen"
     type: std::string
     initial_value: '""'
   - id: fp_pending_cmd        # 0 nichts, 1 aufschließen, 2 zuschließen, 3 öffnen
