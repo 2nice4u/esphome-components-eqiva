@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # Statistik – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 2.1.0 (2026-11-04) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.0.0 (2026-11-06) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Einbinden:   packages:
 #                stats: !include eqiva-smart-lock-stats.yaml
 #
@@ -10,6 +10,9 @@
 # Alle Werte bleiben über Neustarts und OTA erhalten. Bei Stromausfall geht höchstens die Zeit
 # seit dem letzten Speichern verloren (einstellbar: "Statistik: Speichern alle", Standard 15 min).
 # ---------------------------------------------------------------
+
+substitutions:
+  version_check: "true"     # Standard, wird von der Hauptdatei überschrieben
 
 web_server:
   sorting_groups:
@@ -192,3 +195,12 @@ button:
           id(stat_conn_ram) = 0;
           id(stat_total_ram) = 0;
           ESP_LOGI("stats", "Statistik zurückgesetzt");
+
+# Versionsprüfung (wird nie ausgeführt, nur beim Kompilieren geprüft)
+script:
+  - id: ver_check_stats
+    then:
+      - lambda: |-
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.0.0") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-stats.yaml ist 3.0.0, Hauptdatei ist ${config_version} "
+                        "(alle Dateien gleicher Version verwenden oder version_check: false)");

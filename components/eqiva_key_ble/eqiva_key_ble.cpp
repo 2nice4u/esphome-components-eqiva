@@ -7,6 +7,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstring>
+#include <ctime>
 #include "esp_random.h"
 
 #ifdef USE_ESP32
@@ -22,6 +23,8 @@ static const char *const TAG = "eqiva_key_ble";
 // -----------------------------------------------------------------------------
 void EqivaKeyBle::setup() {
   BLEClientBase::setup();
+  this->set_interval("eqiva_events", 1000, [this]() { this->ev_tick_(); });
+  this->publish_events_();
   if (this->simulate_) {
     // Simulation: kein BLE-Verbindungsaufbau, nur nachgebildetes Schloss
     this->set_auto_connect(false);
@@ -57,6 +60,7 @@ void EqivaKeyBle::watchdog_() {
     ESP_LOGW(TAG, "Zurückgehaltene Nachricht 0x%02X nach %u ms verworfen (Schloss nicht erreichbar)",
              (uint8_t) currentMsg->id, (unsigned) command_timeout_);
     clear_pending_();
+    this->ev_fail_("Schloss nicht erreichbar");
   }
 
   // Pairing-Anfrage nach 2 min verwerfen
@@ -519,6 +523,7 @@ bool EqivaKeyBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t 
               if (this->lock_status_sensor_ != nullptr)
                 this->lock_status_sensor_->publish_state(lockStatus);
               this->publish_(this->low_battery_sensor_, message.isBatteryLow() ? "true" : "false");
+              this->on_lock_state_(message.getLockStatus());
 
               ESP_LOGD(TAG, "# Lock state: %d, battery low: %s", message.getLockStatus(), message.isBatteryLow() ? "true" : "false");
               break;
@@ -551,6 +556,18 @@ void EqivaKeyBle::init() {
 }
 
 void EqivaKeyBle::sendCommand(CommandType command) {
+  if (command == LOCK || command == UNLOCK || command == OPEN) {
+    // Ereignisprotokoll: Auslöser merken, Bestätigung kommt über den Status
+    const uint32_t now = millis();
+    const bool src_ok = !cmd_source_.empty() && (now - cmd_source_at_) < 3000;
+    ev_pending_ = (int) command;
+    ev_pending_src_ = src_ok ? cmd_source_ : std::string("HA/Web");
+    ev_pending_at_ = now;
+    ev_moved_ = false;
+    last_command_ms_ = now;
+    last_command_valid_ = true;
+    cmd_source_.clear();
+  }
   if (this->simulate_) {
     // Befehle haben Vorrang vor Status-Abfragen (wie beim echten Schloss)
     if (!(command == REQUEST_STATUS && sim_pending_ >= 0 && sim_pending_ != REQUEST_STATUS)) {
@@ -750,6 +767,7 @@ void EqivaKeyBle::sim_publish_state_(uint8_t st) {
   if (this->lock_status_sensor_ != nullptr)
     this->lock_status_sensor_->publish_state(names[st <= 4 ? st : 0]);
   this->publish_(this->low_battery_sensor_, "false");
+  this->on_lock_state_(st <= 4 ? st : 0);
 }
 
 void EqivaKeyBle::sim_set_connected_(bool c) {
@@ -794,6 +812,14 @@ void EqivaKeyBle::sim_execute_(int cmd) {
   sim_publish_state_(1);   // MOVING
 }
 
+void EqivaKeyBle::sim_turn_by_hand() {
+  if (!simulate_ || sim_target_ != 0) return;
+  ESP_LOGI(SIM_TAG, "Simulation: von Hand gedreht");
+  sim_target_ = sim_state_ == 3 ? 2 : 3;
+  sim_move_end_ = millis() + 1500;
+  sim_publish_state_(1);
+}
+
 void EqivaKeyBle::sim_tick_() {
   const uint32_t now = millis();
   // Verbindungsaufbau
@@ -810,6 +836,7 @@ void EqivaKeyBle::sim_tick_() {
     } else if ((now - sim_pending_since_) > command_timeout_) {
       ESP_LOGW(SIM_TAG, "Simulation: Befehl verworfen (Schloss nicht erreichbar)");
       sim_pending_ = -1;
+      this->ev_fail_("Schloss nicht erreichbar");
       if (sim_connecting_) {
         sim_connecting_ = false;
         this->publish_(this->lock_ble_state_sensor_, "IDLE");
@@ -846,6 +873,106 @@ void EqivaKeyBle::sim_tick_() {
   if (sim_reachable_ && !sim_connected_ && !sim_connecting_ && power_mode_ != POWER_ECO)
     this->sim_connect();
 }
+
+// ---------------------------------------------------------------
+// Ereignisprotokoll: wer hat wann auf-/zugeschlossen, Hand-Bedienung,
+// fehlgeschlagene Befehle. Weitere Einträge (Klingel, Sabotage …) kommen
+// über log_event() aus den YAML-Paketen.
+// ---------------------------------------------------------------
+static const char *const EV_TAG = "eqiva_event";
+
+void EqivaKeyBle::log_event(const std::string &text) {
+  time_t now = ::time(nullptr);
+  if (now < 1600000000) now = 0;         // Uhrzeit noch unbekannt
+  ESP_LOGI(EV_TAG, "%s", text.c_str());
+  events_.push_front({now, text});
+  while (events_.size() > 10) events_.pop_back();
+  this->publish_events_();
+}
+
+void EqivaKeyBle::publish_events_() {
+  if (this->events_sensor_ == nullptr) return;
+  // Heute nur Uhrzeit, ältere Einträge mit Datum
+  time_t now = ::time(nullptr);
+  struct tm today {};
+  const bool now_ok = now > 1600000000 && localtime_r(&now, &today) != nullptr;
+  // Home Assistant erlaubt max. 255 Zeichen je Zustand -> ältere Einträge ggf. weglassen
+  auto chars = [](const std::string &s) {
+    size_t n = 0;
+    for (unsigned char ch : s) if ((ch & 0xC0) != 0x80) n++;
+    return n;
+  };
+  std::string out;
+  size_t len = 0;
+  for (const auto &e : events_) {
+    char ts[20] = "";
+    struct tm lt;
+    if (e.t != 0 && localtime_r(&e.t, &lt) != nullptr) {
+      const bool same_day = now_ok && lt.tm_yday == today.tm_yday && lt.tm_year == today.tm_year;
+      strftime(ts, sizeof(ts), same_day ? "%H:%M " : "%d.%m. %H:%M ", &lt);
+    }
+    const std::string add = (out.empty() ? "" : " · ") + std::string(ts) + e.text;
+    const size_t l = chars(add);
+    if (len + l > 255) break;
+    out += add;
+    len += l;
+  }
+  if (out.empty()) out = "–";
+  this->publish_(this->events_sensor_, out);
+}
+
+void EqivaKeyBle::on_lock_state_(uint8_t st) {
+  const uint32_t now = millis();
+  if (st == 1) {                         // MOVING
+    if (ev_pending_ >= 0) ev_moved_ = true;
+    return;
+  }
+  if (st < 2 || st > 4) return;          // UNKNOWN: nichts protokollieren
+  static const char *const icon[] = {"", "", "🔓", "🔒", "🚪"};
+  static const char *const word[] = {"", "", "auf", "zu", "geöffnet"};
+  if (ev_pending_ >= 0) {
+    const uint8_t want = ev_pending_ == LOCK ? 3 : (ev_pending_ == UNLOCK ? 2 : 4);
+    if (st == want) {
+      this->log_event(std::string(icon[st]) + " " + ev_pending_src_);
+      ev_pending_ = -1;
+    } else if (ev_moved_ && !(ev_pending_ == OPEN && st == 2)) {
+      // nach der Fahrt ein anderer Endzustand -> Befehl nicht ausgeführt
+      this->log_event(std::string("✗ ") + (want == 3 ? "zu" : want == 2 ? "auf" : "öffnen") + " " +
+                      ev_pending_src_ + " (jetzt " + word[st] + ")");
+      ev_pending_ = -1;
+    }
+    ev_last_state_ = st;
+    return;
+  }
+  // Ohne Befehl: Zustandswechsel = von Hand (Schlüssel, Drehknauf, Taste am Schloss)
+  if (ev_last_state_ != 255 && st != ev_last_state_ &&
+      !(ev_last_state_ == 4 && st == 2) &&          // OPENED -> UNLOCKED: Falle zurück, kein Ereignis
+      (!last_command_valid_ || (now - last_command_ms_) > 40000)) {
+    this->log_event(std::string("🖐 ") + icon[st] + " von Hand");
+  }
+  ev_last_state_ = st;
+}
+
+void EqivaKeyBle::ev_fail_(const char *why) {
+  if (ev_pending_ < 0) return;
+  static const char *const w[] = {"zu", "auf", "öffnen"};
+  this->log_event(std::string("✗ ") + w[ev_pending_ <= 2 ? ev_pending_ : 0] + " " + ev_pending_src_ +
+                  " (" + why + ")");
+  ev_pending_ = -1;
+}
+
+void EqivaKeyBle::ev_tick_() {
+  if (ev_pending_ >= 0 && (millis() - ev_pending_at_) > 60000) this->ev_fail_("keine Bestätigung");
+  // Tageswechsel: gestrige Einträge bekommen ihr Datum
+  static int last_yday = -1;
+  time_t now = ::time(nullptr);
+  struct tm lt;
+  if (now > 1600000000 && localtime_r(&now, &lt) != nullptr && lt.tm_yday != last_yday) {
+    if (last_yday >= 0) this->publish_events_();
+    last_yday = lt.tm_yday;
+  }
+}
+
 
 }  // namespace eqiva_key_ble
 }  // namespace esphome
