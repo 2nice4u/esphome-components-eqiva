@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.2.0 (2026-11-07) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.2.1 (2026-11-07) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.2.0';
+  const APP_VERSION = '3.2.1';
   const GUIDE_URL = 'https://github.com/2nice4u/esphome-components-eqiva/blob/main/docs/ANLEITUNG.md';
 
   // ---------------------------------------------------------------- Zustand
@@ -440,7 +440,12 @@
     const w = S.pair;
     const ck = parseCardKey(w.key);
     let body = '', foot = '';
-    if (w.step === 1) {
+    if (w.step === 0) {
+      body = '<p class="q">Schloss ist bereits gekoppelt</p><div class="sum">' + row('Pairing', txt('text_sensor/Pairing-Info', '–')) + '</div>' +
+        '<p>Erneut koppeln legt im Schloss einen <b>weiteren Benutzer</b> an (das Schloss hat nur wenige Plätze, User 0–7).</p>' +
+        '<p class="muted">Für ein <b>anderes Schloss</b> vorher „Kopplung entfernen“. Scheitert das neue Pairing, bleibt die bisherige Kopplung erhalten.</p>';
+      foot = btn('p-close', 'Abbrechen', 'b') + btn('p-force', 'Trotzdem koppeln', 'b pri');
+    } else if (w.step === 1) {
       body = '<p class="q">Card Key eintragen</p>' +
         '<ol class="steps"><li>QR-Code auf der Keycard mit der Handy-Kamera oder Google Lens scannen.</li><li>Den Text (beginnt mit <b>M001A…</b>) kopieren.</li><li>Hier einfügen (lange tippen → Einfügen).</li></ol>' +
         '<label class="fld"><span class="lbl">QR-Text der Keycard</span><textarea rows="3" data-c="pair-key" data-k="pair-key" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="M001A…">' + esc(w.key) + '</textarea></label>' +
@@ -457,8 +462,10 @@
       const info = txt('text_sensor/Pairing-Info'), st = txt('text_sensor/Einrichtungsstatus');
       const done = info && info !== w.seenInfo;
       const age = Date.now() - w.started;
+      const ev = txt('text_sensor/Ereignisse');
       if (done && !w.result) { w.result = 'ok'; w.key = ''; }
-      if (!w.result && age > 60000) w.result = 'timeout';
+      if (!w.result && ev !== w.seenEv && /^(\d\d\.\d\d\. )?(\d\d:\d\d )?✗ Pairing nicht bestätigt/.test(ev)) { w.result = 'timeout'; w.kept = /bisherige Kopplung bleibt/.test(ev.split(' · ')[0]); }
+      if (!w.result && age > 70000) w.result = 'timeout';
       if (w.result === 'ok') {
         const uid = (st.match(/gekoppelt wurde User (\d+)/) || [])[1];
         body = '<div class="live"><div class="ring2 rs-ok">' + icon('check', 48) + '</div><p class="hl2">Gekoppelt</p><p>' + esc(info) + '</p>' +
@@ -466,8 +473,9 @@
           (uid !== undefined ? '<p class="note">Die eingestellte User-ID passt nicht – bitte übernehmen.</p>' + '<div class="foot">' + btn('fixuid', 'User ' + uid + ' übernehmen', 'b pri', uid) + '</div>' : '');
         foot = btn('p-close', 'Fertig', 'b pri');
       } else if (w.result === 'timeout') {
-        body = '<div class="live"><div class="ring2 rs-err">' + icon('alert', 44) + '</div><p class="hl2">Keine Antwort vom Schloss</p>' +
-          '<p>Blinkte die LED schnell orange, als du „Pairing starten“ gedrückt hast? Ist der ESP nah genug am Schloss?</p>' +
+        body = '<div class="live"><div class="ring2 rs-err">' + icon('alert', 44) + '</div><p class="hl2">Pairing nicht bestätigt</p>' +
+          '<p>Vermutlich war der Pairing-Modus schon vorbei. Öffnen-Taste erneut ca. 5 s halten, bis die LED schnell orange blinkt, und <b>sofort</b> „Pairing starten“ drücken. Der ESP sollte nah am Schloss sein.</p>' +
+          (w.kept ? '<p class="muted">Die bisherige Kopplung ist erhalten geblieben.</p>' : '') +
           '<p class="muted">' + esc(st) + '</p></div>';
         foot = btn('p-close', 'Schließen', 'b') + btn('p-retry', 'Nochmal versuchen', 'b pri');
       } else {
@@ -476,7 +484,7 @@
         foot = btn('p-close', 'Ausblenden', 'b');
       }
     }
-    return card('<div class="headrow"><h2>Schloss koppeln</h2><span class="muted">Schritt ' + w.step + ' von 3</span></div>' +
+    return card('<div class="headrow"><h2>Schloss koppeln</h2><span class="muted">' + (w.step ? 'Schritt ' + w.step + ' von 3' : '') + '</span></div>' +
       '<div class="prog"><div style="width:' + (w.step / 3 * 100) + '%"></div></div>' + body + '<div class="foot">' + foot + '</div>', 'wiz');
   }
 
@@ -600,7 +608,12 @@
       case 'theme': S.theme = x; save('eqa-theme', x); applyTheme(); break;
       case 'expert': setExpert(true); return;
       // Pairing
-      case 'pair': S.tab = 'more'; S.pair = { step: 1, key: '' }; root.scrollTop = 0; break;
+      case 'pair': {
+        const st = txt('text_sensor/Einrichtungsstatus');
+        const paired = st && !/^[①②]/.test(st) && !/TESTMODUS/.test(st);
+        S.tab = 'more'; S.pair = { step: paired ? 0 : 1, key: '' }; root.scrollTop = 0; break;
+      }
+      case 'p-force': S.pair.step = 1; break;
       case 'p-next': if (!parseCardKey(S.pair.key)) return; S.pair.step = 2; break;
       case 'p-back': S.pair.step = 1; break;
       case 'p-close': S.pair = null; break;
@@ -608,7 +621,7 @@
       case 'p-start': {
         const w = S.pair, ck = parseCardKey(w.key);
         if (!ck) return;
-        Object.assign(w, { step: 3, result: null, started: Date.now(), seenInfo: txt('text_sensor/Pairing-Info') });
+        Object.assign(w, { step: 3, result: null, kept: false, started: Date.now(), seenInfo: txt('text_sensor/Pairing-Info'), seenEv: txt('text_sensor/Ereignisse') });
         return run([['text/BLE Pair Card Key', 'set', { value: ck.key }], ['button/BLE Pair _Start_', 'press']]);
       }
       case 'fixuid': return run([['number/BLE Settings User ID', 'set', { value: x }], ['button/BLE Settings _Save_', 'press']], 'User-ID ' + x + ' übernommen');
@@ -689,12 +702,12 @@
   }
 
   const CSS_TEXT = `
-#eqa{--bg:#F3F4F6;--card:#FFF;--fg:#111827;--muted:#4B5563;--line:#E5E7EB;--soft:#F3F4F6;--acc:#1D4ED8;--accs:#EFF6FF;--acci:#1E3A8A;
+#eqa{--bg:#F3F4F6;--card:#FFF;--fg:#111827;--muted:#4B5563;--line:#E5E7EB;--bline:#C7CCD4;--soft:#F3F4F6;--acc:#1D4ED8;--accs:#EFF6FF;--acci:#1E3A8A;
 --lk:#15803D;--lkb:#DCFCE7;--ul:#B91C1C;--ulb:#FEE2E2;--op:#1D4ED8;--opb:#DBEAFE;--mv:#374151;--mvb:#E5E7EB;--wr:#92400E;--wrb:#FEF3C7;--pu:#6D28D9;--pub:#EDE9FE;
 color-scheme:light;position:fixed;inset:0;overflow-y:auto;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;z-index:10;-webkit-tap-highlight-color:transparent}
-@media (prefers-color-scheme:dark){html:not([data-eqa-theme=light]) #eqa{color-scheme:dark;--bg:#0F1115;--card:#171A21;--fg:#E6E9EF;--muted:#9AA3B2;--line:#2A2F3A;--soft:#20242D;--acc:#6EA0FF;--accs:#1A2540;--acci:#BCD2FF;
+@media (prefers-color-scheme:dark){html:not([data-eqa-theme=light]) #eqa{color-scheme:dark;--bg:#0F1115;--card:#171A21;--fg:#E6E9EF;--muted:#9AA3B2;--line:#2A2F3A;--soft:#20242D;--acc:#6EA0FF;--accs:#1E2F57;--acci:#D6E4FF;--bline:#46506A;
 --lk:#4ADE80;--lkb:#12301F;--ul:#F87171;--ulb:#3A1717;--op:#7AA7FF;--opb:#172645;--mv:#CBD5E1;--mvb:#252A33;--wr:#FCD34D;--wrb:#3A2E10;--pu:#C4B5FD;--pub:#2A2142}}
-html[data-eqa-theme=dark] #eqa{color-scheme:dark;--bg:#0F1115;--card:#171A21;--fg:#E6E9EF;--muted:#9AA3B2;--line:#2A2F3A;--soft:#20242D;--acc:#6EA0FF;--accs:#1A2540;--acci:#BCD2FF;
+html[data-eqa-theme=dark] #eqa{color-scheme:dark;--bg:#0F1115;--card:#171A21;--fg:#E6E9EF;--muted:#9AA3B2;--line:#2A2F3A;--soft:#20242D;--acc:#6EA0FF;--accs:#1E2F57;--acci:#D6E4FF;--bline:#46506A;
 --lk:#4ADE80;--lkb:#12301F;--ul:#F87171;--ulb:#3A1717;--op:#7AA7FF;--opb:#172645;--mv:#CBD5E1;--mvb:#252A33;--wr:#FCD34D;--wrb:#3A2E10;--pu:#C4B5FD;--pub:#2A2142}
 html:not(.eqa-expert) esp-app{display:none}html.eqa-expert #eqa{display:none}
 #eqa-back{position:fixed;right:16px;bottom:16px;z-index:20;display:none;min-height:44px;padding:0 16px;border:0;border-radius:12px;background:#1D4ED8;color:#fff;font:600 14px system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer}
@@ -752,16 +765,16 @@ html.eqa-expert #eqa-back{display:block}
 #eqa .fld{display:block;padding:8px 0}
 #eqa input[type=text],#eqa input[type=number],#eqa select{min-height:44px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif;width:100%}
 #eqa .numw{display:flex;align-items:center;gap:6px;flex:none}#eqa .numw input{width:96px;text-align:right}#eqa .uom{font-size:13px;color:var(--muted)}
-#eqa .seg{display:grid;grid-auto-columns:minmax(0,1fr);grid-auto-flow:column;gap:4px;padding:4px;background:var(--soft);border-radius:12px}
-#eqa .seg button{min-height:40px;border:0;border-radius:9px;background:transparent;color:var(--fg);font:600 13px system-ui,sans-serif;cursor:pointer}
-#eqa .seg button.sel{background:var(--accs);color:var(--acci);box-shadow:0 1px 3px rgba(0,0,0,.15)}
+#eqa .seg{display:grid;grid-auto-columns:minmax(0,1fr);grid-auto-flow:column;gap:6px}
+#eqa .seg button{min-height:42px;border:1px solid var(--bline);border-radius:10px;background:transparent;color:var(--fg);font:600 13px system-ui,sans-serif;cursor:pointer}
+#eqa .seg button.sel,#eqa .pick.sel,#eqa .opt.sel,#eqa .days button.sel{border-color:var(--acc);box-shadow:0 0 0 1.5px var(--acc);background:var(--accs);color:var(--acci);font-weight:800}
 #eqa .sw{flex:none;width:52px;height:30px;border:0;border-radius:999px;padding:3px;background:#9CA3AF;display:flex;cursor:pointer}
 #eqa .sw span{width:24px;height:24px;border-radius:50%;background:#fff;display:block;transition:transform .15s}#eqa .sw.on{background:#1D4ED8}#eqa .sw.on span{transform:translateX(22px)}
 #eqa .q{font-weight:700;font-size:16px;color:var(--acci);margin:4px 0 10px}
-#eqa .pick{min-height:44px;padding:0 16px;border:2px solid var(--line);border-radius:12px;background:var(--card);color:var(--fg);font:600 14px system-ui,sans-serif;cursor:pointer}
-#eqa .pick.sel,#eqa .opt.sel{border-color:var(--acc);background:var(--accs);color:var(--acci)}#eqa .pick small{font-weight:400}
+#eqa .pick{min-height:44px;padding:0 16px;border:1px solid var(--bline);border-radius:12px;background:var(--card);color:var(--fg);font:600 14px system-ui,sans-serif;cursor:pointer}
+#eqa .pick small{font-weight:400}
 #eqa .list{display:flex;flex-direction:column;gap:8px}
-#eqa .opt{min-height:52px;padding:6px 14px;border:2px solid var(--line);border-radius:12px;background:var(--card);color:var(--fg);text-align:left;display:flex;flex-direction:column;justify-content:center;font:14px system-ui,sans-serif;cursor:pointer}
+#eqa .opt{min-height:52px;padding:6px 14px;border:1px solid var(--bline);border-radius:12px;background:var(--card);color:var(--fg);text-align:left;display:flex;flex-direction:column;justify-content:center;font:14px system-ui,sans-serif;cursor:pointer}
 #eqa .opt span{font-size:12px;opacity:.85}
 #eqa .wiz .seg{margin-bottom:12px}#eqa .prog{height:6px;border-radius:999px;background:var(--line);overflow:hidden;margin:4px 0 16px}#eqa .prog div{height:6px;background:var(--acc);transition:width .3s}
 #eqa .foot{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}#eqa .foot .b{flex:1}
@@ -775,8 +788,8 @@ html.eqa-expert #eqa-back{display:block}
 #eqa .rs-orange{border-color:#EA8A0C;color:#EA8A0C}
 #eqa .plan.off{opacity:.7}#eqa .bigtime{font:700 30px system-ui,sans-serif;border:0;background:transparent;color:var(--fg);padding:0;font-variant-numeric:tabular-nums}
 #eqa .days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;margin:12px 0 4px}
-#eqa .days button{min-height:44px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--fg);font:600 13px system-ui,sans-serif;cursor:pointer}
-#eqa .days button.sel{background:#1D4ED8;border-color:#1D4ED8;color:#fff}
+#eqa .days button{min-height:44px;border:1px solid var(--bline);border-radius:10px;background:var(--card);color:var(--fg);font:600 13px system-ui,sans-serif;cursor:pointer}
+
 #eqa .links{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}#eqa .lnk{width:100%}
 #eqa .pill{padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700}#eqa .pill.sim{background:var(--wrb);color:var(--wr)}
 #eqa .scrim{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:30}

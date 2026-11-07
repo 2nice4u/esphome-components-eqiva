@@ -63,10 +63,9 @@ void EqivaKeyBle::watchdog_() {
     this->ev_fail_("Schloss nicht erreichbar");
   }
 
-  // Pairing-Anfrage nach 2 min verwerfen
-  if (requestPair && (now - pair_started_) > 120000) {
-    ESP_LOGW(TAG, "Pairing abgebrochen (2 min ohne Erfolg)");
-    requestPair = false;
+  // Pairing nach 60 s ohne Bestätigung abbrechen, bisherige Kopplung wiederherstellen
+  if ((requestPair || pair_pending_) && (now - pair_started_) > 60000) {
+    this->pair_restore_("keine Bestätigung vom Schloss innerhalb von 60 s");
   }
 
   // Sparmodus: Status periodisch abfragen (baut dafür kurz eine Verbindung auf)
@@ -420,8 +419,16 @@ bool EqivaKeyBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t 
             ESP_LOGV(TAG, "user_key: %s", string_to_hex(clientState.user_key).c_str());
             clientState.card_key.clear();
             const int uid = (uint8_t) clientState.user_id;
+            // Erst jetzt neuen Schlüssel und User-ID melden (werden in der YAML gespeichert)
+            pair_pending_ = false;
+            prev_user_key_.clear();
+            this->publish_(this->user_key_sensor_, string_to_hex(clientState.user_key));
+            this->publish_(this->user_id_sensor_, std::to_string(uid));
             for (auto *t : paired_triggers_)
               t->trigger(uid);   // Patch: on_paired-Automation (z. B. Pairing-Info speichern)
+            this->log_event("🔗 Gekoppelt (User " + std::to_string(uid) + ")");
+            // Schlosszustand gleich abfragen, damit Einrichtungsstatus/App sofort stimmen
+            this->set_timeout("eqiva_post_pair", 1500, [this]() { this->sendCommand(REQUEST_STATUS); });
           }
           msgdata = decrypted;
           ESP_LOGV(TAG, "Decrypted: %s", string_to_hex(msgdata).c_str());
@@ -473,6 +480,9 @@ bool EqivaKeyBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t 
                   ESP_LOGW(TAG, "Schloss ist nicht im Pairing-Modus - Öffnen-Taste ca. 5 s halten, bis die LED schnell orange blinkt. "
                                 "Neuer Versuch bei der nächsten Verbindung.");
                   this->disconnect();
+                } else if (pair_pending_) {
+                  // Neuer Schlüssel wurde nicht bestätigt (Pairing-Modus vorbei): alte Kopplung zurück
+                  this->pair_restore_("Schloss hat das Pairing nicht bestätigt (Pairing-Modus vorbei?)");
                 } else {
                   ESP_LOGE(TAG, "ESP ist am Schloss nicht (mehr) angelernt (user_id 255). Bitte neu pairen. "
                                 "Automatisches Verbinden pausiert, um die Schloss-Batterie zu schonen.");
@@ -483,8 +493,10 @@ bool EqivaKeyBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t 
                 break;
               }
 
-              this->publish_(this->user_key_sensor_, string_to_hex(clientState.user_key));
-              this->publish_(this->user_id_sensor_, std::to_string(uid));
+              if (!pair_pending_) {   // während des Pairings erst nach Bestätigung melden
+                this->publish_(this->user_key_sensor_, string_to_hex(clientState.user_key));
+                this->publish_(this->user_id_sensor_, std::to_string(uid));
+              }
 
               if (connect_requested_at_ != 0) {
                 ESP_LOGI(TAG, "Sparmodus: Verbindung + Session nach %u ms bereit", (unsigned) (millis() - connect_requested_at_));
@@ -596,6 +608,10 @@ void EqivaKeyBle::applySettings() {
 
 void EqivaKeyBle::startPair() {
     if (clientState.card_key.length() > 0) {
+      // Bisherige Kopplung merken: Sie gilt weiter, bis das Schloss das neue Pairing bestätigt
+      pair_pending_ = true;
+      prev_user_key_ = clientState.user_key.length() == 16 ? clientState.user_key : std::string();
+      prev_user_id_ = clientState.user_id;
       clientState.user_id = 255;
       clientState.user_key.clear();
       clientState.remote_session_nonce.clear();
@@ -994,6 +1010,30 @@ void EqivaKeyBle::forget_pairing() {
   ev_last_state_ = 255;
   this->publish_(this->lock_status_sensor_, "");
   this->log_event("🔗 Kopplung entfernt");
+}
+
+void EqivaKeyBle::pair_restore_(const char *why) {
+  requestPair = false;
+  pair_pending_ = false;
+  clientState.card_key.clear();
+  clientState.remote_session_nonce.clear();
+  clear_pending_();
+  if (prev_user_key_.length() == 16) {
+    clientState.user_key = prev_user_key_;
+    clientState.user_id = prev_user_id_;
+    if (prev_address_ > 1) this->set_address(prev_address_);
+    ESP_LOGW(TAG, "Pairing gescheitert: %s - bisherige Kopplung (User %d) bleibt", why, prev_user_id_);
+    this->log_event("✗ Pairing nicht bestätigt – bisherige Kopplung bleibt");
+    this->set_auto_connect(true);
+  } else {
+    clientState.user_key.clear();
+    clientState.user_id = 255;
+    ESP_LOGW(TAG, "Pairing gescheitert: %s", why);
+    this->log_event("✗ Pairing nicht bestätigt");
+    this->set_auto_connect(false);
+  }
+  prev_user_key_.clear();
+  this->disconnect();
 }
 
 }  // namespace eqiva_key_ble

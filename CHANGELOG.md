@@ -23,6 +23,29 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.2.1 – 2026-11-07
+
+### Behoben
+- **Pairing-Absicherung:** Neuer Schlüssel und User-ID werden erst gespeichert, wenn das Schloss das Pairing bestätigt.
+  Scheitert ein erneutes Pairing (Pairing-Modus vorbei, keine Bestätigung innerhalb von 60 s), bleibt die bisherige
+  Kopplung erhalten („✗ Pairing nicht bestätigt – bisherige Kopplung bleibt“). Vorher war danach gar keine Kopplung mehr
+  gültig und es kam „User ID … eingestellt, gekoppelt wurde User …“.
+- Nach erfolgreichem Pairing fragt der ESP sofort den Schlosszustand ab (Einrichtungsstatus sofort ✅).
+- Einrichtungsstatus im Sparmodus: „✅ Gekoppelt (Sparsam) – Zustand folgt beim nächsten Verbinden“ statt der
+  irreführenden Meldung „Keine Verbindung … neu pairen“, wenn der Zustand noch nicht gelesen wurde.
+- Ereignisprotokoll: „🔗 Gekoppelt (User N)“.
+
+### Web-App
+- Ausgewählte Optionen deutlich hervorgehoben (kräftiger blauer Rahmen, hinterlegt, fett), nicht ausgewählte mit
+  sichtbarem grauem Rahmen – hell und dunkel.
+- Pairing-Assistent fragt nach, wenn das Schloss schon gekoppelt ist, und erkennt ein nicht bestätigtes Pairing sofort
+  (mit Hinweis zum Pairing-Modus).
+
+### Für eigene Kopien der Hauptdatei
+- `config_version: "3.2.1"` setzen.
+- Optional: im Text-Sensor „Einrichtungsstatus“ den Block `if (id(ble_state).state != "ESTABLISHED") { … }`
+  aus `eqiva-smart-lock-1.yaml` übernehmen (neue Meldung im Sparmodus).
+
 ## 3.2.0 – 2026-11-07
 
 ### Neu

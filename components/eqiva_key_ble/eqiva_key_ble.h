@@ -28,7 +28,7 @@ namespace eqiva_key_ble {
 using namespace esp32_ble_client;
 
 // Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
-#define EQIVA_PATCH_VERSION "3.2.0"
+#define EQIVA_PATCH_VERSION "3.2.1"
 
 // Patch-Konstanten
 static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
@@ -125,6 +125,12 @@ class EqivaKeyBle : public BLEClientBase {
     uint8_t ev_last_state_{255};         // letzter Endzustand (2/3/4), 255 = unbekannt
     void on_lock_state_(uint8_t st);
     void ev_tick_();
+    // Pairing-Absicherung: bisherige Kopplung bis zur Bestätigung durch das Schloss merken
+    bool pair_pending_{false};
+    std::string prev_user_key_;
+    int prev_user_id_{255};
+    uint64_t prev_address_{0};
+    void pair_restore_(const char *why);
     void ev_fail_(const char *why);
     void publish_events_();
     void request_connect_();
@@ -229,6 +235,7 @@ class EqivaKeyBle : public BLEClientBase {
         // Kopplung vergessen (z. B. Schloss getauscht): trennen, Schlüssel löschen, nicht mehr verbinden.
         // Der Benutzer bleibt im Schloss angelernt (austragen per Eqiva-App oder Werksreset).
         void forget_pairing();
+        void set_pair_prev_address(uint64_t a) { this->prev_address_ = a; }
 
         void set_state(esphome::esp32_ble_tracker::ClientState st) override {
             BLEClientBase::set_state(st);
@@ -320,6 +327,7 @@ class EqivaPair : public Action<Ts...>, public Parented<EqivaKeyBle> {
             // sonst ginge der Pairing-Versuch zuerst an das alte Schloss.
             const uint64_t new_mac = string_to_mac(mac_address);
             const uint64_t cur_mac = this->parent_->get_address();
+            this->parent_->set_pair_prev_address(cur_mac);   // für Wiederherstellung, falls das Pairing scheitert
             if (cur_mac > 1 && new_mac != cur_mac) {
                 ESP_LOGI("eqiva_key_ble", "Pairing mit anderem Schloss - trenne alte Verbindung");
                 this->parent_->disconnect();
