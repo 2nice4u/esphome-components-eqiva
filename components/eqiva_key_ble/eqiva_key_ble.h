@@ -28,7 +28,7 @@ namespace eqiva_key_ble {
 using namespace esp32_ble_client;
 
 // Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
-#define EQIVA_PATCH_VERSION "3.1.0"
+#define EQIVA_PATCH_VERSION "3.2.0"
 
 // Patch-Konstanten
 static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
@@ -226,6 +226,9 @@ class EqivaKeyBle : public BLEClientBase {
         void sim_connect();
         void sim_disconnect();
         void sim_turn_by_hand();         // Simulation: Schlüssel/Drehknauf von Hand drehen
+        // Kopplung vergessen (z. B. Schloss getauscht): trennen, Schlüssel löschen, nicht mehr verbinden.
+        // Der Benutzer bleibt im Schloss angelernt (austragen per Eqiva-App oder Werksreset).
+        void forget_pairing();
 
         void set_state(esphome::esp32_ble_tracker::ClientState st) override {
             BLEClientBase::set_state(st);

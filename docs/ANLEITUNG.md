@@ -1,6 +1,6 @@
 # Eqiva Smart Lock – Anleitung & Hilfe
 
-Gilt für Version 3.1.0 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
+Gilt für Version 3.2.0 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
 Änderungen: [CHANGELOG.md](../CHANGELOG.md)
 
 ## Die Web-App
@@ -16,7 +16,7 @@ Sie läuft direkt auf dem ESP, auch ohne Internet, am Handy und am PC.
 | **Einstellungen** | Einrichtung (Pairing, Schlossantrieb, Neustart), Energiemodus, Türgriff, Fingerprint, Sabotage-Erkennung, Darstellung (Automatisch · Hell · Dunkel), Diagnose |
 
 - **Auf dem Handy wie eine App:** in Chrome die Seite öffnen, Menü ⋮ → „Zum Startbildschirm hinzufügen“.
-- **Einrichtung** (Einstellungen): Schloss koppeln (Pairing-Assistent), Schlossantrieb einstellen, ESP neu starten.
+- **Einrichtung** (Einstellungen): Schloss koppeln (Pairing-Assistent), Kopplung entfernen, Schlossantrieb einstellen, ESP neu starten.
 - **Expertenansicht** (Einstellungen, ganz unten): die bisherige ESPHome-Tabelle mit allen Entitäten –
   für BLE-Einstellungen von Hand und die Log-Stufe.
   Sie wird aus dem Internet geladen. Zurück mit „← Zur App“.
@@ -44,6 +44,10 @@ oder Google Lens scannen, den Text kopieren und einfügen; der Assistent führt 
 3. Am Schloss die Taste **Öffnen** ca. 5 s halten, bis die LED **schnell orange blinkt**.
 4. Sofort **BLE Pair _Start_** drücken.
 5. Fertig, wenn der **Einrichtungsstatus** ✅ zeigt und **Lock Status** einen Zustand anzeigt.
+
+**Schloss tauschen / Kopplung entfernen:** Einstellungen → Einrichtung → **„Kopplung entfernen“** (zweimal bestätigen).
+Der ESP vergisst MAC-Adresse und Schlüssel und verbindet sich nicht mehr. Danach das neue Schloss wie oben koppeln.
+Der ESP bleibt im alten Schloss als Benutzer angelernt – dort per Eqiva-App (Benutzerverwaltung) oder Werksreset austragen.
 
 ## 3. Nach einem Werksreset: Schloss einstellen
 

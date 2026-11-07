@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.1.0 (2026-11-07) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.2.0 (2026-11-07) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.1.0';
+  const APP_VERSION = '3.2.0';
   const GUIDE_URL = 'https://github.com/2nice4u/esphome-components-eqiva/blob/main/docs/ANLEITUNG.md';
 
   // ---------------------------------------------------------------- Zustand
@@ -100,7 +100,7 @@
         [/^🖐\s*🔒/, 'locked', 'Zu · von Hand'], [/^🖐\s*🔓/, 'unlocked', 'Auf · von Hand'], [/^🖐\s*🚪/, 'opened', 'Geöffnet · von Hand'],
         [/^🔒\s*/, 'locked', 'Zu · '], [/^🔓\s*/, 'unlocked', 'Auf · '], [/^🚪\s*/, 'opened', 'Geöffnet · '],
         [/^🔔\s*/, 'bell', 'Klingel · '], [/^⛔\s*/, 'deny', 'Abgewiesen · '], [/^❓\s*/, 'deny', 'Unbekannter Finger'],
-        [/^⚠️?\s*/, 'alert', ''], [/^✗\s*/, 'alert', 'Nicht ausgeführt · '], [/^✓\s*/, 'ok', '']
+        [/^⚠️?\s*/, 'alert', ''], [/^✗\s*/, 'alert', 'Nicht ausgeführt · '], [/^✓\s*/, 'ok', ''], [/^🔗\s*/, 'info', '']
       ];
       for (const [re, k, pre] of rules) {
         if (re.test(t)) {
@@ -224,19 +224,21 @@
   // ---------------------------------------------------------------- Ansichten
   function viewStart() {
     const st = txt('text_sensor/Lock Status', '');
-    const L = st ? (LOCK[st] || LOCK.UNKNOWN) : { label: 'Lade …', cls: 'st-moving', icon: 'spin' };
+    const unpaired = /^[①②]/.test(txt('text_sensor/Einrichtungsstatus'));
+    const L = unpaired ? { label: 'Nicht gekoppelt', cls: 'st-unknown', icon: 'unlock' } :
+      (st ? (LOCK[st] || LOCK.UNKNOWN) : { label: 'Lade …', cls: 'st-moving', icon: 'spin' });
     const ble = txt('text_sensor/Lock BLE State');
     const eco = /Sparsam/.test(txt('select/Energiemodus'));
-    const sub = st === 'MOVING' ? 'Befehl wird ausgeführt' :
+    const sub = unpaired ? 'Bitte zuerst das Schloss koppeln' : st === 'MOVING' ? 'Befehl wird ausgeführt' :
       (ble === 'ESTABLISHED' ? 'Verbunden' : (eco ? 'Sparsam – verbindet bei Bedarf' : 'Keine Verbindung (' + (ble || '–') + ')'));
     const hero = card(
       '<div class="hero ' + L.cls + '"><div class="ring">' + icon(L.icon, 56, L.label) + '</div>' +
       '<div class="hl">' + esc(L.label) + '</div><div class="muted">' + esc(sub) + '</div></div>' +
-      '<div class="acts">' +
+      (unpaired ? '' : '<div class="acts">' +
       btn('lock', icon('lock', 20) + 'Zu', 'big g') +
       btn('unlock', icon('unlock', 20) + 'Auf', 'big r') +
       btn('open', icon('door', 20) + 'Öffnen', 'big bl') +
-      '</div>' +
+      '</div>') +
       (txt('select/Türgriff außen') === 'Türklinke' ? '<p class="note">Türgriff außen = Türklinke: „Öffnen“ schließt nur auf.</p>' : ''));
     const tiles = [];
     if (has('binary_sensor/Batterie schwach')) tiles.push(['Batterie', on('binary_sensor/Batterie schwach') ? 'Schwach' : 'OK', on('binary_sensor/Batterie schwach') ? 'warn' : '']);
@@ -417,7 +419,13 @@
       const uid = (txt('text_sensor/Einrichtungsstatus').match(/gekoppelt wurde User (\d+)/) || [])[1];
       h += card('<h3>Einrichtung</h3>' + row('Status', st) + (has('text_sensor/Pairing-Info') ? row('Pairing', txt('text_sensor/Pairing-Info', '–')) : '') +
         (uid !== undefined ? '<p class="note">Die eingestellte User-ID passt nicht zum Pairing.</p><div class="foot">' + btn('fixuid', 'User ' + uid + ' übernehmen', 'b pri', uid) + '</div>' : '') +
-        '<div class="foot">' + btn('pair', 'Schloss koppeln (Pairing)', 'b' + (/^[①②]/.test(st) ? ' pri' : '')) + '</div>');
+        '<div class="foot">' + btn('pair', 'Schloss koppeln (Pairing)', 'b' + (/^[①②]/.test(st) ? ' pri' : '')) + '</div>' +
+        (has('button/Kopplung entfernen') && !/^①/.test(st) ?
+          (S.confirm === 'unpair'
+            ? '<p class="note">Der ESP vergisst Schlüssel und MAC-Adresse und verbindet sich nicht mehr mit dem Schloss. ' +
+              'Im Schloss bleibt er als Benutzer angelernt – dort per Eqiva-App (Benutzerverwaltung) oder Werksreset austragen.</p>' +
+              '<div class="foot">' + btn('unpair', 'Wirklich entfernen', 'b danger') + '</div>'
+            : '<div class="foot">' + btn('ask-unpair', 'Kopplung entfernen', 'b') + '</div>') : ''));
     }
     if (has('button/Lock Settings _Apply_')) {
       h += card('<h3>Schlossantrieb einstellen</h3><p class="muted">Nach einem Werksreset nötig. Das Schloss muss verbunden sein.</p>' +
@@ -575,7 +583,7 @@
     const b = e.target.closest('[data-a]');
     if (!b || !root.contains(b) || b.disabled) return;
     const a = b.dataset.a, x = b.dataset.x, w = S.wiz;
-    if (!/^(ask-del|ask-slot|f-delete|s-delete|ask-restart|restart)$/.test(a)) S.confirm = '';
+    if (!/^(ask-del|ask-slot|f-delete|s-delete|ask-restart|restart|ask-unpair|unpair)$/.test(a)) S.confirm = '';
     switch (a) {
       case 'tab': S.tab = x; S.sheet = null; root.scrollTop = 0; break;
       case 'lock': return run([['lock/Schloss', 'lock']]);
@@ -605,6 +613,8 @@
       }
       case 'fixuid': return run([['number/BLE Settings User ID', 'set', { value: x }], ['button/BLE Settings _Save_', 'press']], 'User-ID ' + x + ' übernommen');
       case 'ask-restart': S.confirm = 'restart'; break;
+      case 'ask-unpair': S.confirm = 'unpair'; break;
+      case 'unpair': S.confirm = ''; return run([['button/Kopplung entfernen', 'press']], 'Kopplung entfernt – Benutzer im Schloss per Eqiva-App oder Werksreset austragen');
       case 'restart': S.confirm = ''; return run([['button/ESP Restart', 'press']], 'ESP startet neu …');
       // Assistent
       case 'wiz': S.wiz = { mode: 'enroll', step: 1, person: '', hand: 1, finger: 0, action: 1 }; break;

@@ -70,7 +70,8 @@ void EqivaKeyBle::watchdog_() {
   }
 
   // Sparmodus: Status periodisch abfragen (baut dafür kurz eine Verbindung auf)
-  if (power_mode_ == POWER_ECO && (!eco_poll_done_ || (now - last_eco_poll_) > eco_poll_interval_)) {
+  if (power_mode_ == POWER_ECO && clientState.user_key.length() == 16 &&   // nur wenn gekoppelt
+      (!eco_poll_done_ || (now - last_eco_poll_) > eco_poll_interval_)) {
     eco_poll_done_ = true;
     last_eco_poll_ = now;
     ESP_LOGD(TAG, "Sparmodus: periodische Status-Abfrage");
@@ -973,6 +974,27 @@ void EqivaKeyBle::ev_tick_() {
   }
 }
 
+
+void EqivaKeyBle::forget_pairing() {
+  ESP_LOGW(TAG, "Kopplung entfernt - Benutzer im Schloss bleibt angelernt (Eqiva-App oder Werksreset)");
+  clear_pending_();
+  requestPair = false;
+  if (simulate_) {
+    this->sim_disconnect();
+  } else {
+    this->set_auto_connect(false);
+    this->disconnect();
+    this->set_address(1);              // wie "Disconnect": keine echte Adresse mehr
+  }
+  clientState.user_key.clear();
+  clientState.card_key.clear();
+  clientState.remote_session_nonce.clear();
+  clientState.user_id = 255;
+  ev_pending_ = -1;
+  ev_last_state_ = 255;
+  this->publish_(this->lock_status_sensor_, "");
+  this->log_event("🔗 Kopplung entfernt");
+}
 
 }  // namespace eqiva_key_ble
 }  // namespace esphome

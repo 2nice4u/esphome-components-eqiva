@@ -23,6 +23,23 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.2.0 – 2026-11-07
+
+### Neu
+- **„Kopplung entfernen“** (Web-App: Einstellungen → Einrichtung, mit Rückfrage; Expertenansicht: Button „Kopplung entfernen“):
+  Der ESP trennt die Verbindung, vergisst MAC-Adresse, User Key und Pairing-Info und verbindet sich nicht mehr.
+  Gedacht zum **Tauschen des Schlosses**: danach das neue Schloss koppeln.
+  Der Benutzer bleibt im alten Schloss angelernt – dort per Eqiva-App (Benutzerverwaltung) oder Werksreset austragen.
+- Startseite der App: „Nicht gekoppelt“ statt Schlosszustand, solange kein Schloss gekoppelt ist.
+
+### Geändert
+- Sparmodus: keine periodische Status-Abfrage mehr, solange nicht gekoppelt.
+
+### Für eigene Kopien der Hauptdatei
+- `config_version: "3.2.0"` setzen.
+- Optional für „Kopplung entfernen“: den Button-Block `id: ble_unpair` aus `eqiva-smart-lock-1.yaml`
+  (unter `button:`, nach „BLE Settings _Disconnect_“) übernehmen. Ohne ihn blendet die App den Knopf aus.
+
 ## 3.1.0 – 2026-11-07
 
 ### Neu (Web-App)
