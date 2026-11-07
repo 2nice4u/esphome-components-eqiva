@@ -1,6 +1,6 @@
 # Eqiva Key-BLE – gepatchte Version
 
-**Version 3.2.1** (2026-11-07) – Komponente mit Testmodus (simulate) und Ereignisprotokoll (`events`), passend zu den Beispiel-YAMLs und der Anleitung mit gleicher Version.
+**Version 3.2.2** (2026-11-08) – Komponente mit Testmodus (simulate) und Ereignisprotokoll (`events`), passend zu den Beispiel-YAMLs und der Anleitung mit gleicher Version.
 
 Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (Fix für ESPHome 2026.8).
 

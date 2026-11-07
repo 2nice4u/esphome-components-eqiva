@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.2.1 (2026-11-07) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.2.2 (2026-11-08) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.2.1';
+  const APP_VERSION = '3.2.2';
   const GUIDE_URL = 'https://github.com/2nice4u/esphome-components-eqiva/blob/main/docs/ANLEITUNG.md';
 
   // ---------------------------------------------------------------- Zustand
@@ -30,14 +30,24 @@
   const on = (id) => val(id, false) === true || txt(id) === 'ON';
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const stripTime = (s) => String(s || '').replace(/^\d\d:\d\d /, '');
+  const seq = (id) => (has(id) ? E[id]._seq || 0 : 0);
 
   // ---------------------------------------------------------------- ESP-Zugriff
   async function post(id, action, params) {
     const i = id.indexOf('/');
     let url = '/' + id.slice(0, i) + '/' + encodeURIComponent(id.slice(i + 1)) + '/' + action;
     if (params) url += '?' + new URLSearchParams(params).toString();
-    const r = await fetch(url, { method: 'POST', credentials: 'same-origin' });
-    if (!r.ok) throw new Error(id + ' ' + action + ': HTTP ' + r.status);
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 8000);   // nie endlos warten
+    try {
+      const r = await fetch(url, { method: 'POST', credentials: 'same-origin', signal: ctl.signal });
+      if (!r.ok) throw new Error(id + ' ' + action + ': HTTP ' + r.status);
+    } catch (e) {
+      if (e.name === 'AbortError') throw new Error('Keine Antwort vom ESP – bitte nochmal versuchen');
+      throw e;
+    } finally {
+      clearTimeout(t);
+    }
   }
   async function run(steps, okText) {
     if (S.busy) return;
@@ -46,7 +56,7 @@
       for (const st of steps) await post(st[0], st[1], st[2]);
       if (okText) toast(okText);
     } catch (e) {
-      toast('Fehler: ' + e.message);
+      toast(/^Keine Antwort/.test(e.message) ? e.message : 'Fehler: ' + e.message);
     } finally {
       S.busy = false; draw();
     }
@@ -70,6 +80,7 @@
       try { j = JSON.parse(ev.data); } catch (e) { return; }
       if (!j || !j.id) return;
       E[j.id] = Object.assign(E[j.id] || {}, j);
+      E[j.id]._seq = (E[j.id]._seq || 0) + 1;   // jede Meldung zählt, auch mit gleichem Text
       draw();
     });
   }
@@ -334,7 +345,7 @@
   // Live-Anzeige während das ESP anlernt – liest "Fingerprint: Letzte Aktion"
   function liveEnroll(w) {
     const msg = stripTime(txt('text_sensor/Fingerprint: Letzte Aktion'));
-    const fresh = txt('text_sensor/Fingerprint: Letzte Aktion') !== w.seen;
+    const fresh = seq('text_sensor/Fingerprint: Letzte Aktion') > w.seenSeq;
     let phase = 'wait', head = 'Wird gestartet …', ring = 'rs-blue', pct = 0;
     if (fresh || w.result) {
       let m;
@@ -460,11 +471,12 @@
       foot = btn('p-back', 'Zurück', 'b') + btn('p-start', 'Pairing starten', 'b pri');
     } else {
       const info = txt('text_sensor/Pairing-Info'), st = txt('text_sensor/Einrichtungsstatus');
-      const done = info && info !== w.seenInfo;
       const age = Date.now() - w.started;
-      const ev = txt('text_sensor/Ereignisse');
+      const ev = txt('text_sensor/Ereignisse'), top = ev.split(' · ')[0];
+      const evNew = seq('text_sensor/Ereignisse') > w.seenEvSeq;
+      const done = (info && info !== w.seenInfo) || (evNew && /🔗 Gekoppelt/.test(top));
       if (done && !w.result) { w.result = 'ok'; w.key = ''; }
-      if (!w.result && ev !== w.seenEv && /^(\d\d\.\d\d\. )?(\d\d:\d\d )?✗ Pairing nicht bestätigt/.test(ev)) { w.result = 'timeout'; w.kept = /bisherige Kopplung bleibt/.test(ev.split(' · ')[0]); }
+      if (!w.result && evNew && /✗ Pairing nicht bestätigt/.test(top)) { w.result = 'timeout'; w.kept = /bisherige Kopplung bleibt/.test(top); }
       if (!w.result && age > 70000) w.result = 'timeout';
       if (w.result === 'ok') {
         const uid = (st.match(/gekoppelt wurde User (\d+)/) || [])[1];
@@ -621,7 +633,7 @@
       case 'p-start': {
         const w = S.pair, ck = parseCardKey(w.key);
         if (!ck) return;
-        Object.assign(w, { step: 3, result: null, kept: false, started: Date.now(), seenInfo: txt('text_sensor/Pairing-Info'), seenEv: txt('text_sensor/Ereignisse') });
+        Object.assign(w, { step: 3, result: null, kept: false, started: Date.now(), seenInfo: txt('text_sensor/Pairing-Info'), seenEvSeq: seq('text_sensor/Ereignisse') });
         return run([['text/BLE Pair Card Key', 'set', { value: ck.key }], ['button/BLE Pair _Start_', 'press']]);
       }
       case 'fixuid': return run([['number/BLE Settings User ID', 'set', { value: x }], ['button/BLE Settings _Save_', 'press']], 'User-ID ' + x + ' übernommen');
@@ -640,9 +652,9 @@
       case 'w-close': S.wiz = null; break;
       case 'w-retry': Object.assign(w, { step: 4, result: null }); break;
       case 'w-start':
-        w.seen = txt('text_sensor/Fingerprint: Letzte Aktion'); w.result = null; w.step = 5;
+        w.seenSeq = seq('text_sensor/Fingerprint: Letzte Aktion'); w.result = null; w.step = 5;
         return run(fpSetup(w.person, w.hand, w.finger, w.action).concat([['button/Finger anlernen', 'press']]));
-      case 'w-cancel': return run([['button/Anlernen abbrechen', 'press']]);
+      case 'w-cancel': S.wiz = null; draw(); return run([['button/Anlernen abbrechen', 'press']], 'Anlernen abgebrochen');
       case 'w-assign': {
         const p = w.person, hh = w.hand, ff = w.finger;
         S.wiz = null;

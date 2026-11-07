@@ -1,6 +1,6 @@
 # Änderungen in diesem Fork
 
-**Version 3.2.1** (2026-11-07) – Komponente, Beispiel-YAMLs und Anleitung tragen dieselbe Versionsnummer.
+**Version 3.2.2** (2026-11-08) – Komponente, Beispiel-YAMLs und Anleitung tragen dieselbe Versionsnummer.
 1.1.0: Fingerprint-Paket mit Zuordnung Person/Hand/Finger, Aktion pro Finger (inkl. Umschalten), Ring-Rückmeldung und Scan-Pause.
 1.1.1: Pinbelegung als Substitutions, R503-Stromabschaltung per PNP-Transistor (sensor_power_pin), mehrere Status-LEDs.
 1.2.0: Paket Zeitplan (2 Zeitpläne mit Uhrzeit, Wochentagen und Aktion, SNTP).
@@ -32,6 +32,7 @@
 3.1.0: Pairing, Schlossantrieb und ESP-Neustart in der Web-App; deutlichere Überschriften.
 3.2.0: „Kopplung entfernen“ (Schloss tauschen), forget_pairing() in der Komponente.
 3.2.1: Pairing-Absicherung (alte Kopplung bleibt bei Fehlschlag), Status nach Pairing, deutlichere Auswahl in der App.
+3.2.2: Web-App: Anlern-/Pairing-Assistent erkennt wiederholte Meldungen, Zeitgrenze für Befehle.
 
 Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (Fix für ESPHome 2026.8).
 

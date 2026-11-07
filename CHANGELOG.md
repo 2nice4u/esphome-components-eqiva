@@ -23,6 +23,19 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.2.2 – 2026-11-08
+
+### Behoben (Web-App)
+- Anlern-Assistent blieb bei „Wird gestartet …“ stehen, wenn dieselbe Meldung zweimal in derselben Minute kam
+  (z. B. derselbe Finger zweimal hintereinander unter anderem Namen → zweimal „Abgebrochen: … schon angelernt …“).
+  Die App zählt jetzt jede Meldung des ESP statt Texte zu vergleichen; ebenso beim Pairing-Assistenten.
+- Knöpfe blieben gesperrt, wenn eine Anfrage an den ESP nicht zurückkam. Jeder Befehl hat jetzt eine Zeitgrenze
+  von 8 s („Keine Antwort vom ESP – bitte nochmal versuchen“), danach ist alles wieder bedienbar.
+- „Anlernen abbrechen“ schließt den Assistenten sofort, auch wenn der ESP nichts mehr abzubrechen hat.
+
+### Für eigene Kopien der Hauptdatei
+- `config_version: "3.2.2"` setzen und die neue `eqiva-smart-lock-app.js` übernehmen.
+
 ## 3.2.1 – 2026-11-07
 
 ### Behoben
