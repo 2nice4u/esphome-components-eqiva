@@ -10,6 +10,9 @@
 
 #include <queue>
 #include <vector>
+#include <deque>
+#include <string>
+#include <ctime>
 #include "eQ3_constants.h"
 #include "eQ3_message.h"
 #include "eQ3_util.h"
@@ -25,7 +28,7 @@ namespace eqiva_key_ble {
 using namespace esp32_ble_client;
 
 // Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
-#define EQIVA_PATCH_VERSION "2.1.0"
+#define EQIVA_PATCH_VERSION "3.2.0"
 
 // Patch-Konstanten
 static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
@@ -108,6 +111,22 @@ class EqivaKeyBle : public BLEClientBase {
     void sim_set_connected_(bool c);
     void apply_conn_params_();
     void touch_() { last_activity_ = millis(); }
+    // --- Ereignisprotokoll (letzte 10 Ereignisse, neuestes zuerst) ---
+    struct Event { time_t t; std::string text; };
+    std::deque<Event> events_;
+    std::string cmd_source_;             // Auslöser des nächsten Befehls (gilt 3 s)
+    uint32_t cmd_source_at_{0};
+    int ev_pending_{-1};                 // erwarteter Befehl (LOCK/UNLOCK/OPEN), -1 = keiner
+    std::string ev_pending_src_;
+    uint32_t ev_pending_at_{0};
+    bool ev_moved_{false};               // seit dem Befehl MOVING gesehen
+    uint32_t last_command_ms_{0};
+    bool last_command_valid_{false};
+    uint8_t ev_last_state_{255};         // letzter Endzustand (2/3/4), 255 = unbekannt
+    void on_lock_state_(uint8_t st);
+    void ev_tick_();
+    void ev_fail_(const char *why);
+    void publish_events_();
     void request_connect_();
 
     std::string getClientState() {
@@ -194,6 +213,11 @@ class EqivaKeyBle : public BLEClientBase {
         void set_user_id_sensor(text_sensor::TextSensor *user_id_sensor) { this->user_id_sensor_ = user_id_sensor; }
         void set_mac_address_sensor(text_sensor::TextSensor *mac_address_sensor) { this->mac_address_sensor_ = mac_address_sensor; }
         void set_rssi_sensor(sensor::Sensor *rssi_sensor) { this->rssi_sensor_ = rssi_sensor; }
+        void set_events_sensor(text_sensor::TextSensor *events_sensor) { this->events_sensor_ = events_sensor; }
+        // Ereignisprotokoll: Eintrag mit Uhrzeit (sofern bekannt) hinzufügen
+        void log_event(const std::string &text);
+        // Auslöser für den nächsten Befehl setzen (z. B. "Max", "Zeitplan 1"); gilt 3 s, sonst "HA/Web"
+        void set_cmd_source(const std::string &src) { this->cmd_source_ = src; this->cmd_source_at_ = millis(); }
         // Simulation: kein BLE, Schloss wird nachgebildet (Zustände, Fahrzeit, Sparmodus-Verbindung)
         void set_simulate(bool s) { this->simulate_ = s; }
         bool is_simulated() const { return this->simulate_; }
@@ -201,6 +225,10 @@ class EqivaKeyBle : public BLEClientBase {
         void set_sim_travel_ms(uint32_t ms) { this->sim_travel_ms_ = ms < 500 ? 500 : ms; }
         void sim_connect();
         void sim_disconnect();
+        void sim_turn_by_hand();         // Simulation: Schlüssel/Drehknauf von Hand drehen
+        // Kopplung vergessen (z. B. Schloss getauscht): trennen, Schlüssel löschen, nicht mehr verbinden.
+        // Der Benutzer bleibt im Schloss angelernt (austragen per Eqiva-App oder Werksreset).
+        void forget_pairing();
 
         void set_state(esphome::esp32_ble_tracker::ClientState st) override {
             BLEClientBase::set_state(st);
@@ -219,6 +247,7 @@ class EqivaKeyBle : public BLEClientBase {
         text_sensor::TextSensor *user_id_sensor_{nullptr};
         text_sensor::TextSensor *mac_address_sensor_{nullptr};
         sensor::Sensor *rssi_sensor_{nullptr};   // Patch: Empfang der aktiven Verbindung
+        text_sensor::TextSensor *events_sensor_{nullptr};
 
 };
 

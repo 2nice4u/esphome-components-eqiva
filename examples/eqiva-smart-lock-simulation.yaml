@@ -1,15 +1,19 @@
 # ---------------------------------------------------------------
 # Testmodus (Simulation) – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 2.1.0 (2026-11-04) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.2.0 (2026-11-07) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Wird automatisch geladen, wenn in der Hauptdatei use_simulation: "true" gesetzt ist.
 #
 # Es wird KEIN echtes Schloss angesteuert. Die Komponente bildet das Schloss nach:
 #   Zuschließen/Aufschließen/Öffnen mit MOVING und einstellbarer Fahrzeit,
 #   Sparmodus mit Verbindungsaufbau (ca. 2 s) und Trennen nach Leerlauf,
-#   "nicht erreichbar" zum Testen von Zeitüberschreitung und Fehleranzeige.
+#   "nicht erreichbar" zum Testen von Zeitüberschreitung und Fehleranzeige,
+#   "von Hand drehen" zum Testen des Ereignisprotokolls (🖐 von Hand).
 # Status-LED und R503-Ring zeigen die Zustände wie im echten Betrieb.
 # Angelernte Finger und Einstellungen bleiben beim Wechsel zurück in den Normalbetrieb erhalten.
 # ---------------------------------------------------------------
+
+substitutions:
+  version_check: "true"     # Standard, wird von der Hauptdatei überschrieben
 
 web_server:
   sorting_groups:
@@ -28,6 +32,15 @@ switch:
       - lambda: 'id(key_ble)->set_sim_reachable(true);'
     turn_off_action:
       - lambda: 'id(key_ble)->set_sim_reachable(false);'
+    web_server:
+      sorting_group_id: sg_sim
+
+button:
+  - platform: template
+    name: "Simulation: von Hand drehen"
+    icon: "mdi:hand-back-right"
+    on_press:
+      - lambda: 'id(key_ble)->sim_turn_by_hand();'
     web_server:
       sorting_group_id: sg_sim
 
@@ -57,3 +70,12 @@ interval:
           if (done) return;
           done = true;
           id(key_ble)->set_sim_travel_ms((uint32_t) (id(sim_travel).state * 1000));
+
+# Versionsprüfung (wird nie ausgeführt, nur beim Kompilieren geprüft)
+script:
+  - id: ver_check_simulation
+    then:
+      - lambda: |-
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.2.0") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-simulation.yaml ist 3.2.0, Hauptdatei ist ${config_version} "
+                        "(alle Dateien gleicher Version verwenden oder version_check: false)");

@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # Zeitplan – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 2.1.0 (2026-11-04) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.2.0 (2026-11-07) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Einbinden:   packages:
 #                schedule: !include eqiva-smart-lock-schedule.yaml
 #
@@ -13,6 +13,7 @@
 # ---------------------------------------------------------------
 
 substitutions:
+  version_check: "true"     # Standard, wird von der Hauptdatei überschrieben
   timezone: "Europe/Berlin"
   sntp_server: "0.pool.ntp.org"   # bei gesperrtem Internet z. B. IP der OPNsense
 
@@ -47,10 +48,17 @@ globals:
     initial_value: '""'
 
 script:
+  - id: ver_check_schedule
+    then:
+      - lambda: |-
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.2.0") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-schedule.yaml ist 3.2.0, Hauptdatei ist ${config_version} "
+                        "(alle Dateien gleicher Version verwenden oder version_check: false)");
   # Befehl ans Schloss (lokal, ohne HA)
   - id: sched_send
     mode: queued
     then:
+      - lambda: 'id(key_ble)->set_cmd_source("Zeitplan " + to_string(id(sched_which)));'   # Ereignisprotokoll
       - if:
           condition:
             lambda: 'return id(sched_cmd) == 1;'
