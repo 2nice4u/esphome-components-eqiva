@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.0.0 (2026-11-06) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.1.0 (2026-11-07) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.0.0';
+  const APP_VERSION = '3.1.0';
   const GUIDE_URL = 'https://github.com/2nice4u/esphome-components-eqiva/blob/main/docs/ANLEITUNG.md';
 
   // ---------------------------------------------------------------- Zustand
@@ -16,6 +16,7 @@
     tab: 'start', title: '', conn: 'connecting', expert: false,
     theme: load('eqa-theme', 'auto'),
     wiz: null,                       // Anlern-/Zuordnungs-Assistent
+    pair: null,                      // Pairing-Assistent (Card Key nur im Speicher der Seite)
     sheet: null,                     // geöffnetes Detailfenster (Finger, Person, Platz)
     confirm: '',                     // Schlüssel einer Aktion, die auf "wirklich?" wartet
     busy: false, toast: ''
@@ -247,7 +248,8 @@
       '<li><span class="dot k-' + e.kind + '"></span><span class="et">' + esc(e.label) + '</span><span class="tm">' + esc((e.day ? e.day + ' ' : '') + e.time) + '</span></li>').join('') + '</ul>'
       : '<p class="muted">Noch keine Ereignisse seit dem Start.</p>')) : '';
     const setup = txt('text_sensor/Einrichtungsstatus');
-    const setupHtml = setup && !/^✅/.test(setup) ? card('<p><b>Einrichtung:</b> ' + esc(setup) + '</p><p class="muted">Pairing und BLE-Einstellungen in der Expertenansicht.</p>', 'info') : '';
+    const setupHtml = setup && !/^✅/.test(setup) && !/TESTMODUS/.test(setup) ? card('<span class="lbl">Einrichtung</span><p>' + esc(setup) + '</p>' +
+      (has('button/BLE Pair _Start_') ? '<div class="foot">' + btn(/^[①②]/.test(setup) ? 'pair' : 'tab', /^[①②]/.test(setup) ? 'Jetzt koppeln' : 'Zur Einrichtung', 'b pri', /^[①②]/.test(setup) ? undefined : 'more') + '</div>' : ''), 'info') : '';
     return '<div class="grid2"><div class="col">' + hero + tilesHtml + setupHtml + '</div><div class="col">' + evHtml + '</div></div>';
   }
 
@@ -394,12 +396,90 @@
     return h + '</div>';
   }
 
+  // QR-Text der Keycard: M<MAC 12 Hex>K<Card Key 32 Hex><Seriennummer>
+  function parseCardKey(raw) {
+    const k = String(raw || '').replace(/\s+/g, '');
+    const m = k.match(/^M([0-9A-Fa-f]{12})K([0-9A-Fa-f]{32})(.*)$/);
+    if (!m) return null;
+    return { key: k, mac: m[1].toUpperCase().match(/../g).join(':'), sn: m[3] || '?' };
+  }
+  function choiceMap(id, label, names) {
+    if (!has(id)) return '';
+    const cur = txt(id);
+    return '<div class="fld"><span class="lbl">' + esc(label) + '</span><div class="seg">' +
+      (E[id].option || Object.keys(names)).map((o) => '<button type="button" class="' + (o === cur ? 'sel' : '') + '" data-a="opt" data-x="' + esc(id) +
+        '" data-v="' + esc(o) + '">' + esc(names[o] || o) + '</button>').join('') + '</div></div>';
+  }
+  function viewSetup() {
+    let h = '';
+    if (has('button/BLE Pair _Start_')) {
+      const st = txt('text_sensor/Einrichtungsstatus', '–');
+      const uid = (txt('text_sensor/Einrichtungsstatus').match(/gekoppelt wurde User (\d+)/) || [])[1];
+      h += card('<h3>Einrichtung</h3>' + row('Status', st) + (has('text_sensor/Pairing-Info') ? row('Pairing', txt('text_sensor/Pairing-Info', '–')) : '') +
+        (uid !== undefined ? '<p class="note">Die eingestellte User-ID passt nicht zum Pairing.</p><div class="foot">' + btn('fixuid', 'User ' + uid + ' übernehmen', 'b pri', uid) + '</div>' : '') +
+        '<div class="foot">' + btn('pair', 'Schloss koppeln (Pairing)', 'b' + (/^[①②]/.test(st) ? ' pri' : '')) + '</div>');
+    }
+    if (has('button/Lock Settings _Apply_')) {
+      h += card('<h3>Schlossantrieb einstellen</h3><p class="muted">Nach einem Werksreset nötig. Das Schloss muss verbunden sein.</p>' +
+        choiceMap('select/Lock Settings Close Direction', 'Schließrichtung', { Left: 'Links', Right: 'Rechts' }) +
+        choiceMap('select/Lock Settings Key Position', 'Schlüsselposition', { Vertical: 'Senkrecht', Horizontal: 'Waagerecht' }) +
+        choiceMap('select/Lock Settings Turns', 'Umdrehungen', { 1: '1', 2: '2', 3: '3', 4: '4' }) +
+        '<div class="foot">' + btn('press', 'Am Schloss übernehmen', 'b pri', 'button/Lock Settings _Apply_') + '</div>');
+    }
+    return h;
+  }
+  function viewPair() {
+    const w = S.pair;
+    const ck = parseCardKey(w.key);
+    let body = '', foot = '';
+    if (w.step === 1) {
+      body = '<p class="q">Card Key eintragen</p>' +
+        '<ol class="steps"><li>QR-Code auf der Keycard mit der Handy-Kamera oder Google Lens scannen.</li><li>Den Text (beginnt mit <b>M001A…</b>) kopieren.</li><li>Hier einfügen (lange tippen → Einfügen).</li></ol>' +
+        '<label class="fld"><span class="lbl">QR-Text der Keycard</span><textarea rows="3" data-c="pair-key" data-k="pair-key" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="M001A…">' + esc(w.key) + '</textarea></label>' +
+        (ck ? '<div class="sum">' + row('MAC-Adresse', ck.mac) + row('Seriennummer', ck.sn) + '</div>' :
+          (w.key.trim() ? '<p class="note">Das ist kein vollständiger QR-Text – er beginnt mit „M“, enthält ein „K“ an Stelle 14 und ist mindestens 46 Zeichen lang.</p>' : ''));
+      foot = btn('p-close', 'Abbrechen', 'b') + btn('p-next', 'Weiter', 'b pri' + (ck ? '' : ' dis'), undefined, ck ? '' : ' aria-disabled="true"');
+    } else if (w.step === 2) {
+      body = '<p class="q">Schloss in den Pairing-Modus bringen</p>' +
+        '<div class="live"><div class="ring2 rs-orange pulse">' + icon('lock', 44) + '</div>' +
+        '<p>Am Schloss die Taste <b>Öffnen</b> ca. <b>5 s</b> halten, bis die LED <b>schnell orange blinkt</b>.</p>' +
+        '<p class="muted">Dann sofort „Pairing starten“ drücken (der Pairing-Modus endet nach kurzer Zeit).</p></div>';
+      foot = btn('p-back', 'Zurück', 'b') + btn('p-start', 'Pairing starten', 'b pri');
+    } else {
+      const info = txt('text_sensor/Pairing-Info'), st = txt('text_sensor/Einrichtungsstatus');
+      const done = info && info !== w.seenInfo;
+      const age = Date.now() - w.started;
+      if (done && !w.result) { w.result = 'ok'; w.key = ''; }
+      if (!w.result && age > 60000) w.result = 'timeout';
+      if (w.result === 'ok') {
+        const uid = (st.match(/gekoppelt wurde User (\d+)/) || [])[1];
+        body = '<div class="live"><div class="ring2 rs-ok">' + icon('check', 48) + '</div><p class="hl2">Gekoppelt</p><p>' + esc(info) + '</p>' +
+          '<p class="muted">' + esc(st) + '</p></div>' +
+          (uid !== undefined ? '<p class="note">Die eingestellte User-ID passt nicht – bitte übernehmen.</p>' + '<div class="foot">' + btn('fixuid', 'User ' + uid + ' übernehmen', 'b pri', uid) + '</div>' : '');
+        foot = btn('p-close', 'Fertig', 'b pri');
+      } else if (w.result === 'timeout') {
+        body = '<div class="live"><div class="ring2 rs-err">' + icon('alert', 44) + '</div><p class="hl2">Keine Antwort vom Schloss</p>' +
+          '<p>Blinkte die LED schnell orange, als du „Pairing starten“ gedrückt hast? Ist der ESP nah genug am Schloss?</p>' +
+          '<p class="muted">' + esc(st) + '</p></div>';
+        foot = btn('p-close', 'Schließen', 'b') + btn('p-retry', 'Nochmal versuchen', 'b pri');
+      } else {
+        body = '<div class="live"><div class="ring2 pulse">' + icon('spin', 44) + '</div><p class="hl2">Pairing läuft …</p>' +
+          '<p class="muted">' + esc(st || '…') + '</p><p class="muted small">' + Math.round(age / 1000) + ' s</p></div>';
+        foot = btn('p-close', 'Ausblenden', 'b');
+      }
+    }
+    return card('<div class="headrow"><h2>Schloss koppeln</h2><span class="muted">Schritt ' + w.step + ' von 3</span></div>' +
+      '<div class="prog"><div style="width:' + (w.step / 3 * 100) + '%"></div></div>' + body + '<div class="foot">' + foot + '</div>', 'wiz');
+  }
+
   function viewMore() {
+    if (S.pair) return viewPair();
     const grp = (title, items) => { const inner = items.filter(Boolean).join(''); return inner ? card('<h3>' + title + '</h3>' + inner) : ''; };
     const theme = '<div class="fld"><span class="lbl">Darstellung</span><div class="seg">' + [['auto', 'Automatisch'], ['light', 'Hell'], ['dark', 'Dunkel']].map((t) =>
       '<button type="button" class="' + (S.theme === t[0] ? 'sel' : '') + '" data-a="theme" data-x="' + t[0] + '">' + t[1] + '</button>').join('') + '</div></div>';
     let h = '<h2>Einstellungen</h2><div class="cards">';
     h += card(theme);
+    h += viewSetup();
     if (has('switch/Simulation: Schloss erreichbar')) h += grp('Testmodus (Simulation)', [toggle('switch/Simulation: Schloss erreichbar', 'Schloss erreichbar'),
       num('number/Simulation: Fahrzeit', 'Fahrzeit'), has('button/Simulation: von Hand drehen') ? '<div class="foot">' + btn('press', 'Von Hand drehen', 'b', 'button/Simulation: von Hand drehen') + '</div>' : '']);
     h += grp('Schloss', [choice('select/Energiemodus', 'Energiemodus'), choice('select/Türgriff außen', 'Türgriff außen'),
@@ -427,7 +507,9 @@
     h += card('<h3>Diagnose</h3>' + diag.join(''));
     h += '<div class="links"><a class="b lnk" href="' + GUIDE_URL + '" target="_blank" rel="noopener">' + icon('book', 18) + 'Anleitung</a>' +
       btn('expert', icon('table', 18) + 'Expertenansicht', 'b lnk') + '</div>';
-    h += '<p class="muted small">Pairing, BLE-Einstellungen, Log-Stufe und Neustart: Expertenansicht (ESPHome-Tabelle, braucht Internet).</p>';
+    if (has('button/ESP Restart')) h += card('<h3>ESP</h3><p class="muted">Startet den ESP neu (ca. 15 s). Einstellungen und Finger bleiben erhalten.</p><div class="foot">' +
+      (S.confirm === 'restart' ? btn('restart', 'Wirklich neu starten', 'b danger') : btn('ask-restart', 'ESP neu starten', 'b')) + '</div>');
+    h += '<p class="muted small">BLE-Einstellungen von Hand und Log-Stufe: Expertenansicht (ESPHome-Tabelle, braucht Internet).</p>';
     return h + '</div>';
   }
 
@@ -493,7 +575,7 @@
     const b = e.target.closest('[data-a]');
     if (!b || !root.contains(b) || b.disabled) return;
     const a = b.dataset.a, x = b.dataset.x, w = S.wiz;
-    if (a !== 'ask-del' && a !== 'ask-slot' && a !== 'f-delete' && a !== 's-delete') S.confirm = '';
+    if (!/^(ask-del|ask-slot|f-delete|s-delete|ask-restart|restart)$/.test(a)) S.confirm = '';
     switch (a) {
       case 'tab': S.tab = x; S.sheet = null; root.scrollTop = 0; break;
       case 'lock': return run([['lock/Schloss', 'lock']]);
@@ -509,6 +591,21 @@
       }
       case 'theme': S.theme = x; save('eqa-theme', x); applyTheme(); break;
       case 'expert': setExpert(true); return;
+      // Pairing
+      case 'pair': S.tab = 'more'; S.pair = { step: 1, key: '' }; root.scrollTop = 0; break;
+      case 'p-next': if (!parseCardKey(S.pair.key)) return; S.pair.step = 2; break;
+      case 'p-back': S.pair.step = 1; break;
+      case 'p-close': S.pair = null; break;
+      case 'p-retry': S.pair.step = 2; S.pair.result = null; break;
+      case 'p-start': {
+        const w = S.pair, ck = parseCardKey(w.key);
+        if (!ck) return;
+        Object.assign(w, { step: 3, result: null, started: Date.now(), seenInfo: txt('text_sensor/Pairing-Info') });
+        return run([['text/BLE Pair Card Key', 'set', { value: ck.key }], ['button/BLE Pair _Start_', 'press']]);
+      }
+      case 'fixuid': return run([['number/BLE Settings User ID', 'set', { value: x }], ['button/BLE Settings _Save_', 'press']], 'User-ID ' + x + ' übernommen');
+      case 'ask-restart': S.confirm = 'restart'; break;
+      case 'restart': S.confirm = ''; return run([['button/ESP Restart', 'press']], 'ESP startet neu …');
       // Assistent
       case 'wiz': S.wiz = { mode: 'enroll', step: 1, person: '', hand: 1, finger: 0, action: 1 }; break;
       case 'w-person': w.person = x; break;
@@ -552,6 +649,7 @@
     if (!n.dataset) return;
     if (n.dataset.c === 'w-newperson' && S.wiz) { S.wiz.person = n.value.replace(/[,|]/g, ' ').trim(); draw(); }
     if (n.dataset.c === 'p-new' && S.sheet) S.sheet.newName = n.value;
+    if (n.dataset.c === 'pair-key' && S.pair) { S.pair.key = n.value; draw(); }
   }
   function onChange(e) {
     const n = e.target, c = n.dataset && n.dataset.c;
@@ -591,7 +689,7 @@ html[data-eqa-theme=dark] #eqa{color-scheme:dark;--bg:#0F1115;--card:#171A21;--f
 html:not(.eqa-expert) esp-app{display:none}html.eqa-expert #eqa{display:none}
 #eqa-back{position:fixed;right:16px;bottom:16px;z-index:20;display:none;min-height:44px;padding:0 16px;border:0;border-radius:12px;background:#1D4ED8;color:#fff;font:600 14px system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer}
 html.eqa-expert #eqa-back{display:block}
-#eqa *{box-sizing:border-box}#eqa h1{margin:0;font-size:20px;font-weight:700}#eqa h2{margin:0 0 8px;font-size:17px;font-weight:700}#eqa h3{margin:0 0 8px;font-size:15px;font-weight:700}
+#eqa *{box-sizing:border-box}#eqa h1{margin:0;font-size:20px;font-weight:700}#eqa h2{margin:0 0 8px;font-size:17px;font-weight:700}#eqa h3{margin:0 0 10px;padding-bottom:8px;border-bottom:2px solid var(--accs);font-size:16px;font-weight:700;color:var(--acci)}
 #eqa p{margin:6px 0}#eqa .muted{color:var(--muted)}#eqa .small{font-size:12px}#eqa .note{font-size:13px;color:var(--wr)}
 #eqa header{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:14px 16px;background:var(--card);border-bottom:1px solid var(--line)}
 #eqa .brand{display:flex;flex-direction:column;flex:1;min-width:0}#eqa .brand h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -638,9 +736,9 @@ html.eqa-expert #eqa-back{display:block}
 #eqa .chip .muted{font-size:11px}
 #eqa .badge{padding:1px 7px;border-radius:999px;font-size:11px;font-weight:600;background:var(--mvb);color:var(--mv)}
 #eqa .a1{background:var(--accs);color:var(--acci)}#eqa .a2{background:var(--ulb);color:var(--ul)}#eqa .a3{background:var(--lkb);color:var(--lk)}#eqa .a4{background:var(--opb);color:var(--op)}#eqa .a5{background:var(--wrb);color:var(--wr)}
-#eqa .lbl{display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px}#eqa .la{font-size:14px;margin:0}
+#eqa .lbl{display:block;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--acci);margin-bottom:8px}#eqa .la{font-size:14px;margin:0}
 #eqa .row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:50px;border-top:1px solid var(--line)}#eqa h3+.row,#eqa .sum .row:first-child{border-top:0}
-#eqa .row .v{color:var(--muted);text-align:right;overflow-wrap:anywhere}
+#eqa .row>span:first-child{font-weight:600}#eqa .row .v{font-weight:400;color:var(--muted);text-align:right;overflow-wrap:anywhere}
 #eqa .fld{display:block;padding:8px 0}
 #eqa input[type=text],#eqa input[type=number],#eqa select{min-height:44px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif;width:100%}
 #eqa .numw{display:flex;align-items:center;gap:6px;flex:none}#eqa .numw input{width:96px;text-align:right}#eqa .uom{font-size:13px;color:var(--muted)}
@@ -649,7 +747,7 @@ html.eqa-expert #eqa-back{display:block}
 #eqa .seg button.sel{background:var(--accs);color:var(--acci);box-shadow:0 1px 3px rgba(0,0,0,.15)}
 #eqa .sw{flex:none;width:52px;height:30px;border:0;border-radius:999px;padding:3px;background:#9CA3AF;display:flex;cursor:pointer}
 #eqa .sw span{width:24px;height:24px;border-radius:50%;background:#fff;display:block;transition:transform .15s}#eqa .sw.on{background:#1D4ED8}#eqa .sw.on span{transform:translateX(22px)}
-#eqa .q{font-weight:600;margin:4px 0 10px}
+#eqa .q{font-weight:700;font-size:16px;color:var(--acci);margin:4px 0 10px}
 #eqa .pick{min-height:44px;padding:0 16px;border:2px solid var(--line);border-radius:12px;background:var(--card);color:var(--fg);font:600 14px system-ui,sans-serif;cursor:pointer}
 #eqa .pick.sel,#eqa .opt.sel{border-color:var(--acc);background:var(--accs);color:var(--acci)}#eqa .pick small{font-weight:400}
 #eqa .list{display:flex;flex-direction:column;gap:8px}
@@ -662,6 +760,9 @@ html.eqa-expert #eqa-back{display:block}
 #eqa .rs-purple{border-color:var(--pu);color:var(--pu)}#eqa .rs-ok{border-color:var(--lk);background:var(--lkb);color:var(--lk)}#eqa .rs-err{border-color:var(--ul);background:var(--ulb);color:var(--ul)}
 #eqa .pulse{animation:eqpulse 2s ease-in-out infinite}@keyframes eqpulse{50%{opacity:.45}}
 #eqa .hl2{font-size:17px;font-weight:700;margin:0}
+#eqa textarea{width:100%;min-height:76px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);font:15px ui-monospace,Menlo,Consolas,monospace;resize:vertical;word-break:break-all}
+#eqa .steps{margin:0 0 8px;padding-left:20px}#eqa .steps li{margin:4px 0}
+#eqa .rs-orange{border-color:#EA8A0C;color:#EA8A0C}
 #eqa .plan.off{opacity:.7}#eqa .bigtime{font:700 30px system-ui,sans-serif;border:0;background:transparent;color:var(--fg);padding:0;font-variant-numeric:tabular-nums}
 #eqa .days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;margin:12px 0 4px}
 #eqa .days button{min-height:44px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--fg);font:600 13px system-ui,sans-serif;cursor:pointer}
@@ -697,6 +798,7 @@ html.eqa-expert #eqa-back{display:block}
     setExpert(load('eqa-expert', '') === '1');
     draw();
     connect();
+    setInterval(() => { if (S.pair && S.pair.step === 3 && !S.pair.result) draw(); }, 1000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();

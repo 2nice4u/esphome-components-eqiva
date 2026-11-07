@@ -23,6 +23,23 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.1.0 – 2026-11-07
+
+### Neu (Web-App)
+- **Schloss koppeln (Pairing) in der App** (Einstellungen → Einrichtung): QR-Text der Keycard einfügen (mit der
+  Handy-Kamera oder Google Lens scannen und kopieren), MAC-Adresse und Seriennummer werden zur Kontrolle angezeigt,
+  Hinweis zum Pairing-Modus, „Pairing starten“ mit Live-Status. Passt die eingestellte User-ID nicht,
+  übernimmt ein Knopf die gekoppelte. Der Card Key wird nur zum Pairing an den ESP geschickt, nicht im Browser gespeichert.
+- **Schlossantrieb einstellen** (Schließrichtung, Schlüsselposition, Umdrehungen, „Am Schloss übernehmen“).
+- **ESP neu starten** (mit Rückfrage).
+- Startseite: Hinweis „Jetzt koppeln“, solange das Schloss nicht eingerichtet ist.
+
+### Geändert
+- Überschriften und Feldbezeichnungen in der App deutlicher hervorgehoben (farbig, fett, Trennlinie).
+
+### Für eigene Kopien der Hauptdatei
+- `config_version: "3.1.0"` setzen und die neue `eqiva-smart-lock-app.js` übernehmen.
+
 ## 3.0.0 – 2026-11-06
 
 ### ⚠️ Handlungsbedarf

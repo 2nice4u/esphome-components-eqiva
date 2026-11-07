@@ -1,6 +1,6 @@
 # Änderungen in diesem Fork
 
-**Version 3.0.0** (2026-11-06) – Komponente, Beispiel-YAMLs und Anleitung tragen dieselbe Versionsnummer.
+**Version 3.1.0** (2026-11-07) – Komponente, Beispiel-YAMLs und Anleitung tragen dieselbe Versionsnummer.
 1.1.0: Fingerprint-Paket mit Zuordnung Person/Hand/Finger, Aktion pro Finger (inkl. Umschalten), Ring-Rückmeldung und Scan-Pause.
 1.1.1: Pinbelegung als Substitutions, R503-Stromabschaltung per PNP-Transistor (sensor_power_pin), mehrere Status-LEDs.
 1.2.0: Paket Zeitplan (2 Zeitpläne mit Uhrzeit, Wochentagen und Aktion, SNTP).
@@ -29,6 +29,7 @@
 2.3.0: Ereignisprotokoll (wer/wann/von Hand), Doppelt-Anlernen verhindert, Sabotage-Erkennung (6 Arten), Abschnitt „Sicherheit“ in der Anleitung.
 2.3.1: Doppelt-Anlernen: zweiter Prüf-Scan und Nachprüfung des fertigen Musters; Meldung beim Abbrechen.
 3.0.0: Web-App auf dem ESP (Handy/PC, hell/dunkel); Anleitung nach docs/ANLEITUNG.md.
+3.1.0: Pairing, Schlossantrieb und ESP-Neustart in der Web-App; deutlichere Überschriften.
 
 Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (Fix für ESPHome 2026.8).
 

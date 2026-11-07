@@ -1,6 +1,6 @@
 # Eqiva Smart Lock – Anleitung & Hilfe
 
-Gilt für Version 3.0.0 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
+Gilt für Version 3.1.0 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
 Änderungen: [CHANGELOG.md](../CHANGELOG.md)
 
 ## Die Web-App
@@ -13,11 +13,12 @@ Sie läuft direkt auf dem ESP, auch ohne Internet, am Handy und am PC.
 | **Schloss** | Zustand, Buttons Zu · Auf · Öffnen, Batterie, Empfang, Energiemodus, „Ereignisse“ |
 | **Fingerprint** | Personen mit ihren Fingern; Finger antippen = Aktion ändern, neu anlernen, löschen; Stift = Person umbenennen; „+ Anlernen“ = Assistent |
 | **Zeitplan** | Uhrzeit, Wochentage zum Antippen, Zuschließen/Aufschließen, Ein/Aus |
-| **Einstellungen** | Energiemodus, Türgriff, Fingerprint, Sabotage-Erkennung, Darstellung (Automatisch · Hell · Dunkel), Diagnose |
+| **Einstellungen** | Einrichtung (Pairing, Schlossantrieb, Neustart), Energiemodus, Türgriff, Fingerprint, Sabotage-Erkennung, Darstellung (Automatisch · Hell · Dunkel), Diagnose |
 
 - **Auf dem Handy wie eine App:** in Chrome die Seite öffnen, Menü ⋮ → „Zum Startbildschirm hinzufügen“.
+- **Einrichtung** (Einstellungen): Schloss koppeln (Pairing-Assistent), Schlossantrieb einstellen, ESP neu starten.
 - **Expertenansicht** (Einstellungen, ganz unten): die bisherige ESPHome-Tabelle mit allen Entitäten –
-  für **Pairing**, BLE-Einstellungen, Schloss-Einstellungen, Log-Stufe und Neustart.
+  für BLE-Einstellungen von Hand und die Log-Stufe.
   Sie wird aus dem Internet geladen. Zurück mit „← Zur App“.
 - Die Bezeichnungen in dieser Anleitung („BLE Pair Card Key“, „Anlern-Scans“ …) sind die Namen der
   Entitäten in der Expertenansicht und in Home Assistant.
@@ -33,6 +34,11 @@ Sie läuft direkt auf dem ESP, auch ohne Internet, am Handy und am PC.
 
 ## 2. Pairing (Schloss mit dem ESP koppeln)
 
+**In der Web-App:** Einstellungen → Einrichtung → **„Schloss koppeln (Pairing)“**. QR-Code der Keycard mit der Handy-Kamera
+oder Google Lens scannen, den Text kopieren und einfügen; der Assistent führt durch die Schritte.
+
+**In der Expertenansicht:**
+
 1. QR-Code der **Keycard** mit einer beliebigen QR-App scannen.
 2. Den **kompletten Text** (beginnt mit `M001A…`) bei **BLE Pair Card Key** (Expertenansicht) einfügen und mit Enter bestätigen. Die MAC-Adresse wird daraus automatisch übernommen.
 3. Am Schloss die Taste **Öffnen** ca. 5 s halten, bis die LED **schnell orange blinkt**.
@@ -40,6 +46,8 @@ Sie läuft direkt auf dem ESP, auch ohne Internet, am Handy und am PC.
 5. Fertig, wenn der **Einrichtungsstatus** ✅ zeigt und **Lock Status** einen Zustand anzeigt.
 
 ## 3. Nach einem Werksreset: Schloss einstellen
+
+In der Web-App: Einstellungen → **„Schlossantrieb einstellen“**, dann „Am Schloss übernehmen“. In der Expertenansicht:
 
 Unter **Schloss Einstellungen** Schließrichtung, Schlüsselposition und Umdrehungen wählen, dann **Lock Settings _Apply_** drücken.
 
