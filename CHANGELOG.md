@@ -23,6 +23,16 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.3.1 – 2026-11-08
+
+### Behoben (Web-App)
+- Expertenansicht war nach dem Umschalten leer bzw. unvollständig und erst nach Neuladen (F5) komplett.
+  Die ESPHome-Tabelle wird jetzt nicht mehr entfernt, sondern nur ausgeblendet; sie erhält beim Laden das
+  Startpaket des ESP und ist beim Umschalten sofort vollständig.
+
+### Für eigene Kopien der Hauptdatei
+- `config_version: "3.3.1"` setzen und die neue `eqiva-smart-lock-app.js` übernehmen.
+
 ## 3.3.0 – 2026-11-08
 
 ### Behoben

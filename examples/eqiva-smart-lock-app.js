@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.3.0 (2026-11-08) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.3.1 (2026-11-08) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.3.0';
+  const APP_VERSION = '3.3.1';
   const GUIDE_URL = 'https://github.com/2nice4u/esphome-components-eqiva/blob/main/docs/ANLEITUNG.md';
 
   // ---------------------------------------------------------------- Zustand
@@ -704,15 +704,14 @@
     if (!m) { m = document.createElement('meta'); m.name = 'theme-color'; document.head.appendChild(m); }
     m.content = dark ? '#171A21' : '#FFFFFF';
   }
-  // Die ESPHome-Tabelle (<esp-app>) nur einhängen, wenn sie gebraucht wird – sonst hält sie eine
-  // zweite Live-Verbindung zum ESP offen.
+  // Die ESPHome-Tabelle (<esp-app>) bleibt immer eingehängt und wird nur ausgeblendet: Sie baut ihre
+  // Zeilen aus dem Startpaket, das der ESP einmal nach dem Verbinden schickt. Neu eingehängt
+  // hätte sie dieses Paket verpasst und bliebe bis zum Neuladen leer.
   function setExpert(v) {
     S.expert = v;
     document.documentElement.classList.toggle('eqa-expert', v);
     save('eqa-expert', v ? '1' : '');
-    const cur = document.querySelector('esp-app');
-    if (!v && cur) cur.remove();
-    if (v && !cur) document.body.insertBefore(document.createElement('esp-app'), document.body.firstChild);
+    if (v && !document.querySelector('esp-app')) document.body.insertBefore(document.createElement('esp-app'), document.body.firstChild);
   }
 
   const CSS_TEXT = `
