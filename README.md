@@ -17,6 +17,16 @@ Versionen und Änderungen: [CHANGELOG.md](CHANGELOG.md)
 Die Bedienung läuft über eine eigene Web-App direkt auf dem ESP – am Handy und am PC, hell oder dunkel,
 auch ohne Home Assistant und ohne Internet. Die ESPHome-Tabelle bleibt als „Expertenansicht“ erreichbar.
 
+| Schloss (hell) | Zeitplan | Reaktionszeit |
+|---|---|---|
+| ![Schloss](docs/img/gh-schloss-hell.png) | ![Zeitplan](docs/img/gh-zeitplan-hell.png) | ![Reaktionszeit](docs/img/gh-reaktionszeit-hell.png) |
+
+| Zeitplan bearbeiten | Schloss (dunkel) |
+|---|---|
+| ![Zeitplan bearbeiten](docs/img/gh-zeitplan-bearbeiten.png) | ![Schloss dunkel](docs/img/gh-schloss-dunkel.png) |
+
+Die Bilder zeigen Testdaten aus dem Testmodus, keine echten Bedienungen.
+
 | Handy (hell) | Handy (dunkel) |
 |---|---|
 | ![Schloss](docs/app-start.png) | ![Fingerprint](docs/app-finger-dark.png) |

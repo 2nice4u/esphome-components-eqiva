@@ -23,6 +23,24 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.5.0 – 2026-11-08
+
+### Neu
+- **Reaktionszeit:** gemessen wird vom Absetzen des Befehls bis das Schloss meldet, dass der Motor läuft.
+  - Sensor „Reaktionszeit“ (Sekunden, mit Verlauf in Home Assistant)
+  - Textsensor „Reaktionszeiten“ mit den letzten 10 Werten
+  - Web-App: Kachel „Reaktion“ auf der Startseite und Karte „Reaktionszeit“ unter Einstellungen mit Ø, max und Balken.
+    Farben: grün bis 4 s, gelb bis 8 s, rot darüber.
+- Die Messung gilt für alle Bedienungen (App, HA, Fingerprint, Zeitplan). Handbedienung wird nicht gemessen.
+
+### Update
+- Pakete, `app.js` und `eqiva_components/` ersetzen, flashen.
+- **⚠️ Handlungsbedarf für eigene Hauptdateien:** Die Hauptdatei enthält jetzt zwei neue Blöcke.
+  Wer eine eigene Kopie hat, übernimmt bitte:
+  - unter `sensor:` beim Platform `eqiva_key_ble` den Eintrag `reaction_time:` (Name „Reaktionszeit“)
+  - unter `text_sensor:` beim Platform `eqiva_key_ble` den Eintrag `reaction_list:` (Name „Reaktionszeiten“)
+  Beide stehen in `eqiva-smart-lock-1.yaml`. Dazu `config_version: "3.5.0"`.
+
 ## 3.4.0 – 2026-11-08
 
 ### Neu

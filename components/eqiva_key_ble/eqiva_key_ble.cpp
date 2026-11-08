@@ -583,6 +583,8 @@ void EqivaKeyBle::sendCommand(CommandType command) {
     ev_pending_src_ = src_ok ? cmd_source_ : std::string("HA/Web");
     ev_pending_at_ = now;
     ev_moved_ = false;
+    reaction_started_ = now;
+    reaction_pending_ = true;
     last_command_ms_ = now;
     last_command_valid_ = true;
     cmd_source_.clear();
@@ -948,6 +950,22 @@ void EqivaKeyBle::publish_events_() {
 
 void EqivaKeyBle::on_lock_state_(uint8_t st) {
   const uint32_t now = millis();
+  if (st == 1 && reaction_pending_) {    // erster Motorstart nach dem Befehl = Reaktionszeit
+    reaction_pending_ = false;
+    uint32_t ms = now - reaction_started_;
+    if (ms > 65535) ms = 65535;
+    reaction_hist_.push_back((uint16_t) ms);
+    if (reaction_hist_.size() > 10) reaction_hist_.erase(reaction_hist_.begin());
+    if (this->reaction_sensor_ != nullptr) this->reaction_sensor_->publish_state(ms / 1000.0f);
+    std::string list;
+    for (size_t i = 0; i < reaction_hist_.size(); i++) {
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%s%.1f", i ? "," : "", reaction_hist_[i] / 1000.0f);
+      list += buf;
+    }
+    this->publish_(this->reaction_list_sensor_, list);
+    ESP_LOGI(TAG, "Reaktionszeit: %.1f s", ms / 1000.0f);
+  }
   if (st == 1) {                         // MOVING
     if (ev_pending_ >= 0) ev_moved_ = true;
     return;

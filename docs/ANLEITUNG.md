@@ -1,6 +1,6 @@
 # Eqiva Smart Lock – Anleitung & Hilfe
 
-Gilt für Version 3.4.0 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
+Gilt für Version 3.5.0 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
 Änderungen: [CHANGELOG.md](../CHANGELOG.md)
 
 ## Die Web-App
@@ -10,7 +10,7 @@ Sie läuft direkt auf dem ESP, auch ohne Internet, am Handy und am PC.
 
 | Bereich | Inhalt |
 |---|---|
-| **Schloss** | Zustand, Buttons Zu · Auf · Öffnen, Batterie, Empfang, Energiemodus, „Ereignisse“ |
+| **Schloss** | Zustand, Buttons Zu · Auf · Öffnen, Batterie, Empfang, Energiemodus, Reaktionszeit, „Ereignisse“ |
 | **Fingerprint** | Personen mit ihren Fingern; Finger antippen = Aktion ändern, neu anlernen, löschen; Stift = Person umbenennen; „+ Anlernen“ = Assistent |
 | **Zeitplan** | bis zu 6 Zeitpläne als Liste: antippen = bearbeiten, Schalter Ein/Aus, + Zeitplan |
 | **Einstellungen** | Einrichtung (Pairing, Schlossantrieb, Neustart), Energiemodus, Türgriff, Fingerprint, Sabotage-Erkennung, Darstellung (Automatisch · Hell · Dunkel), Diagnose |
@@ -98,6 +98,17 @@ Das Schloss erlaubt nur **eine** Bluetooth-Verbindung gleichzeitig. Vor der App 
 | schlechter als -85 dBm | 🔴 schlecht | Fehlversuche und lange Wartezeiten wahrscheinlich |
 
 > Je näher an 0, desto besser (-60 ist besser als -80). Der Wert wird während einer Verbindung alle 15 s gemessen; im Sparmodus bleibt nach dem Trennen der letzte Wert stehen.
+
+## 7a. Reaktionszeit
+
+Gemessen wird die Zeit vom Absetzen des Befehls (App, HA, Fingerprint, Zeitplan) bis das Schloss meldet, dass der Motor läuft. Im Sparmodus ist der Verbindungsaufbau mit dabei, bei bestehender Verbindung nicht.
+
+- **Startseite:** Kachel „Reaktion“ mit dem letzten Wert.
+- **Einstellungen → Reaktionszeit:** zuletzt, Ø und max der letzten 10 Bedienungen, darunter ein Balkendiagramm.
+- Farben: **grün** bis 4 s · **gelb** bis 8 s · **rot** darüber.
+- Der Sensor „Reaktionszeit“ (Sekunden) ist in Home Assistant mit Verlauf verfügbar. Die Liste „Reaktionszeiten“ enthält die letzten 10 Werte, kommagetrennt. Nach einem Neustart ist sie leer.
+
+Der Motorlauf bis zum Endzustand (ca. 3–4 s) ist Mechanik und nicht enthalten.
 
 ## 8. Fingerprint (nur mit R503)
 

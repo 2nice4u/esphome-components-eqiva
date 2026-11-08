@@ -28,7 +28,7 @@ namespace eqiva_key_ble {
 using namespace esp32_ble_client;
 
 // Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
-#define EQIVA_PATCH_VERSION "3.4.0"
+#define EQIVA_PATCH_VERSION "3.5.0"
 
 // Patch-Konstanten
 static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
@@ -226,6 +226,9 @@ class EqivaKeyBle : public BLEClientBase {
         void set_mac_address_sensor(text_sensor::TextSensor *mac_address_sensor) { this->mac_address_sensor_ = mac_address_sensor; }
         void set_rssi_sensor(sensor::Sensor *rssi_sensor) { this->rssi_sensor_ = rssi_sensor; }
         void set_events_sensor(text_sensor::TextSensor *events_sensor) { this->events_sensor_ = events_sensor; }
+        // Reaktionszeit: vom Befehl bis das Schloss sich dreht (Sekunden, letzte 10 als Liste)
+        void set_reaction_time_sensor(sensor::Sensor *s) { this->reaction_sensor_ = s; }
+        void set_reaction_list_sensor(text_sensor::TextSensor *s) { this->reaction_list_sensor_ = s; }
         // Ereignisprotokoll: Eintrag mit Uhrzeit (sofern bekannt) hinzufügen
         void log_event(const std::string &text);
         // Auslöser für den nächsten Befehl setzen (z. B. "Max", "Zeitplan 1"); gilt 3 s, sonst "HA/Web"
@@ -265,6 +268,11 @@ class EqivaKeyBle : public BLEClientBase {
         text_sensor::TextSensor *mac_address_sensor_{nullptr};
         sensor::Sensor *rssi_sensor_{nullptr};   // Patch: Empfang der aktiven Verbindung
         text_sensor::TextSensor *events_sensor_{nullptr};
+        sensor::Sensor *reaction_sensor_{nullptr};
+        text_sensor::TextSensor *reaction_list_sensor_{nullptr};
+        uint32_t reaction_started_{0};
+        bool reaction_pending_{false};
+        std::vector<uint16_t> reaction_hist_;   // ms, älteste zuerst, max. 10
 
 };
 
