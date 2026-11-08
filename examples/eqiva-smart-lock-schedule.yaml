@@ -1,15 +1,22 @@
 # ---------------------------------------------------------------
 # Zeitplan – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 3.3.1 (2026-11-08) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.4.0 (2026-11-08) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Einbinden:   packages:
 #                schedule: !include eqiva-smart-lock-schedule.yaml
 #
-# Zwei Zeitpläne (z. B. "täglich 22:00 zuschließen", "Mo-Fr 07:45 zuschließen"),
-# Uhrzeit, Wochentage und Aktion in der Web-GUI einstellbar.
+# Bis zu 6 Zeitpläne, je ein Textfeld "Zeitplan 1" … "Zeitplan 6". Bequem in der Web-App bearbeiten,
+# in der Expertenansicht / in Home Assistant auch von Hand:
+#
+#     an 22:00 Mo-So zu        täglich 22:00 zuschließen
+#     an 07:45 Mo-Fr zu        werktags 07:45 zuschließen
+#     aus 09:00 Sa,So auf      ausgeschaltet (bleibt gespeichert)
+#     (leer)                   nicht belegt
+#
+# an/aus (Standard an) · Uhrzeit HH:MM · Wochentage wie "Mo-Fr", "Sa,So", "Mo-Do,So", "täglich"
+# (ohne Angabe = täglich) · zu/auf. Reihenfolge egal, Groß-/Kleinschreibung egal.
 # Läuft ohne Home Assistant: Uhrzeit per SNTP, ersatzweise von HA.
 # Kommt keine Bestätigung vom Schloss, wird bis zu 3× im Minutenabstand wiederholt.
-#
-# Wochentage als Text: "Mo-So", "täglich", "Mo-Fr", "Sa,So", "Mo-Do,So" (leer = nie)
+# Zeitpläne 1 und 2 aus Versionen vor 3.4.0 werden beim ersten Start automatisch übernommen.
 # ---------------------------------------------------------------
 
 substitutions:
@@ -40,19 +47,22 @@ globals:
   - id: sched_retries
     type: int
     initial_value: '0'
-  - id: sched_which        # welcher Zeitplan (1/2) zuletzt ausgelöst hat
+  - id: sched_which        # welcher Zeitplan (1-6) zuletzt ausgelöst hat
     type: int
     initial_value: '0'
   - id: sched_last         # Text "Zuletzt: …"
     type: std::string
     initial_value: '""'
-
+  - id: sched_migrated     # Zeitpläne 1/2 aus dem alten Format übernommen
+    type: bool
+    restore_value: true
+    initial_value: 'false'
 script:
   - id: ver_check_schedule
     then:
       - lambda: |-
-          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.3.1") == 0,
-                        "Versionskonflikt: eqiva-smart-lock-schedule.yaml ist 3.3.1, Hauptdatei ist ${config_version} "
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.4.0") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-schedule.yaml ist 3.4.0, Hauptdatei ist ${config_version} "
                         "(alle Dateien gleicher Version verwenden oder version_check: false)");
   # Befehl ans Schloss (lokal, ohne HA)
   - id: sched_send
@@ -76,41 +86,93 @@ interval:
   - interval: 10s
     then:
       - lambda: |-
+          // Einmalig: Zeitpläne 1/2 aus dem alten Format (bis 3.3.x) übernehmen
+          if (!id(sched_migrated)) {
+            id(sched_migrated) = true;
+            if (id(sched_txt1).state.empty() && id(sched_txt2).state.empty()) {
+              struct Old { bool on; int h, m; std::string days; int act; };
+              Old o[2] = {
+                {id(sched1_on).state, id(sched1_time).hour(), id(sched1_time).minute(), id(sched1_days).state,
+                 (int) id(sched1_action).active_index().value_or(0)},
+                {id(sched2_on).state, id(sched2_time).hour(), id(sched2_time).minute(), id(sched2_days).state,
+                 (int) id(sched2_action).active_index().value_or(0)},
+              };
+              for (int i = 0; i < 2; i++) {
+                char buf[64];
+                snprintf(buf, sizeof(buf), "%s %02d:%02d %s %s", o[i].on ? "an" : "aus", o[i].h, o[i].m,
+                         o[i].days.empty() ? "Mo-So" : o[i].days.c_str(), o[i].act == 1 ? "auf" : "zu");
+                (i == 0 ? id(sched_txt1) : id(sched_txt2)).make_call().set_value(buf).perform();
+                ESP_LOGI("sched", "Zeitplan %d übernommen: %s", i + 1, buf);
+              }
+            }
+            global_preferences->sync();
+          }
+
+          // Eine Zeile auswerten (Rückgabe: gültig, leer, an, Stunde, Minute, Tage-Maske Bit0=Mo…Bit6=So, Aktion 1 auf/2 zu)
+          static const auto sched_parse = [](const std::string &line) -> std::array<int, 7> {
+            // Rückgabe: {gültig, leer, an, Stunde, Minute, Tage-Maske, Aktion}
+            std::array<int, 7> r{0, 0, 1, 0, 0, 0x7F, 2};
+            std::string s = line;
+            for (auto &c : s) c = tolower((unsigned char) c);
+            auto days_mask = [](std::string d) -> int {
+              d.erase(std::remove(d.begin(), d.end(), ' '), d.end());
+          for (size_t k; (k = d.find(",-")) != std::string::npos || (k = d.find("-,")) != std::string::npos;)
+            d.erase(k + (d[k] == ',' ? 0 : 1), 1);   // "Mo - Fr" -> "Mo-Fr"
+              if (d.empty() || d == "täglich" || d == "taeglich" || d == "alle" || d == "mo-so") return 0x7F;
+              static const char *const n[] = {"mo", "di", "mi", "do", "fr", "sa", "so"};
+              auto idx = [&](const std::string &x) { for (int i = 0; i < 7; i++) if (x == n[i]) return i; return -1; };
+              int mask = 0;
+              size_t pos = 0;
+              while (pos <= d.size()) {
+                size_t e = d.find(',', pos);
+                std::string tok = d.substr(pos, e == std::string::npos ? std::string::npos : e - pos);
+                pos = (e == std::string::npos) ? d.size() + 1 : e + 1;
+                if (tok.empty()) continue;
+                size_t dash = tok.find('-');
+                int a = idx(tok.substr(0, dash));
+                int b = dash == std::string::npos ? a : idx(tok.substr(dash + 1));
+                if (a < 0 || b < 0) return -1;
+                for (int i = a;; i = (i + 1) % 7) { mask |= 1 << i; if (i == b) break; }   // auch "Fr-Mo"
+              }
+              return mask;
+            };
+            std::string days;
+            bool have_time = false, any = false;
+            size_t pos = 0;
+            while (pos < s.size()) {
+              while (pos < s.size() && s[pos] == ' ') pos++;
+              size_t e = s.find(' ', pos);
+              std::string tok = s.substr(pos, e == std::string::npos ? std::string::npos : e - pos);
+              pos = (e == std::string::npos) ? s.size() : e;
+              if (tok.empty()) continue;
+              any = true;
+              int hh, mm; char extra;
+              if (tok == "an" || tok == "ein" || tok == "on") r[2] = 1;
+              else if (tok == "aus" || tok == "off") r[2] = 0;
+              else if (tok == "zu" || tok == "zuschließen" || tok == "zuschliessen" || tok == "lock") r[6] = 2;
+              else if (tok == "auf" || tok == "aufschließen" || tok == "aufschliessen" || tok == "unlock") r[6] = 1;
+              else if ((sscanf(tok.c_str(), "%d:%d%c", &hh, &mm, &extra) == 2 ||
+                    sscanf(tok.c_str(), "%d:%d:00%c", &hh, &mm, &extra) == 2) && hh >= 0 && hh < 24 && mm >= 0 && mm < 60) {
+                r[3] = hh; r[4] = mm; have_time = true;
+              } else {
+                days += (days.empty() ? "" : ",") + tok;
+              }
+            }
+            if (!any) { r[1] = 1; return r; }   // leer = nicht belegt
+            r[5] = days_mask(days);
+            r[0] = have_time && r[5] > 0;
+            return r;
+          };
+
           ESPTime t = id(sntp_time).now();
           if (!t.is_valid()) t = id(ha_time).now();
           static const char *const wdn[] = {"Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"};
-
-          // Wochentage-Text -> Bitmaske (Bit 0 = Mo … Bit 6 = So), -1 = ungültig
-          auto parse = [](std::string s) -> int {
-            for (auto &c : s) c = tolower((unsigned char) c);
-            s.erase(std::remove(s.begin(), s.end(), ' '), s.end());
-            if (s.empty()) return 0;
-            if (s == "täglich" || s == "taeglich" || s == "alle") return 0x7F;
-            static const char *const n[] = {"mo", "di", "mi", "do", "fr", "sa", "so"};
-            auto idx = [&](const std::string &x) { for (int i = 0; i < 7; i++) if (x == n[i]) return i; return -1; };
-            int mask = 0;
-            size_t pos = 0;
-            while (pos <= s.size()) {
-              size_t e = s.find(',', pos);
-              std::string tok = s.substr(pos, e == std::string::npos ? std::string::npos : e - pos);
-              pos = (e == std::string::npos) ? s.size() + 1 : e + 1;
-              if (tok.empty()) continue;
-              size_t d = tok.find('-');
-              int a = idx(tok.substr(0, d));
-              int b = d == std::string::npos ? a : idx(tok.substr(d + 1));
-              if (a < 0 || b < 0) return -1;
-              for (int i = a;; i = (i + 1) % 7) { mask |= 1 << i; if (i == b) break; }   // auch "Fr-Mo"
-            }
-            return mask;
-          };
-
-          struct Sched { bool on; int h, m, mask, act; };
-          Sched sc[2] = {
-            {id(sched1_on).state, id(sched1_time).hour, id(sched1_time).minute,
-             parse(id(sched1_days).state), (int) id(sched1_action).active_index().value_or(0)},
-            {id(sched2_on).state, id(sched2_time).hour, id(sched2_time).minute,
-             parse(id(sched2_days).state), (int) id(sched2_action).active_index().value_or(0)},
-          };
+          const std::string *lines[6] = {&id(sched_txt1).state, &id(sched_txt2).state, &id(sched_txt3).state,
+                                         &id(sched_txt4).state, &id(sched_txt5).state, &id(sched_txt6).state};
+          std::array<std::array<int, 7>, 6> sc;
+          for (int i = 0; i < 6; i++) sc[i] = sched_parse(*lines[i]);
+          // aktiv = gültig, belegt und eingeschaltet
+          auto active = [&](int i) { return sc[i][0] && !sc[i][1] && sc[i][2]; };
 
           std::string status;
           if (!t.is_valid()) {
@@ -143,39 +205,38 @@ interval:
                   ESP_LOGE("sched", "Zeitplan %d: Schloss hat nicht bestätigt", id(sched_which));
                 }
               }
-              // 2) Fällige Zeitpläne auslösen
-              for (int i = 0; i < 2; i++) {
-                const Sched &s = sc[i];
-                if (!s.on || s.mask <= 0 || !(s.mask & (1 << wd)) || s.h != t.hour || s.m != t.minute) continue;
-                const int cmd = s.act == 1 ? 1 : 2;   // 0 = Zuschließen, 1 = Aufschließen
+              // 2) Fällige Zeitpläne auslösen (bei mehreren gleichzeitig gilt der erste)
+              for (int i = 0; i < 6; i++) {
+                if (!active(i) || !(sc[i][5] & (1 << wd)) || sc[i][3] != t.hour || sc[i][4] != t.minute) continue;
+                const int cmd = sc[i][6];
                 ESP_LOGI("sched", "Zeitplan %d: %s", i + 1, cmd == 2 ? "zuschließen" : "aufschließen");
                 id(sched_which) = i + 1;
                 id(sched_cmd) = cmd;
                 id(sched_expect) = cmd;
                 id(sched_retries) = 3;
                 id(sched_send).execute();
+                break;
               }
             }
             // 3) Nächsten Termin berechnen
             int best = -1, best_i = -1, best_day = 0;
             const int now_min = t.hour * 60 + t.minute;
-            for (int i = 0; i < 2; i++) {
-              const Sched &s = sc[i];
-              if (!s.on || s.mask <= 0) continue;
+            for (int i = 0; i < 6; i++) {
+              if (!active(i)) continue;
               for (int d = 0; d <= 7; d++) {
                 const int day = (wd + d) % 7;
-                const int off = d * 1440 + s.h * 60 + s.m - now_min;
-                if (!(s.mask & (1 << day)) || off <= 0) continue;
+                const int off = d * 1440 + sc[i][3] * 60 + sc[i][4] - now_min;
+                if (!(sc[i][5] & (1 << day)) || off <= 0) continue;
                 if (best < 0 || off < best) { best = off; best_i = i; best_day = day; }
                 break;
               }
             }
-            for (int i = 0; i < 2; i++)
-              if (sc[i].on && sc[i].mask < 0) status += "Zeitplan " + to_string(i + 1) + ": Wochentage ungültig! ";
+            for (int i = 0; i < 6; i++)
+              if (!sc[i][1] && !sc[i][0]) status += "Zeitplan " + to_string(i + 1) + " ungültig! ";
             if (best >= 0) {
               char buf[64];
-              snprintf(buf, sizeof(buf), "Nächstes: %s %02d:%02d %s", wdn[best_day], sc[best_i].h, sc[best_i].m,
-                       sc[best_i].act == 1 ? "aufschließen" : "zuschließen");
+              snprintf(buf, sizeof(buf), "Nächstes: %s %02d:%02d %s", wdn[best_day], sc[best_i][3], sc[best_i][4],
+                       sc[best_i][6] == 1 ? "aufschließen" : "zuschließen");
               status += buf;
             } else if (status.empty()) {
               status = "Kein Zeitplan aktiv";
@@ -193,94 +254,148 @@ text_sensor:
     web_server:
       sorting_group_id: sg_sched
 
-switch:
-  - platform: template
-    name: "Zeitplan 1 aktiv"
-    id: sched1_on
-    icon: "mdi:calendar-check"
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_OFF
-    entity_category: config
-    web_server:
-      sorting_group_id: sg_sched
-  - platform: template
-    name: "Zeitplan 2 aktiv"
-    id: sched2_on
-    icon: "mdi:calendar-check"
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_OFF
-    entity_category: config
-    web_server:
-      sorting_group_id: sg_sched
-
-datetime:
-  - platform: template
-    name: "Zeitplan 1 Uhrzeit"
-    id: sched1_time
-    type: time
-    optimistic: true
-    restore_value: true
-    initial_value: "22:00:00"
-    entity_category: config
-    web_server:
-      sorting_group_id: sg_sched
-  - platform: template
-    name: "Zeitplan 2 Uhrzeit"
-    id: sched2_time
-    type: time
-    optimistic: true
-    restore_value: true
-    initial_value: "07:45:00"
-    entity_category: config
-    web_server:
-      sorting_group_id: sg_sched
-
 text:
+  # --- Die 6 Zeitpläne (Format siehe oben) ---
+  - platform: template
+    name: "Zeitplan 1"
+    id: sched_txt1
+    icon: "mdi:calendar-clock"
+    mode: text
+    max_length: 50
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_sched
+  - platform: template
+    name: "Zeitplan 2"
+    id: sched_txt2
+    icon: "mdi:calendar-clock"
+    mode: text
+    max_length: 50
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_sched
+  - platform: template
+    name: "Zeitplan 3"
+    id: sched_txt3
+    icon: "mdi:calendar-clock"
+    mode: text
+    max_length: 50
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_sched
+  - platform: template
+    name: "Zeitplan 4"
+    id: sched_txt4
+    icon: "mdi:calendar-clock"
+    mode: text
+    max_length: 50
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_sched
+  - platform: template
+    name: "Zeitplan 5"
+    id: sched_txt5
+    icon: "mdi:calendar-clock"
+    mode: text
+    max_length: 50
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_sched
+  - platform: template
+    name: "Zeitplan 6"
+    id: sched_txt6
+    icon: "mdi:calendar-clock"
+    mode: text
+    max_length: 50
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_sched
+
+  # --- Altes Format (bis 3.3.x), nur noch intern zum einmaligen Übernehmen ---
+  # Gleiche Namen wie früher, damit die gespeicherten Werte gefunden werden.
   - platform: template
     name: "Zeitplan 1 Wochentage"
     id: sched1_days
-    icon: "mdi:calendar-week"
+    internal: true
     mode: text
     max_length: 30
     optimistic: true
     restore_value: true
     initial_value: "Mo-So"
-    entity_category: config
-    web_server:
-      sorting_group_id: sg_sched
   - platform: template
     name: "Zeitplan 2 Wochentage"
     id: sched2_days
-    icon: "mdi:calendar-week"
+    internal: true
     mode: text
     max_length: 30
     optimistic: true
     restore_value: true
     initial_value: "Mo-Fr"
-    entity_category: config
-    web_server:
-      sorting_group_id: sg_sched
+
+switch:
+  - platform: template
+    name: "Zeitplan 1 aktiv"
+    id: sched1_on
+    internal: true
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: template
+    name: "Zeitplan 2 aktiv"
+    id: sched2_on
+    internal: true
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+
+datetime:
+  - platform: template
+    name: "Zeitplan 1 Uhrzeit"
+    id: sched1_time
+    internal: true
+    type: time
+    optimistic: true
+    restore_value: true
+    initial_value: "22:00:00"
+  - platform: template
+    name: "Zeitplan 2 Uhrzeit"
+    id: sched2_time
+    internal: true
+    type: time
+    optimistic: true
+    restore_value: true
+    initial_value: "07:45:00"
 
 select:
   - platform: template
     name: "Zeitplan 1 Aktion"
     id: sched1_action
-    icon: "mdi:lock-clock"
-    options: ["Zuschließen", "Aufschließen"]   # Reihenfolge nicht ändern
-    initial_option: "Zuschließen"
-    optimistic: true
-    restore_value: true
-    entity_category: config
-    web_server:
-      sorting_group_id: sg_sched
-  - platform: template
-    name: "Zeitplan 2 Aktion"
-    id: sched2_action
-    icon: "mdi:lock-clock"
+    internal: true
     options: ["Zuschließen", "Aufschließen"]
     initial_option: "Zuschließen"
     optimistic: true
     restore_value: true
-    entity_category: config
-    web_server:
-      sorting_group_id: sg_sched
+  - platform: template
+    name: "Zeitplan 2 Aktion"
+    id: sched2_action
+    internal: true
+    options: ["Zuschließen", "Aufschließen"]
+    initial_option: "Zuschließen"
+    optimistic: true
+    restore_value: true

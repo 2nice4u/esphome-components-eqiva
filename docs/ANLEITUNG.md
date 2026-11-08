@@ -1,6 +1,6 @@
 # Eqiva Smart Lock – Anleitung & Hilfe
 
-Gilt für Version 3.3.1 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
+Gilt für Version 3.4.0 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
 Änderungen: [CHANGELOG.md](../CHANGELOG.md)
 
 ## Die Web-App
@@ -12,7 +12,7 @@ Sie läuft direkt auf dem ESP, auch ohne Internet, am Handy und am PC.
 |---|---|
 | **Schloss** | Zustand, Buttons Zu · Auf · Öffnen, Batterie, Empfang, Energiemodus, „Ereignisse“ |
 | **Fingerprint** | Personen mit ihren Fingern; Finger antippen = Aktion ändern, neu anlernen, löschen; Stift = Person umbenennen; „+ Anlernen“ = Assistent |
-| **Zeitplan** | Uhrzeit, Wochentage zum Antippen, Zuschließen/Aufschließen, Ein/Aus |
+| **Zeitplan** | bis zu 6 Zeitpläne als Liste: antippen = bearbeiten, Schalter Ein/Aus, + Zeitplan |
 | **Einstellungen** | Einrichtung (Pairing, Schlossantrieb, Neustart), Energiemodus, Türgriff, Fingerprint, Sabotage-Erkennung, Darstellung (Automatisch · Hell · Dunkel), Diagnose |
 
 - **Auf dem Handy wie eine App:** in Chrome die Seite öffnen, Menü ⋮ → „Zum Startbildschirm hinzufügen“.
@@ -160,18 +160,30 @@ Die Übersicht **„Angelernte Finger“** zeigt alle Finger, z. B. `#0 St R-Dau
 
 ## 9. Zeitplan
 
-Zwei Zeitpläne, z. B. „täglich 22:00 zuschließen“ und „Mo–Fr 07:45 zuschließen“ (Gruppe „Zeitplan“):
+Bis zu **6 Zeitpläne**, z. B. „täglich 22:00 zuschließen“, „Mo–Fr 07:45 zuschließen“, „Sa+So 09:00 aufschließen“.
 
-1. **Uhrzeit**, **Wochentage** und **Aktion** (Zuschließen/Aufschließen) einstellen.
-2. **Zeitplan … aktiv** einschalten.
+**In der Web-App** (Reiter Zeitplan): jede Zeile zeigt Aktion (🔒 grün = zuschließen, 🔓 rot = aufschließen), Uhrzeit und Wochentage, rechts der Schalter Ein/Aus. Zeile antippen = bearbeiten (Uhrzeit, Aktion, Wochentage oder Schnellwahl Mo–Fr / Sa+So / Täglich, Löschen). **+ Zeitplan** legt einen neuen an.
+
+**Von Hand** (Expertenansicht, Home Assistant): jeder Zeitplan ist ein Textfeld **„Zeitplan 1“ … „Zeitplan 6“**:
+
+| Text | Bedeutung |
+|---|---|
+| `an 22:00 Mo-So zu` | täglich 22:00 zuschließen |
+| `an 07:45 Mo-Fr zu` | werktags 07:45 zuschließen |
+| `aus 09:00 Sa,So auf` | ausgeschaltet (bleibt gespeichert) |
+| *(leer)* | nicht belegt |
+
+`an`/`aus` (ohne Angabe: an) · Uhrzeit `HH:MM` · Wochentage · `zu`/`auf` (ohne Angabe: zu). Reihenfolge und Groß-/Kleinschreibung egal. Ist ein Text nicht lesbar, steht in „Zeitplan“ **„Zeitplan N ungültig!“** und die App zeigt die Zeile gelb.
 
 | Wochentage | Bedeutung |
 |---|---|
-| `Mo-So` oder `täglich` | jeden Tag |
+| `Mo-So` oder `täglich` (oder weglassen) | jeden Tag |
 | `Mo-Fr` | Montag bis Freitag |
 | `Sa,So` | Wochenende |
 | `Mo-Do,So` | Montag bis Donnerstag und Sonntag |
 | `Fr-Mo` | Freitag bis Montag (über das Wochenende) |
+
+Fallen zwei Zeitpläne auf dieselbe Minute, gilt der mit der kleineren Nummer. Beim Update von einer Version vor 3.4.0 übernimmt der ESP die bisherigen Zeitpläne 1 und 2 beim ersten Start automatisch.
 
 Die Anzeige **„Zeitplan“** zeigt den nächsten Termin und das letzte Ergebnis (✓ bestätigt, ✗ Schloss hat nicht reagiert). Ohne Bestätigung wird bis zu 3× im Minutenabstand wiederholt.
 

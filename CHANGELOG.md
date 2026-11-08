@@ -23,6 +23,25 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.4.0 – 2026-11-08
+
+### Neu
+- **Bis zu 6 Zeitpläne** statt 2. Jeder Zeitplan ist ein einziges Textfeld „Zeitplan 1“ … „Zeitplan 6“,
+  z. B. `an 22:00 Mo-Fr zu` oder `aus 09:00 Sa,So auf` (leer = nicht belegt). Das spart Entitäten
+  (6 statt bisher 8 für 2 Zeitpläne) und ist in HA/Expertenansicht von Hand bearbeitbar.
+  Unlesbare Einträge meldet „Zeitplan“ als „Zeitplan N ungültig!“.
+- Web-App: Zeitplan als kompakte Liste (Aktion, Uhrzeit, Wochentage, Schalter). Antippen öffnet
+  ein Bearbeitungsfenster mit Uhrzeit, Aktion, Wochentagen, Schnellwahl (Mo–Fr, Sa+So, Täglich) und Löschen;
+  „+ Zeitplan“ legt einen neuen an.
+
+### Geändert
+- Die Entitäten „Zeitplan N aktiv / Uhrzeit / Wochentage / Aktion“ sind entfallen (nur noch intern zum Übernehmen).
+  Wer sie in Home-Assistant-Automationen oder Dashboards benutzt, muss auf „Zeitplan 1“ … „Zeitplan 6“ umstellen.
+
+### Update
+- Pakete, `app.js` und `eqiva_components/` ersetzen, flashen. In der eigenen Hauptdatei nur `config_version: "3.4.0"`.
+  Die bisherigen Zeitpläne 1 und 2 übernimmt der ESP beim ersten Start automatisch (Log: „Zeitplan 1 übernommen: …“).
+
 ## 3.3.1 – 2026-11-08
 
 ### Behoben (Web-App)

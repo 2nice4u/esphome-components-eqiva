@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.3.1 (2026-11-08) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.4.0 (2026-11-08) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.3.1';
+  const APP_VERSION = '3.4.0';
   const GUIDE_URL = 'https://github.com/2nice4u/esphome-components-eqiva/blob/main/docs/ANLEITUNG.md';
 
   // ---------------------------------------------------------------- Zustand
@@ -382,6 +382,8 @@
         '<label class="fld"><span class="lbl">Neuer Name</span><input type="text" maxlength="15" data-c="p-new" data-k="p-new" value="' + esc(s.newName || '') + '"></label>' +
         '<p class="la">' + esc(stripTime(txt('text_sensor/Fingerprint: Letzte Aktion'))) + '</p>' +
         '<div class="foot">' + btn('p-rename', /existiert bereits/.test(txt('text_sensor/Fingerprint: Letzte Aktion')) ? 'Zusammenführen bestätigen' : 'Umbenennen', 'b pri') + '</div>';
+    } else if (s.type === 'sched') {
+      h = sheetSched(s);
     } else if (s.type === 'slot') {
       h = '<h2>Platz ' + s.slot + '</h2><p class="muted">Im Sensor gespeichert, aber keiner Person zugeordnet.</p>' +
         '<div class="foot">' + btn('s-assign', 'Zuordnen …', 'b pri') +
@@ -391,23 +393,73 @@
       '<button type="button" class="ib close" data-a="sheet-close" aria-label="Schließen">' + icon('x', 20) + '</button>' + h + '</div>';
   }
 
+  // Zeitplan-Zeile "an 22:00 Mo-Fr zu" (gleiche Regeln wie im ESP)
+  const SCHED_N = 6;
+  function parseSched(t) {
+    const r = { empty: false, valid: false, on: true, time: '', mask: 0x7F, act: 2 };
+    const days = [];
+    const toks = String(t || '').toLowerCase().split(/\s+/).filter(Boolean);
+    if (!toks.length) { r.empty = true; return r; }
+    for (const k of toks) {
+      let m;
+      if (/^(an|ein|on)$/.test(k)) r.on = true;
+      else if (/^(aus|off)$/.test(k)) r.on = false;
+      else if (/^(zu|zuschlie(ß|ss)en|lock)$/.test(k)) r.act = 2;
+      else if (/^(auf|aufschlie(ß|ss)en|unlock)$/.test(k)) r.act = 1;
+      else if ((m = k.match(/^(\d{1,2}):(\d{1,2})(:00)?$/)) && +m[1] < 24 && +m[2] < 60) r.time = String(+m[1]).padStart(2, '0') + ':' + String(+m[2]).padStart(2, '0');
+      else days.push(k);
+    }
+    const d = days.join(',').replace(/,-|-,/g, '-');
+    r.mask = !d || /^(mo-so)$/.test(d) ? 0x7F : daysMask(d);
+    r.valid = !!r.time && r.mask > 0;
+    return r;
+  }
+  const buildSched = (o) => (o.on ? 'an' : 'aus') + ' ' + o.time + ' ' + daysText(o.mask) + ' ' + (o.act === 1 ? 'auf' : 'zu');
+  const schedId = (n) => 'text/Zeitplan ' + n;
+
   function viewPlan() {
     let h = '<div class="headrow"><h2>Zeitplan</h2></div>';
     if (has('text_sensor/Zeitplan')) h += '<p class="muted">' + esc(txt('text_sensor/Zeitplan')) + '</p>';
-    h += '<div class="cards">';
-    for (const n of [1, 2]) {
-      const sw = 'switch/Zeitplan ' + n + ' aktiv', tm = 'time/Zeitplan ' + n + ' Uhrzeit', dy = 'text/Zeitplan ' + n + ' Wochentage', ac = 'select/Zeitplan ' + n + ' Aktion';
-      if (!has(sw)) continue;
-      const mask = daysMask(txt(dy));
-      const time = (txt(tm) || '00:00:00').slice(0, 5);
-      h += '<article class="card plan' + (on(sw) ? '' : ' off') + '"><div class="rowx"><div><span class="lbl">Zeitplan ' + n + '</span>' +
-        '<input type="time" class="bigtime" data-c="time" data-x="' + esc(tm) + '" data-k="' + esc(tm) + '" value="' + esc(time) + '" aria-label="Uhrzeit Zeitplan ' + n + '"></div>' +
-        '<button type="button" class="sw' + (on(sw) ? ' on' : '') + '" role="switch" aria-checked="' + on(sw) + '" aria-label="Zeitplan ' + n + ' aktiv" data-a="sw" data-x="' + esc(sw) + '"><span></span></button></div>' +
-        '<div class="days">' + DAYS.map((d, i) => '<button type="button" class="' + (mask > 0 && (mask & (1 << i)) ? 'sel' : '') + '" data-a="day" data-x="' + esc(dy) + '" data-v="' + i + '" aria-pressed="' + (mask > 0 && !!(mask & (1 << i))) + '">' + d + '</button>').join('') + '</div>' +
-        (mask < 0 ? '<p class="note">Wochentage ungültig: „' + esc(txt(dy)) + '“ – Tag antippen setzt sie neu.</p>' : '') +
-        choice(ac, 'Aktion') + '</article>';
+    const list = [];
+    let free = 0, firstFree = 0;
+    for (let n = 1; n <= SCHED_N; n++) {
+      if (!has(schedId(n))) continue;
+      const raw = txt(schedId(n)), p = parseSched(raw);
+      if (p.empty) { free++; if (!firstFree) firstFree = n; continue; }
+      list.push({ n, raw, p });
     }
+    list.sort((a, b) => (b.p.valid - a.p.valid) || a.p.time.localeCompare(b.p.time) || a.n - b.n);
+    h += '<div class="slist">';
+    for (const { n, raw, p } of list) {
+      if (!p.valid) {
+        h += '<div class="srow bad"><button type="button" class="smain" data-a="sched-edit" data-x="' + n + '">' +
+          '<span class="sic warn">' + icon('alert', 20) + '</span><span class="sbad"><b>Zeitplan ' + n + ' ungültig</b><small>„' + esc(raw) + '“ – antippen zum Korrigieren</small></span></button></div>';
+        continue;
+      }
+      const what = p.act === 1 ? 'Aufschließen' : 'Zuschließen';
+      h += '<div class="srow' + (p.on ? '' : ' off') + '"><button type="button" class="smain" data-a="sched-edit" data-x="' + n + '" aria-label="Zeitplan ' + n + ': ' + p.time + ' ' + daysText(p.mask) + ' ' + what + ' – bearbeiten">' +
+        '<span class="sic ' + (p.act === 1 ? 'unl' : 'lck') + '">' + icon(p.act === 1 ? 'unlock' : 'lock', 20) + '</span>' +
+        '<span class="stime">' + p.time + '</span><span class="sdays" aria-hidden="true">' +
+        'MDMDFSS'.split('').map((d, i) => '<span' + (p.mask & (1 << i) ? ' class="on"' : '') + '>' + d + '</span>').join('') + '</span></button>' +
+        '<button type="button" class="sw' + (p.on ? ' on' : '') + '" role="switch" aria-checked="' + p.on + '" aria-label="Zeitplan ' + n + ' aktiv" data-a="sched-tog" data-x="' + n + '"' + (S.busy ? ' disabled' : '') + '><span></span></button></div>';
+    }
+    if (!list.length) h += '<p class="muted">Noch kein Zeitplan angelegt.</p>';
+    if (free) h += '<button type="button" class="sadd" data-a="sched-new" data-x="' + firstFree + '">+ Zeitplan (' + list.length + ' von ' + (list.length + free) + ')</button>';
     return h + '</div>';
+  }
+  function sheetSched(s) {
+    const days = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+    const pre = [[0x1F, 'Mo–Fr'], [0x60, 'Sa+So'], [0x7F, 'Täglich']];
+    return '<h2>Zeitplan ' + s.n + (s.isNew ? ' anlegen' : ' bearbeiten') + '</h2>' +
+      '<input type="time" class="bigtime stbig" data-c="sc-time" data-k="sc-time" value="' + esc(s.time) + '" aria-label="Uhrzeit">' +
+      '<div class="fld"><span class="lbl">Aktion</span><div class="seg">' +
+      [[2, 'lock', 'Zuschließen'], [1, 'unlock', 'Aufschließen']].map((a) => '<button type="button" class="' + (s.act === a[0] ? 'sel' : '') + '" data-a="sc-act" data-x="' + a[0] + '" aria-pressed="' + (s.act === a[0]) + '">' + icon(a[1], 16) + ' ' + a[2] + '</button>').join('') + '</div></div>' +
+      '<div class="fld"><span class="lbl">Wochentage</span><div class="days">' +
+      days.map((d, i) => '<button type="button" class="' + (s.mask & (1 << i) ? 'sel' : '') + '" data-a="sc-day" data-x="' + i + '" aria-pressed="' + !!(s.mask & (1 << i)) + '">' + d + '</button>').join('') + '</div>' +
+      '<div class="presets">' + pre.map((p) => '<button type="button" class="chip' + (s.mask === p[0] ? ' sel' : '') + '" data-a="sc-pre" data-x="' + p[0] + '">' + p[1] + '</button>').join('') + '</div></div>' +
+      (s.mask ? '' : '<p class="note">Mindestens einen Wochentag wählen.</p>') +
+      '<div class="foot">' + (s.isNew ? '' : (S.confirm === 'sched' ? btn('sc-del', 'Wirklich löschen', 'b danger') : btn('ask-sched', 'Löschen', 'b'))) +
+      '<button type="button" class="b pri" data-a="sc-save"' + (s.mask && s.time && !S.busy ? '' : ' disabled') + '>Speichern</button></div>';
   }
 
   // QR-Text der Keycard: M<MAC 12 Hex>K<Card Key 32 Hex><Seriennummer>
@@ -546,7 +598,7 @@
   function tabs() {
     const t = [['start', 'lock', 'Schloss']];
     if (has('text_sensor/Fingerprint: Letzte Aktion')) t.push(['finger', 'finger', 'Fingerprint']);
-    if (has('switch/Zeitplan 1 aktiv')) t.push(['plan', 'clock', 'Zeitplan']);
+    if (has('text/Zeitplan 1')) t.push(['plan', 'clock', 'Zeitplan']);
     t.push(['more', 'sliders', 'Einstellungen']);
     return t;
   }
@@ -613,10 +665,28 @@
       case 'press': return run([[x, 'press']]);
       case 'sw': return run([[x, 'toggle']]);
       case 'opt': return run([[x, 'set', { option: b.dataset.v }]]);
-      case 'day': {
-        let m = daysMask(txt(x)); if (m < 0) m = 0;
-        m ^= 1 << +b.dataset.v;
-        return run([[x, 'set', { value: daysText(m) }]]);
+      case 'sched-edit': case 'sched-new': {
+        const n = +x, p = parseSched(txt(schedId(n))), isNew = a === 'sched-new' || p.empty;
+        S.confirm = '';
+        S.sheet = { type: 'sched', n, isNew, on: isNew ? true : p.on, time: p.time || '22:00', act: p.act, mask: p.mask > 0 ? p.mask : 0x7F };
+        break;
+      }
+      case 'sched-tog': {
+        const n = +x, p = parseSched(txt(schedId(n)));
+        if (!p.valid) return;
+        p.on = !p.on;
+        return run([[schedId(n), 'set', { value: buildSched(p) }]], 'Zeitplan ' + (p.on ? 'eingeschaltet' : 'ausgeschaltet'));
+      }
+      case 'sc-act': S.sheet.act = +x; break;
+      case 'sc-day': S.sheet.mask ^= 1 << +x; break;
+      case 'sc-pre': S.sheet.mask = +x; break;
+      case 'ask-sched': S.confirm = 'sched'; break;
+      case 'sc-del': { const s = S.sheet; S.sheet = null; S.confirm = ''; return run([[schedId(s.n), 'set', { value: '' }]], 'Zeitplan gelöscht'); }
+      case 'sc-save': {
+        const s = S.sheet;
+        if (!s.mask || !s.time) return;
+        S.sheet = null;
+        return run([[schedId(s.n), 'set', { value: buildSched(s) }]], 'Zeitplan gespeichert: ' + s.time + ' ' + daysText(s.mask) + ' ' + (s.act === 1 ? 'aufschließen' : 'zuschließen'));
       }
       case 'theme': S.theme = x; save('eqa-theme', x); applyTheme(); break;
       case 'expert': setExpert(true); return;
@@ -686,6 +756,7 @@
     if (!n.dataset) return;
     if (n.dataset.c === 'w-newperson' && S.wiz) { S.wiz.person = n.value.replace(/[,|]/g, ' ').trim(); draw(); }
     if (n.dataset.c === 'p-new' && S.sheet) S.sheet.newName = n.value;
+    if (n.dataset.c === 'sc-time' && S.sheet && n.value) S.sheet.time = n.value.slice(0, 5);
     if (n.dataset.c === 'pair-key' && S.pair) { S.pair.key = n.value; draw(); }
   }
   function onChange(e) {
@@ -799,6 +870,20 @@ html.eqa-expert #eqa-back{display:block}
 #eqa textarea{width:100%;min-height:76px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);font:15px ui-monospace,Menlo,Consolas,monospace;resize:vertical;word-break:break-all}
 #eqa .steps{margin:0 0 8px;padding-left:20px}#eqa .steps li{margin:4px 0}
 #eqa .rs-orange{border-color:#EA8A0C;color:#EA8A0C}
+#eqa .slist{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+#eqa .srow{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:6px 12px 6px 6px}
+#eqa .srow.off .smain{opacity:.5}#eqa .srow.bad{border-color:var(--wr)}
+#eqa .smain{flex:1;min-width:0;display:flex;align-items:center;gap:12px;border:0;background:transparent;color:var(--fg);padding:6px;border-radius:12px;cursor:pointer;text-align:left;font:inherit}
+#eqa .sic{width:38px;height:38px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex:none}
+#eqa .sic.lck{background:var(--lkb);color:var(--lk)}#eqa .sic.unl{background:var(--ulb);color:var(--ul)}#eqa .sic.warn{background:var(--wrb);color:var(--wr)}
+#eqa .stime{font:700 24px system-ui,sans-serif;font-variant-numeric:tabular-nums;min-width:72px}
+#eqa .sdays{display:flex;gap:2px;flex:1;min-width:0}#eqa .sdays span{width:17px;text-align:center;font:700 12px system-ui,sans-serif;color:var(--bline)}#eqa .sdays span.on{color:var(--acci)}
+#eqa .sbad{display:flex;flex-direction:column;min-width:0}#eqa .sbad small{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#eqa .sadd{min-height:52px;border:1.5px dashed var(--bline);border-radius:16px;background:transparent;color:var(--acci);font:700 15px system-ui,sans-serif;cursor:pointer}
+#eqa .stbig{display:block;width:100%;text-align:center;font-size:44px;margin:4px 0 8px}
+#eqa .presets{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}#eqa .presets .chip{min-height:34px;font-weight:600}
+#eqa .presets .chip.sel{border-color:var(--acc);background:var(--accs);color:var(--acci)}
+#eqa .seg button svg{vertical-align:-3px}
 #eqa .plan.off{opacity:.7}#eqa .bigtime{font:700 30px system-ui,sans-serif;border:0;background:transparent;color:var(--fg);padding:0;font-variant-numeric:tabular-nums}
 #eqa .days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;margin:12px 0 4px}
 #eqa .days button{min-height:44px;border:1px solid var(--bline);border-radius:10px;background:var(--card);color:var(--fg);font:600 13px system-ui,sans-serif;cursor:pointer}
