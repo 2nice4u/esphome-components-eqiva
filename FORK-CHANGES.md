@@ -44,8 +44,7 @@ Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (
 
 ```yaml
 external_components:
-  - source: github://DEIN-GITHUB-NAME/esphome-components-eqiva@main
-    refresh: 1d
+  - source: github://DEIN-GITHUB-NAME/esphome-components-eqiva@v3.5.0
 ```
 
 Vollständiges Beispiel mit Web-GUI, Energiemodi, Pairing-Info, optionalem R503-Fingerprint und Status-LED:

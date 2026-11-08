@@ -40,6 +40,8 @@ werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
   - unter `sensor:` beim Platform `eqiva_key_ble` den Eintrag `reaction_time:` (Name „Reaktionszeit“)
   - unter `text_sensor:` beim Platform `eqiva_key_ble` den Eintrag `reaction_list:` (Name „Reaktionszeiten“)
   Beide stehen in `eqiva-smart-lock-1.yaml`. Dazu `config_version: "3.5.0"`.
+- Die Beispiel-YAML im Fork lädt die Komponente jetzt fest über den Release-Tag `@v3.5.0` statt `@main`.
+  So passen YAML und Komponente immer zusammen; ein Update ist ein bewusster Schritt (Nummer hochsetzen).
 
 ## 3.4.0 – 2026-11-08
 

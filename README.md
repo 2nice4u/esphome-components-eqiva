@@ -39,13 +39,15 @@ Die Bilder zeigen Testdaten aus dem Testmodus, keine echten Bedienungen.
 2. [`secrets.example.yaml`](examples/secrets.example.yaml) als `secrets.yaml` übernehmen und ausfüllen.
 3. In `eqiva-smart-lock-1.yaml` oben unter `substitutions` die Pins und die gewünschten Pakete einstellen
    (`use_fingerprint`, `use_status_led`, `use_stats`, `use_schedule`, `use_simulation`).
-4. Die Komponente wird direkt aus diesem Repository geladen:
+4. Die Komponente wird direkt aus diesem Repository geladen, fest auf die Version der Beispiel-YAMLs:
 
    ```yaml
    external_components:
-     - source: github://2nice4u/esphome-components-eqiva@main
-       refresh: 1d
+     - source: github://2nice4u/esphome-components-eqiva@v3.5.0
    ```
+
+   YAMLs und Komponente gehören zusammen. Für ein Update die Dateien des neuen
+   [Releases](https://github.com/2nice4u/esphome-components-eqiva/releases) holen und die Nummer hinter `@` anpassen.
 
 5. Flashen, `http://<IP des ESP>/` öffnen und der [Anleitung](docs/ANLEITUNG.md) folgen (MAC-Adresse und
    Schlüssel werden in der Expertenansicht eingetragen, nicht in der YAML).
