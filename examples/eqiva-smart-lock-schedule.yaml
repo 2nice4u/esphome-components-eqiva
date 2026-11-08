@@ -92,16 +92,17 @@ interval:
             if (id(sched_txt1).state.empty() && id(sched_txt2).state.empty()) {
               struct Old { bool on; int h, m; std::string days; int act; };
               Old o[2] = {
-                {id(sched1_on).state, id(sched1_time).hour(), id(sched1_time).minute(), id(sched1_days).state,
+                {id(sched1_on).state, id(sched1_time).hour, id(sched1_time).minute, id(sched1_days).state,
                  (int) id(sched1_action).active_index().value_or(0)},
-                {id(sched2_on).state, id(sched2_time).hour(), id(sched2_time).minute(), id(sched2_days).state,
+                {id(sched2_on).state, id(sched2_time).hour, id(sched2_time).minute, id(sched2_days).state,
                  (int) id(sched2_action).active_index().value_or(0)},
               };
               for (int i = 0; i < 2; i++) {
                 char buf[64];
                 snprintf(buf, sizeof(buf), "%s %02d:%02d %s %s", o[i].on ? "an" : "aus", o[i].h, o[i].m,
                          o[i].days.empty() ? "Mo-So" : o[i].days.c_str(), o[i].act == 1 ? "auf" : "zu");
-                (i == 0 ? id(sched_txt1) : id(sched_txt2)).make_call().set_value(buf).perform();
+                auto *txt = i == 0 ? id(sched_txt1) : id(sched_txt2);
+                txt->make_call().set_value(buf).perform();
                 ESP_LOGI("sched", "Zeitplan %d übernommen: %s", i + 1, buf);
               }
             }
