@@ -6,8 +6,12 @@ Protokoll und Verschlüsselung sind unverändert. Die wichtigsten Änderungen:
 - **Sicherheit:** User Key beim Pairing aus dem Hardware-Zufallsgenerator (vorher per `rand()` erratbar), keine Schlüssel mehr im Log
 - **Zuverlässigkeit:** Watchdog für verlorene Antworten, Befehle verfallen statt verspätet ausgeführt zu werden, Speicherfehler und Abstürze behoben
 - **Energiemodi:** Schnell / Ausgewogen / Sparsam, live umschaltbar
-- **Neu:** RSSI-Sensor der Verbindung, `on_paired`-Auslöser, klare Meldungen bei fehlendem Pairing oder Pairing-Modus
-- **Beispiel-Konfiguration** in [`examples/`](examples/): Web-App (hell/dunkel), Pairing-Info, Energiemodi, Testmodus ohne Schloss und optionale Pakete für R503-Fingerprint, Status-LED, Statistik und Zeitplan
+- **Web-App direkt auf dem ESP:** Bedienung, Pairing per QR-Text, Schlossantrieb einstellen, Kopplung entfernen (Schloss tauschen)
+- **Ereignisprotokoll:** wer wann auf- oder zugeschlossen hat, von Hand, Klingel, Sabotage (letzte 10 Ereignisse)
+- **Reaktionszeit:** Zeit vom Befehl bis der Motor dreht, mit Ø, max und Ampel in der App
+- **Pairing abgesichert:** bei Fehlschlag oder Abbruch bleibt die bisherige Kopplung, Hinweis „Schloss nicht erreichbar“
+- **Neu in der Komponente:** RSSI-Sensor der Verbindung, `on_paired`-Auslöser, klare Meldungen bei fehlendem Pairing oder Pairing-Modus
+- **Beispiel-Konfiguration** in [`examples/`](examples/): Energiemodi, Testmodus ohne Schloss und optionale Pakete für R503-Fingerprint, Status-LED, Statistik und bis zu 6 Zeitpläne
 
 Alle Details: [FORK-CHANGES.md](FORK-CHANGES.md)
 Versionen und Änderungen: [CHANGELOG.md](CHANGELOG.md)
@@ -21,17 +25,13 @@ auch ohne Home Assistant und ohne Internet. Die ESPHome-Tabelle bleibt als „Ex
 |---|---|---|
 | ![Schloss](docs/img/gh-schloss-hell.png) | ![Zeitplan](docs/img/gh-zeitplan-hell.png) | ![Reaktionszeit](docs/img/gh-reaktionszeit-hell.png) |
 
-| Zeitplan bearbeiten | Schloss (dunkel) |
-|---|---|
-| ![Zeitplan bearbeiten](docs/img/gh-zeitplan-bearbeiten.png) | ![Schloss dunkel](docs/img/gh-schloss-dunkel.png) |
+| Zeitplan bearbeiten | Schloss (dunkel) | Fingerprint (dunkel) |
+|---|---|---|
+| ![Zeitplan bearbeiten](docs/img/gh-zeitplan-bearbeiten.png) | ![Schloss dunkel](docs/img/gh-schloss-dunkel.png) | ![Fingerprint dunkel](docs/img/gh-fingerprint-dunkel.png) |
 
-Die Bilder zeigen Testdaten aus dem Testmodus, keine echten Bedienungen.
+![PC-Ansicht (dunkel)](docs/img/gh-pc-dunkel.png)
 
-| Handy (hell) | Handy (dunkel) |
-|---|---|
-| ![Schloss](docs/app-start.png) | ![Fingerprint](docs/app-finger-dark.png) |
-
-![PC-Ansicht (dunkel)](docs/app-desktop-dark.png)
+Die Bilder zeigen Testdaten, keine echten Personen oder Bedienungen.
 
 ## Installation
 
@@ -54,8 +54,8 @@ Die Bilder zeigen Testdaten aus dem Testmodus, keine echten Bedienungen.
 
 ## Anleitung & Hilfe
 
-Die vollständige Anleitung (Werksreset, Pairing, Bedienung, Energiemodi, Fingerprint, Zeitplan, Testmodus,
-Sicherheit und Fehlersuche): **[docs/ANLEITUNG.md](docs/ANLEITUNG.md)**.
+Die vollständige Anleitung (Werksreset, Pairing, Bedienung, Ereignisse, Energiemodi, Reaktionszeit, Fingerprint,
+Zeitplan, Testmodus, Sicherheit und Fehlersuche): **[docs/ANLEITUNG.md](docs/ANLEITUNG.md)**.
 Die Web-App verlinkt sie unter Einstellungen → „Anleitung“.
 
 
@@ -69,10 +69,11 @@ Gedacht für **private Haushalte und kleine Gruppen**, nicht als Zutrittskontrol
 | Finger mit Zuordnung (Person/Hand/Finger/Aktion) | ca. 55 (begrenzt durch die Sicherung im Notizspeicher des R503, 512 Byte; abhängig von der Namenslänge) – darüber wird das Anlernen abgelehnt |
 | Abdrücke im R503 | 200 (Plätze 0–199) |
 | Übersicht „Angelernte Finger“ | ca. 10–13 Finger, danach „+N weitere“ (Home Assistant: max. 255 Zeichen); vollständige Liste im Log |
-| Zeitpläne | 2 |
+| Zeitpläne | 6 |
+| Ereignisprotokoll | letzte 10 Ereignisse, nach einem Neustart leer (Home Assistant speichert den Verlauf) |
 | Schloss pro ESP | 1 (für jedes Schloss ein eigener ESP) |
 
-Außerdem fehlen für einen Firmeneinsatz: Protokoll, wer wann geöffnet hat (nur „Letzte Aktion“),
+Außerdem fehlen für einen Firmeneinsatz: ein dauerhaftes Protokoll auf dem ESP (nur die letzten 10 Ereignisse),
 Benutzerverwaltung mit Rollen, Ablaufdatum für Zugänge und eine Notfall-Freigabe über eine zentrale Stelle.
 Der Fingerprint-Sensor ist außerdem kein zertifiziertes Sicherheitsprodukt.
 
