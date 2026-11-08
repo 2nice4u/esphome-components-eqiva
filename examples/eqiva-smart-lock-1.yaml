@@ -180,11 +180,11 @@ packages:
     file: eqiva-smart-lock-simulation.yaml    # Testmodus: Bedienelemente für das simulierte Schloss
     condition: ${use_simulation}
 
-# Komponente direkt aus dem Fork laden.
+# Komponente direkt aus dem Fork laden – fest auf die Version dieser YAML (Release-Tag).
+# Bei einem Update die Nummer zusammen mit config_version anpassen (gleiche Version).
 # Alternativ lokal: source: { type: local, path: eqiva_components }
 external_components:
-  - source: github://2nice4u/esphome-components-eqiva@main
-    refresh: 1d
+  - source: github://2nice4u/esphome-components-eqiva@v3.5.0
 
 # ---------------------------------------------------------------
 # Eqiva BLE
