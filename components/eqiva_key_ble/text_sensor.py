@@ -17,6 +17,8 @@ CONF_LOCK_STATUS = "lock_status"
 CONF_USER_KEY = "user_key"
 CONF_USER_ID = "user_id"
 CONF_MAC_ADDRESS = "mac_address"
+CONF_EVENTS = "events"
+CONF_REACTION_LIST = "reaction_list"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -40,6 +42,16 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_MAC_ADDRESS): text_sensor.text_sensor_schema(
             entity_category=ENTITY_CATEGORY_NONE,
         ),
+        # Letzte 10 Ereignisse (wer hat wann auf-/zugeschlossen, von Hand, Klingel, Sabotage)
+        cv.Optional(CONF_EVENTS): text_sensor.text_sensor_schema(
+            icon="mdi:history",
+            entity_category=ENTITY_CATEGORY_NONE,
+        ),
+        # Reaktionszeiten der letzten 10 Bedienungen (Sekunden, kommagetrennt)
+        cv.Optional(CONF_REACTION_LIST): text_sensor.text_sensor_schema(
+            icon="mdi:timer-outline",
+            entity_category=ENTITY_CATEGORY_NONE,
+        ),
     }
 )
 
@@ -53,7 +65,9 @@ async def to_code(config):
         CONF_LOCK_STATUS,
         CONF_USER_KEY,
         CONF_USER_ID,
-        CONF_MAC_ADDRESS
+        CONF_MAC_ADDRESS,
+        CONF_EVENTS,
+        CONF_REACTION_LIST,
     ]:
         if key not in config:
             continue

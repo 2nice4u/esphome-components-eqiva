@@ -1,6 +1,6 @@
 # Änderungen in diesem Fork
 
-**Version 2.1.0** (2026-11-04) – Komponente, Beispiel-YAMLs und Anleitung tragen dieselbe Versionsnummer.
+**Version 3.5.0** (2026-11-08) – Komponente, Beispiel-YAMLs und Anleitung tragen dieselbe Versionsnummer.
 1.1.0: Fingerprint-Paket mit Zuordnung Person/Hand/Finger, Aktion pro Finger (inkl. Umschalten), Ring-Rückmeldung und Scan-Pause.
 1.1.1: Pinbelegung als Substitutions, R503-Stromabschaltung per PNP-Transistor (sensor_power_pin), mehrere Status-LEDs.
 1.2.0: Paket Zeitplan (2 Zeitpläne mit Uhrzeit, Wochentagen und Aktion, SNTP).
@@ -24,6 +24,19 @@
 1.10.1: Anlernen mit Ring-Rückmeldung je Bild (lila atmen, 2× grün, 2× gelb).
 2.0.0: 16 Personen, Plätze 0–199, Speicherformat FP2, Anlernen wird abgelehnt wenn die Sicherung im Sensor voll wäre, Warnung unter 10 %, Übersicht nach Speicherplatz sortiert.
 2.1.0: Person umbenennen (mit Zusammenführen nach Rückfrage).
+2.2.0: Versionsprüfung beim Kompilieren (Pakete, Komponente) und Versionshinweis in der Anleitung.
+2.2.1: Anlernen schlug bei langsamer Muster-Berechnung fehl (Lichtbefehl nach dem letzten Bild) – behoben.
+2.3.0: Ereignisprotokoll (wer/wann/von Hand), Doppelt-Anlernen verhindert, Sabotage-Erkennung (6 Arten), Abschnitt „Sicherheit“ in der Anleitung.
+2.3.1: Doppelt-Anlernen: zweiter Prüf-Scan und Nachprüfung des fertigen Musters; Meldung beim Abbrechen.
+3.0.0: Web-App auf dem ESP (Handy/PC, hell/dunkel); Anleitung nach docs/ANLEITUNG.md.
+3.1.0: Pairing, Schlossantrieb und ESP-Neustart in der Web-App; deutlichere Überschriften.
+3.2.0: „Kopplung entfernen“ (Schloss tauschen), forget_pairing() in der Komponente.
+3.2.1: Pairing-Absicherung (alte Kopplung bleibt bei Fehlschlag), Status nach Pairing, deutlichere Auswahl in der App.
+3.2.2: Web-App: Anlern-/Pairing-Assistent erkennt wiederholte Meldungen, Zeitgrenze für Befehle.
+3.3.0: MAC erst nach bestätigtem Pairing, Pairing abbrechen, Hinweis „Schloss nicht erreichbar“, Ring-Anzeige beim Verbinden, connection_timeout 12 s.
+3.3.1: Web-App: Expertenansicht sofort vollständig (ESPHome-Tabelle nur ausgeblendet).
+3.4.0: Bis zu 6 Zeitpläne als Textfelder, Zeitplan-Liste mit Bearbeitungsfenster in der Web-App.
+3.5.0: Reaktionszeit (Befehl bis Motor läuft) als Sensor und Liste, Anzeige in der Web-App.
 
 Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (Fix für ESPHome 2026.8).
 
@@ -31,7 +44,7 @@ Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (
 
 ```yaml
 external_components:
-  - source: github://2nice4u/esphome-components-eqiva@main
+  - source: github://DEIN-GITHUB-NAME/esphome-components-eqiva@main
     refresh: 1d
 ```
 

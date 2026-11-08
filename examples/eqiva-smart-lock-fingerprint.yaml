@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # R503 Fingerprint – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 2.1.0 (2026-11-04) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.5.0 (2026-11-08) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Einbinden: packages: fingerprint: !include eqiva-smart-lock-fingerprint.yaml
 # Nutzt ${name}, lock_status, ble_state, door_handle und ha_time aus der Hauptdatei.
 #
@@ -18,6 +18,15 @@
 #   Finger mit Zuordnung: so viele, wie in den Notizspeicher (512 Byte) passen – ca. 55 bei kurzen Namen.
 #   Passt eine neue Zuordnung nicht mehr hinein, wird das Anlernen abgelehnt. Warnung bei < 10 % Rest.
 #   Übersicht "Angelernte Finger" ab ca. 10-13 Fingern gekürzt ("+N weitere", HA: max. 255 Zeichen), volle Liste im Log
+#
+# Doppelt anlernen wird verhindert: nach "Finger anlernen" den Finger einmal zur Prüfung auflegen.
+# Ist er schon gespeichert (z. B. unter anderem Namen), wird abgebrochen.
+#
+# SABOTAGE-ERKENNUNG (Gruppe "Sabotage-Erkennung", einzeln abschaltbar):
+#   Sensor antwortet nicht · Belegung verändert · Fremder Sensor (Notizspeicher anders)
+#   Unmöglicher Treffer (Platz laut Sensor leer) · Berührungsleitung dauerhaft · Fehlversuch-Sperre (Standard aus)
+#   Alarm -> "Fingerprint Sabotage" = an, Eintrag in "Ereignisse" und "Letzte Aktion", Fingerprint gesperrt
+#   (abschaltbar). Bleibt bis "Sabotage quittieren", auch über einen Neustart.
 # ---------------------------------------------------------------
 
 api:
@@ -70,9 +79,13 @@ web_server:
     - id: sg_fp_enroll
       name: "Fingerprint Anlernen"
       sorting_weight: -10
+    - id: sg_fp_sab
+      name: "Sabotage-Erkennung"
+      sorting_weight: -12
 
 # Standard-Pins; in der Hauptdatei unter substitutions überschreibbar
 substitutions:
+  version_check: "true"     # Standard, wird von der Hauptdatei überschrieben
   fp_tx_pin: GPIO20        # -> R503 RXD (grün bzw. braun)
   fp_rx_pin: GPIO21        # <- R503 TXD (gelb)
   fp_sensing_pin: GPIO6    # <- R503 WAKEUP (blau)
@@ -91,6 +104,7 @@ uart:
 # R503-Ring: state 1=atmen 2=blinken 3=an 4=aus | Farbe 1=rot 2=blau 3=lila 4=grün 5=gelb 6=cyan 7=weiß
 # Bedeutung: blau = Finger wird gelesen · grün atmen = erkannt, Aktion läuft
 #            danach 2 s an: grün = verriegelt, rot = aufgeschlossen/geöffnet
+#            türkis atmen = verbinde mit Schloss (Sparmodus, Umschalten)
 #            rot atmen = nicht erkannt · rot blinken = Fehler/Schloss nicht erreicht
 #            lila blinken = abgewiesen/gesperrt · gelb blinken = Finger schlecht aufgelegt
 #            ohne Finger bedient: grün atmen = zu, rot atmen = auf, blau atmen = geöffnet
@@ -125,6 +139,12 @@ globals:
   - id: fp_who                # z. B. "Max, rechter Daumen"
     type: std::string
     initial_value: '""'
+  - id: fp_who_short          # z. B. "Max R-Daumen" (Ereignisprotokoll)
+    type: std::string
+    initial_value: '""'
+  - id: fp_unknown_logged     # "unbekannter Finger" höchstens 1× pro Minute ins Protokoll
+    type: uint32_t
+    initial_value: '0'
   - id: fp_pending_cmd        # 0 nichts, 1 aufschließen, 2 zuschließen, 3 öffnen
     type: int
     initial_value: '0'
@@ -144,6 +164,9 @@ globals:
     type: uint32_t
     initial_value: '0'
   - id: fp_was_connected
+    type: bool
+    initial_value: 'false'
+  - id: fp_seen_conn          # Verbindungsversuch für die Status-Abfrage hat begonnen
     type: bool
     initial_value: 'false'
   - id: fp_ev_result
@@ -171,6 +194,25 @@ globals:
   - id: fp_del_target
     type: int
     initial_value: '-1'
+  # Doppelt-Prüfung: vor dem Anlernen einmal auflegen, bekannter Finger -> abbrechen
+  - id: fp_dup_pending        # Zielplatz während der Prüfung (-1 = keine Prüfung)
+    type: int
+    initial_value: '-1'
+  - id: fp_dup_since
+    type: uint32_t
+    initial_value: '0'
+  - id: fp_dup_go             # Prüfung bestanden -> Anlernen starten
+    type: bool
+    initial_value: 'false'
+  - id: fp_enroll_msg         # Meldung beim Start des Anlernens
+    type: std::string
+    initial_value: '""'
+  - id: fp_dup_miss           # Prüfung: Anzahl nicht erkannter Scans (neu erst nach 2)
+    type: int
+    initial_value: '0'
+  - id: fp_enroll_cancel      # "Anlernen abbrechen" gedrückt (Meldung statt "fehlgeschlagen")
+    type: bool
+    initial_value: 'false'
   - id: fp_last_slot          # zuletzt erkannter Speicherplatz (-1 = keiner seit Start)
     type: int
     initial_value: '-1'
@@ -218,6 +260,52 @@ globals:
   - id: fp_idx_valid
     type: bool
     initial_value: 'false'
+  - id: fp_changed_at         # letzte eigene Änderung (Sabotage-Prüfung wartet danach 20 s)
+    type: uint32_t
+    initial_value: '0'
+  # --- Sabotage-Erkennung ---
+  - id: fp_sab                # Alarm aktiv (bleibt bis "Sabotage quittieren", auch über Neustart)
+    type: bool
+    restore_value: true
+    initial_value: 'false'
+  - id: fp_sab_code           # 1 keine Antwort, 2 Belegung, 3 Notizspeicher, 4 unmöglicher Treffer, 5 Berührung, 6 Fehlversuche
+    type: int
+    restore_value: true
+    initial_value: '0'
+  - id: fp_np_hash            # Prüfsumme des Notizspeichers (erkennt einen getauschten Sensor auch nach Neustart)
+    type: uint32_t
+    restore_value: true
+    initial_value: '0'
+  - id: fp_sab_rc
+    type: int
+    initial_value: '0'
+  - id: fp_sab_idx            # bei der Prüfung gelesene Belegung (wird beim Quittieren übernommen)
+    type: std::array<uint8_t, 32>
+    initial_value: 'std::array<uint8_t, 32>{}'
+  - id: fp_sab_np             # bei der Prüfung gelesener Notizspeicher
+    type: std::string
+    initial_value: '""'
+  - id: fp_sab_seen_idx
+    type: bool
+    initial_value: 'false'
+  - id: fp_sab_seen_np
+    type: bool
+    initial_value: 'false'
+  - id: fp_sab_last_check
+    type: uint32_t
+    initial_value: '0'
+  - id: fp_touch_since        # Berührungsleitung aktiv seit (0 = nicht aktiv)
+    type: uint32_t
+    initial_value: '0'
+  # Prüfsumme (FNV-1a) für den Notizspeicher, nie 0
+  - id: fp_hash
+    type: std::function<uint32_t(const std::string &)>
+    initial_value: |-
+      [](const std::string &d) -> uint32_t {
+        uint32_t h = 2166136261u;
+        for (unsigned char ch : d) { h ^= ch; h *= 16777619u; }
+        return h == 0 ? 1 : h;
+      }
   # Zuordnung als Text (für den Notizspeicher): FP2|Name0,Name1,…|Platz:PersonHandFingerAktion,…
   # Person als Hex-Ziffer 0-F, Hand L/R, Finger 0-4, Aktion 0-6. Beispiel: FP2|St,Cl|0:0R01,4:1R12
   - id: fp_export_str
@@ -319,13 +407,14 @@ globals:
         return w;
       }
   # Direkter Zugriff auf den R503 (Befehle laut Handbuch V1.4.1, an ESPHome vorbei, blockierend):
-  # op 0 = Notizspeicher schreiben (0x18), 1 = Notizspeicher lesen (0x19), 2 = Belegungstabelle (0x1F)
-  # Rückgabe: 0 ok, -1 keine Antwort (Sensor aus/schläft), -2 ungültige Antwort, >0 Fehlercode des Sensors
+  # op 0 = Notizspeicher schreiben (0x18), 1 = Notizspeicher lesen (0x19), 2 = Belegungstabelle (0x1F),
+  # op 3 = Muster aus Puffer 1 in Plätzen suchen (0x04): data = "Start Anzahl", Ergebnis in data = "Platz Wert"
+  # Rückgabe: 0 ok, -1 keine Antwort (Sensor aus/schläft), -2 ungültige Antwort, >0 Fehlercode des Sensors (9 = nicht gefunden)
   - id: fp_np_io
     type: std::function<int(esphome::uart::UARTComponent *, int, std::string &, std::array<uint8_t, 32> &)>
     initial_value: |-
       [](esphome::uart::UARTComponent *u, int op, std::string &data, std::array<uint8_t, 32> &idx) -> int {
-        auto xfer = [u](uint8_t ins, const std::vector<uint8_t> &prm, std::vector<uint8_t> &rep) -> int {
+        auto xfer = [u](uint8_t ins, const std::vector<uint8_t> &prm, std::vector<uint8_t> &rep, uint32_t timeout = 600) -> int {
           const uint16_t len = 1 + prm.size() + 2;
           std::vector<uint8_t> p = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x01,
                                     (uint8_t) (len >> 8), (uint8_t) (len & 0xFF), ins};
@@ -339,7 +428,7 @@ globals:
           u->flush();
           std::vector<uint8_t> r;
           const uint32_t start = esphome::millis();
-          while (esphome::millis() - start < 600) {
+          while (esphome::millis() - start < timeout) {
             uint8_t b;
             while (u->available() && u->read_byte(&b)) r.push_back(b);
             if (r.size() >= 9 && r.size() >= 9u + (((uint16_t) r[7] << 8) | r[8])) break;
@@ -381,6 +470,14 @@ globals:
           }
           return 0;
         }
+        if (op == 3) {   // Suche: Puffer 1 gegen Plätze Start … Start+Anzahl-1
+          int st = 0, num = 0;
+          if (sscanf(data.c_str(), "%d %d", &st, &num) != 2 || st < 0 || num <= 0) return -2;
+          const int rc = xfer(0x04, {0x01, (uint8_t) (st >> 8), (uint8_t) (st & 0xFF), (uint8_t) (num >> 8), (uint8_t) (num & 0xFF)},
+                              rep, 2000);
+          if (rc == 0 && rep.size() >= 4) data = std::to_string(((int) rep[0] << 8) | rep[1]) + " " + std::to_string(((int) rep[2] << 8) | rep[3]);
+          return rc;
+        }
         const int rc = xfer(0x1F, {0}, rep);   // Belegungstabelle Plätze 0-255
         if (rc != 0) return rc;
         if (rep.size() < 32) return -2;
@@ -389,6 +486,12 @@ globals:
       }
 
 script:
+  - id: ver_check_fingerprint
+    then:
+      - lambda: |-
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.0") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-fingerprint.yaml ist 3.5.0, Hauptdatei ist ${config_version} "
+                        "(alle Dateien gleicher Version verwenden oder version_check: false)");
   # Meldung in "Fingerprint: Letzte Aktion" (mit Uhrzeit, wenn bekannt)
   - id: fp_msg
     mode: queued
@@ -456,6 +559,12 @@ script:
                      fl[((c >> 8) & 7) % 5], an[a <= 6 ? a : 0]);
           }
           id(fp_overview_txt).publish_state(out);
+          // Vollständige Zuordnung für die Web-App: FP2-Text + "|" + belegte Plätze ohne Zuordnung
+          std::string un;
+          if (id(fp_idx_valid))
+            for (int i = 0; i < 200; i++)
+              if (((id(fp_idx)[i / 8] >> (i % 8)) & 1) && !(id(fp_map_v2)[i] & 0x8000)) un += (un.empty() ? "" : ",") + to_string(i);
+          id(fp_map_txt).publish_state(id(fp_export_str)(id(fp_map_v2), id(fp_persons_v2)) + "|" + un);
 
   # Aktion ausführen (läuft lokal, ohne HA)
   - id: fp_execute
@@ -469,11 +578,19 @@ script:
           condition:
             lambda: 'return id(fp_act) == 1 && !id(fp_was_connected);'
           then:
-            - lambda: 'id(fp)->aura_led_control(1, 60, 4, 0);'   # grün atmen = erkannt, wird ausgeführt
+            - lambda: |-
+                id(fp)->aura_led_control(1, 60, 6, 0);   // türkis atmen = verbinde mit Schloss
+                id(fp_msg).execute("Verbinde mit Schloss … – " + id(fp_who));
+            - lambda: 'id(fp_seen_conn) = false;'
             - eqiva_key_ble.status:
+            # fertig, sobald der Status da ist – oder sobald der Verbindungsversuch gescheitert ist
+            # (CONNECTING -> IDLE), statt die volle Zeit zu warten
             - wait_until:
                 condition:
-                  lambda: 'return id(fp_status_seq) != id(fp_seq_mark) && id(lock_status).state != "MOVING";'
+                  lambda: |-
+                    if (id(ble_state).state != "IDLE") id(fp_seen_conn) = true;
+                    if (id(fp_status_seq) != id(fp_seq_mark) && id(lock_status).state != "MOVING") return true;
+                    return id(fp_seen_conn) && id(ble_state).state == "IDLE";
                 timeout: 20s
       - lambda: |-
           const std::string &st = id(lock_status).state;
@@ -498,7 +615,10 @@ script:
           }
           id(fp_pending_cmd) = cmd;
           id(fp_pending_since) = millis();
+          id(key_ble)->set_cmd_source(id(fp_who_short));   // Ereignisprotokoll: wer war es
           id(fp)->aura_led_control(1, 60, 4, 0);   // grün atmen = erkannt, wird ausgeführt
+          if (id(ble_state).state != "ESTABLISHED")
+            id(fp_msg).execute("Wird ausgeführt – verbinde mit Schloss … – " + id(fp_who));
       - if:
           condition:
             lambda: 'return id(fp_pending_cmd) == 1;'
@@ -595,7 +715,9 @@ script:
     then:
       - lambda: |-
           if (id(fp_pending_cmd) != 0) return;
+          if (id(fp_execute).is_running()) return;   // verbinde gerade: Anzeige stehen lassen, keine Klingel
           if (id(fp_enrolling).state) { id(fp_enroll_led).execute(1); return; }   // Anlernen: gelb, dann lila
+          if (id(fp_dup_pending) >= 0) { id(fp)->aura_led_control(2, 25, 5, 2); return; }   // Prüfung: nochmal auflegen
           id(fp)->aura_led_control(2, 25, 5, 2);
           // beim Anlernen nie klingeln
           if (id(fp_bell_unknown).state && id(fp_enabled).state && !id(fp_locked) && !id(fp_bell_pending)
@@ -608,6 +730,7 @@ script:
   - id: fp_changed
     mode: queued
     then:
+      - lambda: 'id(fp_changed_at) = millis();'
       - script.execute: fp_overview
       - lambda: 'if (id(fp_np_ready)) id(fp_np_save).execute();'
 
@@ -657,6 +780,9 @@ script:
           if (id(fp_np_rc) == 0) {
             id(fp_np_last) = id(fp_export_str)(id(fp_map_v2), id(fp_persons_v2));
             id(fp_np_dirty) = false;
+            id(fp_np_hash) = id(fp_hash)(id(fp_np_last));   // Sabotage-Erkennung: neuer Sollinhalt
+            global_preferences->sync();
+            id(fp_changed_at) = millis();
             ESP_LOGI("fp", "Zuordnung im Sensor gesichert (%u Byte)", (unsigned) id(fp_np_last).size());
             // Belegungstabelle gleich mit aktualisieren (Sensor ist wach)
             std::string unused;
@@ -684,6 +810,19 @@ script:
             id(fp_overview).execute();
             return;
           }
+          // Sabotage (Notizspeicher): Inhalt anders als beim letzten Mal -> Sensor getauscht?
+          // Dann nichts übernehmen und nichts überschreiben, bis quittiert wurde.
+          const uint32_t h = id(fp_hash)(data);
+          if (id(fp_sab_s3).state && id(fp_np_hash) != 0 && h != id(fp_np_hash)) {
+            id(fp_sab_np) = data;
+            id(fp_sab_seen_np) = true;
+            id(fp_sab_idx) = id(fp_idx);
+            id(fp_sab_seen_idx) = id(fp_idx_valid);
+            id(fp_sab_alarm).execute(3, std::string("Notizspeicher seit dem letzten Start verändert (Sensor getauscht?)"));
+            id(fp_overview).execute();
+            return;
+          }
+          if (id(fp_np_hash) != h) { id(fp_np_hash) = h; global_preferences->sync(); }
           bool esp_empty = true;
           for (auto c : id(fp_map_v2)) if (c & 0x8000) esp_empty = false;
           std::array<uint16_t, 200> nm{};
@@ -716,6 +855,7 @@ script:
           id(fp_bell_last) = millis();
           id(fp_bell_used) = true;
           id(fp_msg).execute("🔔 Klingel – " + who);
+          id(key_ble)->log_event("🔔 " + who);
       - script.execute: fp_bell_rainbow
       - event.trigger:
           id: fp_bell_evt
@@ -730,6 +870,106 @@ script:
                   device: ${name}
                   result: doorbell
                   finger: !lambda 'return who;'
+
+  # Anlernen starten (nach bestandener Doppelt-Prüfung oder direkt, wenn noch kein Finger gespeichert ist)
+  - id: fp_enroll_start
+    mode: single
+    then:
+      - lambda: |-
+          id(fp_dup_go) = false;
+          id(fp_dup_pending) = -1;
+          if (id(fp_enroll_target) >= 0) id(fp_msg).execute(id(fp_enroll_msg));
+      - if:
+          condition:
+            lambda: 'return id(fp_enroll_target) >= 0;'
+          then:
+            - fingerprint_grow.enroll:
+                finger_id: !lambda 'return id(fp_enroll_target);'
+                num_scans: !lambda 'return (int) id(fp_enroll_scans).state;'
+            - lambda: 'id(fp)->aura_led_control(1, 100, 3, 0);'   # lila atmen = Finger auflegen
+
+  # Sabotage-Alarm auslösen (einmal, bis "Sabotage quittieren")
+  - id: fp_sab_alarm
+    mode: queued
+    parameters:
+      code: int
+      text: string
+    then:
+      - lambda: |-
+          if (id(fp_sab)) { ESP_LOGW("fp", "Weitere Sabotage-Meldung (bereits Alarm): %s", text.c_str()); return; }
+          id(fp_sab) = true;
+          id(fp_sab_code) = code;
+          global_preferences->sync();
+          ESP_LOGE("fp", "SABOTAGE: %s", text.c_str());
+          id(fp_msg).execute("⚠️ Sabotage: " + text);
+          id(key_ble)->log_event("⚠️ Sabotage: " + text);
+          if (id(fp_pending_cmd) == 0 && !id(fp_enrolling).state) id(fp)->aura_led_control(2, 15, 1, 6);   // rot blinken
+
+  # Regelmäßige Prüfung: antwortet der Sensor? Belegung und Notizspeicher unverändert?
+  - id: fp_sab_check
+    mode: single
+    then:
+      - script.execute: fp_np_wake
+      - script.wait: fp_np_wake
+      - lambda: |-
+          std::string unused;
+          id(fp_sab_rc) = id(fp_np_io)(id(uart_fp), 2, unused, id(fp_sab_idx));
+      - if:
+          condition:
+            lambda: 'return id(fp_sab_rc) == -1 || id(fp_sab_rc) == -2;'   # 2. Versuch nach erneutem Wecken
+          then:
+            - delay: 2s
+            - script.execute: fp_np_wake
+            - script.wait: fp_np_wake
+            - lambda: |-
+                std::string unused;
+                id(fp_sab_rc) = id(fp_np_io)(id(uart_fp), 2, unused, id(fp_sab_idx));
+      - lambda: |-
+          const int rc = id(fp_sab_rc);
+          if (rc == -1 || rc == -2) {
+            if (id(fp_sab_s1).state) id(fp_sab_alarm).execute(1, std::string("Sensor antwortet nicht (Kabel getrennt oder Sensor entfernt?)"));
+            else ESP_LOGW("fp", "Sabotage-Prüfung: Sensor antwortet nicht (Erkennung aus)");
+            return;
+          }
+          if (rc != 0) { ESP_LOGW("fp", "Sabotage-Prüfung: Sensor meldet Fehler %d", rc); return; }
+          std::string data;
+          std::array<uint8_t, 32> dummy{};
+          const int rc2 = id(fp_np_io)(id(uart_fp), 1, data, dummy);
+          // Kurz nach eigenen Änderungen oder bei ausstehendem Sichern nicht vergleichen
+          const bool quiet = (millis() - id(fp_changed_at)) > 20000UL && !id(fp_np_dirty) &&
+                             !id(fp_np_save).is_running() && !id(fp_enrolling).state;
+          id(fp_sab_seen_idx) = true;
+          id(fp_sab_np) = data;
+          id(fp_sab_seen_np) = rc2 == 0;
+          // S2: Belegung (welche Plätze einen Abdruck haben)
+          if (id(fp_idx_valid) && quiet) {
+            std::string diff;
+            int n = 0;
+            for (int i = 0; i < 200; i++) {
+              const bool was = (id(fp_idx)[i / 8] >> (i % 8)) & 1, now = (id(fp_sab_idx)[i / 8] >> (i % 8)) & 1;
+              if (was == now) continue;
+              if (n < 3) diff += (n ? ", " : "") + std::string(now ? "neu #" : "fehlt #") + to_string(i);
+              n++;
+            }
+            if (n > 0 && id(fp_sab_s2).state) {
+              id(fp_sab_alarm).execute(2, "Belegung im Sensor verändert (" + diff + (n > 3 ? " …" : "") + ")");
+            } else {
+              if (n > 0) ESP_LOGW("fp", "Belegung im Sensor verändert (%s) – Erkennung aus, übernommen", diff.c_str());
+              id(fp_idx) = id(fp_sab_idx);
+              if (n > 0) id(fp_overview).execute();
+            }
+          } else if (!id(fp_idx_valid) || quiet) {
+            id(fp_idx) = id(fp_sab_idx);
+            id(fp_idx_valid) = true;
+          }
+          // S3: Notizspeicher (Zuordnung) – anderer Inhalt = fremder oder manipulierter Sensor
+          if (rc2 != 0) {
+            ESP_LOGW("fp", "Sabotage-Prüfung: Notizspeicher nicht lesbar (Code %d)", rc2);
+          } else if (quiet && id(fp_np_hash) != 0 && id(fp_hash)(data) != id(fp_np_hash)) {
+            if (id(fp_sab_s3).state) id(fp_sab_alarm).execute(3, std::string("Notizspeicher verändert (fremder Sensor?)"));
+            else { id(fp_np_hash) = id(fp_hash)(data); ESP_LOGW("fp", "Notizspeicher verändert – Erkennung aus, übernommen"); }
+          }
+          ESP_LOGD("fp", "Sabotage-Prüfung abgeschlossen");
 
   # Abschluss: Schloss hat bestätigt (ok) oder Zeit abgelaufen
   - id: fp_finish
@@ -791,6 +1031,17 @@ text_sensor:
     web_server:
       sorting_group_id: sg_fp
 
+  # Für die Web-App (Personenkarten). In HA standardmäßig deaktiviert, da länger als 255 Zeichen möglich.
+  - platform: template
+    name: "Fingerprint Zuordnung"
+    id: fp_map_txt
+    icon: "mdi:account-group"
+    entity_category: diagnostic
+    disabled_by_default: true
+    update_interval: never
+    web_server:
+      sorting_group_id: sg_diag
+
   - platform: template
     name: "Angelernte Finger"
     id: fp_overview_txt
@@ -804,15 +1055,55 @@ interval:
     then:
       - lambda: |-
           static bool boot_done = false;   // einmal nach dem Start: Übersicht + Notizspeicher
-          if (!boot_done) { boot_done = true; id(fp_overview).execute(); id(fp_np_boot).execute(); }
+          if (!boot_done) {
+            boot_done = true;
+            id(fp_overview).execute();
+            id(fp_np_boot).execute();
+            if (id(fp_sab)) {   // Alarm von vor dem Neustart
+              static const char *const why[] = {"", "Sensor antwortet nicht", "Belegung im Sensor verändert",
+                                                "Notizspeicher verändert", "Treffer auf leerem Platz",
+                                                "Berührungsleitung dauerhaft aktiv", "Zu viele Fehlversuche"};
+              const int c = id(fp_sab_code);
+              id(fp_msg).execute(std::string("⚠️ Sabotage-Alarm aktiv (seit vor dem Neustart): ") + why[c >= 1 && c <= 6 ? c : 0] +
+                                 " – prüfen und „Sabotage quittieren“");
+            }
+          }
+          // Doppelt-Prüfung beim Anlernen: nach 30 s ohne Finger abbrechen
+          if (id(fp_dup_pending) >= 0 && (millis() - id(fp_dup_since)) > 30000UL) {
+            id(fp_dup_pending) = -1;
+            id(fp_enroll_target) = -1;
+            id(fp)->aura_led_control(4, 0, 0, 0);
+            id(fp_msg).execute("Anlernen abgebrochen: kein Finger aufgelegt – „Finger anlernen“ erneut drücken");
+          }
+          // Sabotage S5: Berührungsleitung dauerhaft aktiv
+          if (id(fp_touch).state) {
+            if (id(fp_touch_since) == 0) id(fp_touch_since) = millis() | 1;
+            else if (id(fp_sab_s5).state && !id(fp_sab) &&
+                     (millis() - id(fp_touch_since)) > (uint32_t) id(fp_sab_touch_max).state * 1000UL)
+              id(fp_sab_alarm).execute(5, "Berührungsleitung seit über " + to_string((int) id(fp_sab_touch_max).state) +
+                                          " s aktiv (Kabel kurzgeschlossen oder Sensor blockiert?)");
+          } else {
+            id(fp_touch_since) = 0;
+          }
+          // Sabotage S1-S3: regelmäßige Prüfung, nur wenn am Sensor gerade nichts passiert
+          if ((id(fp_sab_s1).state || id(fp_sab_s2).state || id(fp_sab_s3).state) && id(fp_np_ready) &&
+              (millis() - id(fp_sab_last_check)) >= (uint32_t) id(fp_sab_interval).state * 60000UL &&
+              id(fp_pending_cmd) == 0 && !id(fp_enrolling).state && id(fp_dup_pending) < 0 &&
+              !id(fp_execute).is_running() && !id(fp_bell_rainbow).is_running() && !id(fp_np_save).is_running() &&
+              !id(fp_np_boot).is_running() && !id(fp_sab_check).is_running() && !id(fp_touch).state &&
+              (millis() - id(fp_last_finish)) > 10000UL) {
+            id(fp_sab_last_check) = millis();
+            id(fp_sab_check).execute();
+          }
           // Klingel für unbekannten Finger nach Verzögerung auslösen
           if (id(fp_bell_pending) && id(fp_enrolling).state) id(fp_bell_pending) = false;   // Anlernen: keine Klingel
           if (id(fp_bell_pending) && (millis() - id(fp_bell_since)) >= (uint32_t) id(fp_bell_delay).state * 1000UL) {
             id(fp_bell_pending) = false;
             if (!id(fp_bell_used) || (millis() - id(fp_bell_last)) >= (uint32_t) id(fp_bell_pause).state * 1000UL)
               id(fp_bell).execute(std::string("unbekannter Finger"));
-            else
+            else {
               ESP_LOGD("fp", "Klingel-Pause aktiv");
+            }
           }
           if (id(fp_pending_cmd) == 0) return;
           if (millis() - id(fp_pending_since) < 35000UL) return;   // > command_timeout (30 s)
@@ -823,7 +1114,9 @@ interval:
 fingerprint_grow:
   id: fp
   uart_id: uart_fp
-  sensing_pin: ${fp_sensing_pin}
+  sensing_pin:
+    number: ${fp_sensing_pin}
+    allow_other_uses: true     # wird auch von der Sabotage-Erkennung (Berührungsleitung) gelesen
   # Sensor nur bei Berührung einschalten (PNP: LOW = an -> invertiert).
   # Weiß (3.3VT, Touch) hängt dauerhaft an 3,3 V, rot (VCC) hinter dem Transistor.
   # Ohne Transistor: sensor_power_pin (2 Zeilen darunter) und idle_period_to_sleep entfernen.
@@ -839,7 +1132,8 @@ fingerprint_grow:
   # password: 0x1A2B3C4D
 
   on_finger_scan_start:
-    - lambda: 'if (id(fp_pending_cmd) == 0 && !id(fp_enrolling).state) id(fp)->aura_led_control(3, 0, 2, 0);'   # blau = Finger wird gelesen
+    # blau = Finger wird gelesen (nicht während eine Aktion läuft – dann bleibt deren Anzeige stehen)
+    - lambda: 'if (id(fp_pending_cmd) == 0 && !id(fp_enrolling).state && !id(fp_execute).is_running()) id(fp)->aura_led_control(3, 0, 2, 0);'
   # Schlecht aufgelegt: gelb blinken. Auch hier wird die Klingel (mit Verzögerung) vorgemerkt –
   # ein Besucher legt oft schief auf. Wird danach ein bekannter Finger erkannt, entfällt sie.
   on_finger_scan_misplaced:
@@ -856,9 +1150,56 @@ fingerprint_grow:
           id(fp_last_slot) = finger_id;   // für "Letzten Finger zuordnen"
           id(fp_bell_pending) = false;    // eigener Finger doch erkannt -> keine Klingel
           if (id(fp_np_dirty)) id(fp_np_save).execute();   // Sensor ist wach: ausstehendes Sichern nachholen
+          // Wer ist es?
+          static const char *const fl[] = {"Daumen", "Zeigefinger", "Mittelfinger", "Ringfinger", "kleiner Finger"};
+          static const char *const fs[] = {"Daumen", "Zeige", "Mittel", "Ring", "Klein"};
+          const uint16_t c = finger_id < 200 ? id(fp_map_v2)[finger_id] : 0;
+          if (c & 0x8000) {
+            const char *n = id(fp_persons_v2)[(((c >> 12) & 7) | ((c >> 1) & 8))].data();
+            const bool r = (c >> 11) & 1;
+            const int f = ((c >> 8) & 7) % 5;
+            id(fp_who) = std::string(n, strnlen(n, 15)) + ", " + (r ? "rechter " : "linker ") + fl[f];
+            id(fp_who_short) = std::string(n, strnlen(n, 15)) + " " + (r ? "R-" : "L-") + fs[f];
+          } else {
+            id(fp_who) = "Platz " + to_string(finger_id) + " (ohne Zuordnung)";
+            id(fp_who_short) = "Platz " + to_string(finger_id);
+          }
+          // Sabotage S4: Treffer auf einem Platz, der laut Belegungstabelle leer ist
+          if (id(fp_idx_valid) && finger_id < 200 && !((id(fp_idx)[finger_id / 8] >> (finger_id % 8)) & 1)) {
+            std::array<uint8_t, 32> cur{};
+            std::string unused;
+            const int rc = id(fp_np_io)(id(uart_fp), 2, unused, cur);   // Tabelle evtl. veraltet: neu lesen
+            if (rc == 0) id(fp_idx) = cur;
+            if ((rc != 0 || !((cur[finger_id / 8] >> (finger_id % 8)) & 1)) && id(fp_sab_s4).state) {
+              id(fp_dup_pending) = -1;
+              id(fp_enroll_target) = -1;
+              id(fp_ev_result) = "blocked";
+              id(fp_sab_alarm).execute(4, "Treffer auf leerem Platz " + to_string(finger_id) + " – nichts ausgeführt");
+              return;
+            }
+          }
+          // Doppelt-Prüfung vor dem Anlernen: Finger ist bereits bekannt
+          if (id(fp_dup_pending) >= 0) {
+            const int want = id(fp_dup_pending);
+            if ((int) finger_id == want) {   // derselbe Finger wird neu angelernt -> ok
+              id(fp_enroll_msg) = "Gleicher Finger, wird neu angelernt – " + id(fp_enroll_msg);
+              id(fp_dup_go) = true;
+              return;
+            }
+            id(fp_dup_pending) = -1;
+            id(fp_enroll_target) = -1;
+            id(fp)->aura_led_control(2, 25, 1, 3);   // rot blinken
+            id(fp_msg).execute("Abgebrochen: dieser Finger ist schon angelernt als " +
+                               ((c & 0x8000) ? id(fp_who_short) + " (#" + to_string(finger_id) + ")"
+                                             : "Platz " + to_string(finger_id) + " ohne Zuordnung – mit „Letzten Finger zuordnen“ zuordnen"));
+            return;
+          }
           // Läuft noch eine Aktion oder Sperrzeit danach? -> Scan ignorieren (kein zweites Umschalten)
           if (id(fp_pending_cmd) != 0 || id(fp_execute).is_running() || (millis() - id(fp_cd_start)) < id(fp_cd_ms)) {
             ESP_LOGD("fp", "Scan ignoriert (Aktion läuft / Sperrzeit)");
+            // Laufende Anzeige wieder zeigen: grün = Befehl unterwegs, türkis = verbinde für Status
+            if (id(fp_pending_cmd) != 0) id(fp)->aura_led_control(1, 60, 4, 0);
+            else if (id(fp_execute).is_running()) id(fp)->aura_led_control(1, 60, 6, 0);
             return;
           }
           // abgelaufene Fehlversuch-Sperre aufheben (überlaufsicher)
@@ -867,21 +1208,14 @@ fingerprint_grow:
             id(fp_locked) = false;
             id(fp_failed_attempts) = 0;
           }
-          // Wer ist es?
-          static const char *const fl[] = {"Daumen", "Zeigefinger", "Mittelfinger", "Ringfinger", "kleiner Finger"};
-          const uint16_t c = finger_id < 200 ? id(fp_map_v2)[finger_id] : 0;
-          if (c & 0x8000) {
-            const char *n = id(fp_persons_v2)[(((c >> 12) & 7) | ((c >> 1) & 8))].data();
-            const bool r = (c >> 11) & 1;
-            const int f = ((c >> 8) & 7) % 5;
-            id(fp_who) = std::string(n, strnlen(n, 15)) + ", " + (r ? "rechter " : "linker ") + fl[f];
-          } else {
-            id(fp_who) = "Platz " + to_string(finger_id) + " (ohne Zuordnung)";
-          }
-          if (!id(fp_enabled).state || id(fp_locked) || confidence < (int) id(fp_min_confidence).state) {
+          const bool sab_block = id(fp_sab) && id(fp_sab_block).state;
+          if (!id(fp_enabled).state || id(fp_locked) || sab_block || confidence < (int) id(fp_min_confidence).state) {
             id(fp)->aura_led_control(2, 25, 3, 3);
             id(fp_ev_result) = "blocked";
-            id(fp_msg).execute("Abgewiesen (" + std::string(!id(fp_enabled).state ? "Fingerprint aus" : (id(fp_locked) ? "gesperrt" : "Übereinstimmung zu gering")) + ") – " + id(fp_who));
+            const std::string why = !id(fp_enabled).state ? "Fingerprint aus" : (id(fp_locked) ? "gesperrt" :
+                                    (sab_block ? "Sabotage-Alarm" : "Übereinstimmung zu gering"));
+            id(fp_msg).execute("Abgewiesen (" + why + ") – " + id(fp_who));
+            id(key_ble)->log_event("⛔ " + id(fp_who_short) + " (" + why + ")");
             return;
           }
           id(fp_failed_attempts) = 0;
@@ -894,6 +1228,7 @@ fingerprint_grow:
             id(fp)->aura_led_control(2, 25, 3, 3);
             id(fp_ev_result) = "blocked";
             id(fp_msg).execute("Finger gesperrt – " + id(fp_who));
+            id(key_ble)->log_event("⛔ " + id(fp_who_short) + " (Finger gesperrt)");
             return;
           }
           if (act == 5) {   // Nur Klingel (Event kommt aus dem Skript fp_bell)
@@ -906,6 +1241,11 @@ fingerprint_grow:
           id(fp_ev_result) = "matched";
           id(fp_act) = act;
           id(fp_start_exec) = true;
+    - if:
+        condition:
+          lambda: 'return id(fp_dup_go);'
+        then:
+          - script.execute: fp_enroll_start
     - if:
         condition:
           lambda: 'return id(fp_start_exec);'
@@ -925,9 +1265,27 @@ fingerprint_grow:
                 confidence: !lambda 'return to_string(id(fp_ev_conf));'
 
   on_finger_scan_unmatched:
+    # Doppelt-Prüfung: Finger unbekannt -> jetzt anlernen (kein Fehlversuch, keine Klingel)
     - if:
         condition:
-          lambda: 'return id(fp_pending_cmd) == 0;'
+          lambda: 'return id(fp_dup_pending) >= 0 && id(fp_dup_miss) == 0;'
+        then:
+          # 1. Fehlscan: oft nur schief aufgelegt -> noch einmal prüfen
+          - lambda: |-
+              id(fp_dup_miss) = 1;
+              id(fp_dup_since) = millis();
+              id(fp)->aura_led_control(1, 100, 2, 0);   // weiter blau atmen
+              id(fp_msg).execute(std::string("Nicht erkannt – Finger abheben und zur Sicherheit noch einmal auflegen"));
+        else:
+          - if:
+              condition:
+                lambda: 'return id(fp_dup_pending) >= 0;'
+              then:
+                - lambda: 'id(fp_enroll_msg) = "Finger ist neu – " + id(fp_enroll_msg);'
+                - script.execute: fp_enroll_start
+    - if:
+        condition:
+          lambda: 'return id(fp_pending_cmd) == 0 && id(fp_dup_pending) < 0 && !id(fp_enroll_start).is_running() && !id(fp_enrolling).state && !id(fp_execute).is_running();'
         then:
           - lambda: |-
               id(fp_failed_attempts)++;
@@ -935,6 +1293,12 @@ fingerprint_grow:
                 id(fp_locked) = true;
                 id(fp_lock_start) = millis();
                 ESP_LOGW("fp", "Zu viele Fehlversuche - Fingerprint gesperrt");
+                id(key_ble)->log_event("⛔ Fingerprint gesperrt (" + to_string(id(fp_failed_attempts)) + " Fehlversuche)");
+                if (id(fp_sab_s6).state)
+                  id(fp_sab_alarm).execute(6, to_string(id(fp_failed_attempts)) + " Fehlversuche hintereinander");
+              } else if (id(fp_unknown_logged) == 0 || (int32_t) (millis() - id(fp_unknown_logged)) > 60000) {
+                id(fp_unknown_logged) = millis() | 1;
+                id(key_ble)->log_event("❓ unbekannter Finger");
               }
               id(fp)->aura_led_control(1, 100, 1, 2);   // rot atmen = nicht erkannt
               // Klingel erst nach Verzögerung: wird der eigene Finger beim nächsten Versuch
@@ -954,13 +1318,24 @@ fingerprint_grow:
                       result: unmatched
 
   # Anlernen: Bild ok -> 2× grün blinken, dann wieder lila atmen = "abheben und erneut auflegen"
+  # Nach dem LETZTEN Bild kein Lichtbefehl mehr: der Sensor berechnet jetzt das Muster, ein Befehl
+  # dazwischen ließe dessen Antwort verloren gehen ("No response received from reader").
   on_enrollment_scan:
-    - lambda: |-
-        id(fp_msg).execute("Anlernen: Bild " + to_string(scan_num) + " von " + to_string((int) id(fp_enroll_scans).state) +
-                           " ok – Finger abheben und erneut auflegen");
-    - script.execute:
-        id: fp_enroll_led
-        kind: 0
+    - if:
+        condition:
+          lambda: 'return scan_num < (int) id(fp_enroll_scans).state;'
+        then:
+          - lambda: |-
+              id(fp_msg).execute("Anlernen: Bild " + to_string(scan_num) + " von " + to_string((int) id(fp_enroll_scans).state) +
+                                 " ok – Finger abheben und erneut auflegen");
+          - script.execute:
+              id: fp_enroll_led
+              kind: 0
+        else:
+          - script.stop: fp_enroll_led   # verzögerten Lichtbefehl vom vorigen Bild verwerfen
+          - lambda: |-
+              id(fp_msg).execute("Anlernen: Bild " + to_string(scan_num) + " von " + to_string((int) id(fp_enroll_scans).state) +
+                                 " ok – Muster wird erstellt …");
   on_enrollment_done:
     - lambda: |-
         id(fp)->aura_led_control(1, 100, 4, 3);
@@ -968,7 +1343,47 @@ fingerprint_grow:
         id(fp_enroll_target) = -1;
         if (slot < 0 || slot >= 200 || finger_id != slot) {
           id(fp_msg).execute("Angelernt auf Platz " + to_string(finger_id) + " (ohne Zuordnung)");
+          id(fp_changed).execute();   // Belegungstabelle auffrischen
           return;
+        }
+        id(fp_enroll_cancel) = false;
+        // Nachprüfung: Das fertige Muster liegt noch in Puffer 1 -> in allen ANDEREN Plätzen suchen.
+        // Zuverlässiger als der einzelne Prüf-Scan vorher. Treffer = Finger doppelt -> neuen Platz wieder löschen.
+        {
+          int dup = -1;
+          std::array<uint8_t, 32> unused{};
+          const int ranges[2][2] = {{0, slot}, {slot + 1, 199 - slot}};
+          for (auto &r : ranges) {
+            if (r[1] <= 0 || dup >= 0) continue;
+            std::string q = std::to_string(r[0]) + " " + std::to_string(r[1]);
+            const int rc = id(fp_np_io)(id(uart_fp), 3, q, unused);
+            if (rc == 0) { int pg = -1, sc = 0; sscanf(q.c_str(), "%d %d", &pg, &sc); dup = pg; }
+            else if (rc != 9) ESP_LOGW("fp", "Nachprüfung: Suche nicht möglich (Code %d)", rc);
+          }
+          if (dup >= 0 && dup < 200) {
+            id(fp)->delete_fingerprint(slot);
+            if (id(fp_idx_valid)) id(fp_idx)[slot / 8] &= ~(1 << (slot % 8));
+            // Bisherige Zuordnung dieses Platzes (bei Neu-Anlernen) entfernen, Person ohne Finger austragen
+            if (id(fp_map_v2)[slot] & 0x8000) {
+              const int op = (((id(fp_map_v2)[slot] >> 12) & 7) | ((id(fp_map_v2)[slot] >> 1) & 8));
+              id(fp_map_v2)[slot] = 0;
+              bool used = false;
+              for (auto c : id(fp_map_v2)) if ((c & 0x8000) && ((((c >> 12) & 7) | ((c >> 1) & 8))) == op) used = true;
+              if (!used) id(fp_persons_v2)[op].fill(0);
+              global_preferences->sync();
+            }
+            id(fp_changed).execute();
+            static const char *const fs[] = {"Daumen", "Zeige", "Mittel", "Ring", "Klein"};
+            const uint16_t dc = id(fp_map_v2)[dup];
+            std::string who = "Platz " + to_string(dup) + " ohne Zuordnung";
+            if (dc & 0x8000) {
+              const char *n = id(fp_persons_v2)[(((dc >> 12) & 7) | ((dc >> 1) & 8))].data();
+              who = std::string(n, strnlen(n, 15)) + " " + (((dc >> 11) & 1) ? "R-" : "L-") + fs[((dc >> 8) & 7) % 5] + " (#" + to_string(dup) + ")";
+            }
+            id(fp)->aura_led_control(2, 25, 1, 3);   // rot blinken
+            id(fp_msg).execute("Doppelt: dieser Finger ist schon " + who + " – nicht gespeichert");
+            return;
+          }
         }
         // Person erst jetzt eintragen (bei Fehlschlag bleibt die Liste sauber)
         const int p = id(fp_enroll_pidx);
@@ -990,9 +1405,15 @@ fingerprint_grow:
                            (warn.empty() ? " – noch ca. " + to_string(left) + " Finger möglich" : " – " + warn));
   on_enrollment_failed:
     - lambda: |-
-        id(fp)->aura_led_control(2, 15, 1, 4);
         id(fp_enroll_target) = -1;
-        id(fp_msg).execute("Anlernen fehlgeschlagen – bitte erneut versuchen");
+        if (id(fp_enroll_cancel)) {   // vom Nutzer abgebrochen: kein Fehler
+          id(fp_enroll_cancel) = false;
+          id(fp)->aura_led_control(4, 0, 0, 0);
+          id(fp_msg).execute(std::string("Anlernen abgebrochen"));
+          return;
+        }
+        id(fp)->aura_led_control(2, 15, 1, 4);
+        id(fp_msg).execute(std::string("Anlernen fehlgeschlagen – bitte erneut versuchen"));
 
 event:
   - platform: template
@@ -1025,6 +1446,71 @@ switch:
     web_server:
       sorting_group_id: sg_fp_cfg
 
+  # --- Sabotage-Erkennung (einzeln abschaltbar) ---
+  - platform: template
+    name: "Sabotage: Sensor antwortet nicht"
+    id: fp_sab_s1
+    icon: "mdi:lan-disconnect"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_sab
+  - platform: template
+    name: "Sabotage: Belegung verändert"
+    id: fp_sab_s2
+    icon: "mdi:fingerprint-off"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_sab
+  - platform: template
+    name: "Sabotage: Fremder Sensor"
+    id: fp_sab_s3
+    icon: "mdi:swap-horizontal"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_sab
+  - platform: template
+    name: "Sabotage: Unmöglicher Treffer"
+    id: fp_sab_s4
+    icon: "mdi:shield-alert"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_sab
+  - platform: template
+    name: "Sabotage: Berührungsleitung dauerhaft"
+    id: fp_sab_s5
+    icon: "mdi:gesture-tap-hold"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_sab
+  - platform: template
+    name: "Sabotage: Alarm bei Fehlversuch-Sperre"
+    id: fp_sab_s6
+    icon: "mdi:account-alert"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_sab
+  - platform: template
+    name: "Bei Sabotage Fingerprint sperren"
+    id: fp_sab_block
+    icon: "mdi:lock-alert"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_sab
+
   - platform: template
     name: "Fingerprint aktiv"
     id: fp_enabled
@@ -1045,6 +1531,28 @@ button:
           id(fp_locked) = false;
           id(fp_failed_attempts) = 0;
 
+  # Sabotage-Alarm beenden. Was beim Alarm gelesen wurde (Belegung, Notizspeicher) gilt danach als Sollzustand.
+  - platform: template
+    name: "Sabotage quittieren"
+    icon: "mdi:shield-check"
+    web_server:
+      sorting_group_id: sg_fp
+    on_press:
+      - lambda: |-
+          if (!id(fp_sab)) { id(fp_msg).execute("Kein Sabotage-Alarm aktiv"); return; }
+          id(fp_sab) = false;
+          id(fp_sab_code) = 0;
+          if (id(fp_sab_seen_idx)) { id(fp_idx) = id(fp_sab_idx); id(fp_idx_valid) = true; }
+          if (id(fp_sab_seen_np)) id(fp_np_hash) = id(fp_hash)(id(fp_sab_np));
+          id(fp_sab_seen_idx) = false;
+          id(fp_sab_seen_np) = false;
+          id(fp_touch_since) = id(fp_touch).state ? (millis() | 1) : 0;   // Berührungszeit neu starten
+          id(fp_sab_last_check) = millis();
+          global_preferences->sync();
+          id(fp_overview).execute();
+          id(fp_msg).execute("Sabotage quittiert");
+          id(key_ble)->log_event("✓ Sabotage quittiert");
+
   # Anlernen: Person + Hand + Finger -> vorhandenen Platz wiederverwenden, sonst nächsten freien
   - platform: template
     name: "Finger anlernen"
@@ -1055,6 +1563,8 @@ button:
     on_press:
       - lambda: |-
           id(fp_enroll_target) = -1;
+          id(fp_dup_pending) = -1;
+          id(fp_dup_go) = false;
           id(fp_bell_pending) = false;   // vorgemerkte Klingel verwerfen
           std::string name = id(fp_person).state;
           name.erase(0, name.find_first_not_of(" "));
@@ -1100,17 +1610,27 @@ button:
           id(fp_enroll_code) = key | a;
           id(fp_enroll_pidx) = p;
           id(fp_enroll_name) = name;
-          id(fp_msg).execute(std::string(again ? "Neu anlernen: " : "Anlernen: ") + name + ", "
-                             + id(fp_hand).current_option() + ", " + id(fp_finger).current_option()
-                             + " – Finger " + to_string((int) id(fp_enroll_scans).state) + "× auflegen");
+          id(fp_enroll_msg) = std::string(again ? "Neu anlernen: " : "Anlernen: ") + name + ", "
+                              + id(fp_hand).current_option() + ", " + id(fp_finger).current_option()
+                              + " – Finger " + to_string((int) id(fp_enroll_scans).state) + "× auflegen";
+          // Doppelt-Prüfung: ist dieser Finger schon (unter anderem Namen) gespeichert?
+          // Nur nötig, wenn im Sensor überhaupt schon Abdrücke liegen.
+          bool any = false;
+          for (auto cc : id(fp_map_v2)) if (cc & 0x8000) any = true;
+          if (id(fp_idx_valid)) for (auto b : id(fp_idx)) if (b) any = true;
+          if (!id(fp_idx_valid)) any = true;
+          if (!any) { id(fp_dup_go) = true; return; }
+          id(fp_dup_pending) = slot;
+          id(fp_dup_since) = millis();
+          id(fp_dup_miss) = 0;
+          id(fp)->aura_led_control(1, 100, 2, 0);   // blau atmen = Finger zur Prüfung auflegen
+          id(fp_msg).execute("Prüfung: Finger einmal auflegen – ist er schon angelernt? (" + name + ", "
+                             + id(fp_hand).current_option() + ", " + id(fp_finger).current_option() + ")");
       - if:
           condition:
-            lambda: 'return id(fp_enroll_target) >= 0;'
+            lambda: 'return id(fp_dup_go);'
           then:
-            - fingerprint_grow.enroll:
-                finger_id: !lambda 'return id(fp_enroll_target);'
-                num_scans: !lambda 'return (int) id(fp_enroll_scans).state;'
-            - lambda: 'id(fp)->aura_led_control(1, 100, 3, 0);'   # lila atmen = Finger auflegen
+            - script.execute: fp_enroll_start
 
   - platform: template
     name: "Anlernen abbrechen"
@@ -1119,8 +1639,12 @@ button:
     web_server:
       sorting_group_id: sg_fp_enroll
     on_press:
+      - lambda: 'id(fp_enroll_cancel) = id(fp_enrolling).state;'   # Meldung in on_enrollment_failed
       - fingerprint_grow.cancel_enroll:
-      - lambda: 'id(fp_enroll_target) = -1;'
+      - lambda: |-
+          if (id(fp_dup_pending) >= 0) { id(fp)->aura_led_control(4, 0, 0, 0); id(fp_msg).execute("Anlernen abgebrochen"); }
+          id(fp_dup_pending) = -1;
+          id(fp_enroll_target) = -1;
 
   # Nur die Aktion des gewählten Fingers ändern (ohne neu anzulernen)
   - platform: template
@@ -1235,8 +1759,8 @@ button:
             for (auto c : id(fp_map_v2)) if ((c & 0x8000) && ((((c >> 12) & 7) | ((c >> 1) & 8))) == p) used = true;
             if (!used) id(fp_persons_v2)[p].fill(0);
             global_preferences->sync();
-            id(fp_changed).execute();
           }
+          id(fp_changed).execute();   // auch ohne Zuordnung: Belegungstabelle auffrischen (Sabotage-Erkennung)
           id(fp_msg).execute("Speicherplatz " + to_string(slot) + " gelöscht");
 
   # Zuordnung aus dem Notizspeicher des Sensors laden (ersetzt die Zuordnung auf dem ESP)
@@ -1261,6 +1785,7 @@ button:
             return;
           }
           id(fp_np_last) = data;
+          id(fp_np_hash) = id(fp_hash)(data);
           id(fp_map_v2) = nm;
           id(fp_persons_v2) = np;
           global_preferences->sync();
@@ -1611,6 +2136,38 @@ number:
       sorting_group_id: sg_fp_cfg
 
   - platform: template
+    name: "Sabotage-Prüfintervall"
+    id: fp_sab_interval
+    icon: "mdi:timer-refresh"
+    unit_of_measurement: "min"
+    mode: box
+    min_value: 1
+    max_value: 120
+    step: 1
+    initial_value: 10
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_sab
+
+  - platform: template
+    name: "Max. Berührungsdauer"
+    id: fp_sab_touch_max
+    icon: "mdi:timer-alert"
+    unit_of_measurement: "s"
+    mode: box
+    min_value: 10
+    max_value: 600
+    step: 5
+    initial_value: 60
+    optimistic: true
+    restore_value: true
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_sab
+
+  - platform: template
     name: "Speicherplatz (Nr.)"
     id: fp_slot_nr
     icon: "mdi:numeric"
@@ -1677,6 +2234,22 @@ binary_sensor:
     name: "Fingerprint Anlernen aktiv"
     web_server:
       sorting_group_id: sg_fp_enroll
+  - platform: template
+    name: "Fingerprint Sabotage"
+    id: fp_sab_bin
+    device_class: tamper
+    lambda: 'return id(fp_sab);'
+    web_server:
+      sorting_group_id: sg_fp
+  # Berührungsleitung (WAKEUP) des R503: LOW = Finger aufgelegt (wie bei fingerprint_grow)
+  - platform: gpio
+    id: fp_touch
+    internal: true
+    use_interrupt: false
+    pin:
+      number: ${fp_sensing_pin}
+      inverted: true
+      allow_other_uses: true
   - platform: template
     name: "Fingerprint gesperrt"
     icon: "mdi:fingerprint-off"

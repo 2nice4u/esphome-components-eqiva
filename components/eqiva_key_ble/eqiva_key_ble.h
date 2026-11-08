@@ -10,6 +10,9 @@
 
 #include <queue>
 #include <vector>
+#include <deque>
+#include <string>
+#include <ctime>
 #include "eQ3_constants.h"
 #include "eQ3_message.h"
 #include "eQ3_util.h"
@@ -25,7 +28,7 @@ namespace eqiva_key_ble {
 using namespace esp32_ble_client;
 
 // Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
-#define EQIVA_PATCH_VERSION "2.1.0"
+#define EQIVA_PATCH_VERSION "3.5.0"
 
 // Patch-Konstanten
 static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
@@ -108,6 +111,34 @@ class EqivaKeyBle : public BLEClientBase {
     void sim_set_connected_(bool c);
     void apply_conn_params_();
     void touch_() { last_activity_ = millis(); }
+    // --- Ereignisprotokoll (letzte 10 Ereignisse, neuestes zuerst) ---
+    struct Event { time_t t; std::string text; };
+    std::deque<Event> events_;
+    std::string cmd_source_;             // Auslöser des nächsten Befehls (gilt 3 s)
+    uint32_t cmd_source_at_{0};
+    int ev_pending_{-1};                 // erwarteter Befehl (LOCK/UNLOCK/OPEN), -1 = keiner
+    std::string ev_pending_src_;
+    uint32_t ev_pending_at_{0};
+    bool ev_moved_{false};               // seit dem Befehl MOVING gesehen
+    uint32_t last_command_ms_{0};
+    bool last_command_valid_{false};
+    uint8_t ev_last_state_{255};         // letzter Endzustand (2/3/4), 255 = unbekannt
+    void on_lock_state_(uint8_t st);
+    void ev_tick_();
+    // Pairing-Absicherung: bisherige Kopplung bis zur Bestätigung durch das Schloss merken
+    bool pair_pending_{false};
+    std::string prev_user_key_;
+    int prev_user_id_{255};
+    uint64_t prev_address_{0};
+    void pair_restore_(const char *why, bool cancelled = false);
+    // Erreichbarkeit: aufeinanderfolgende fehlgeschlagene Verbindungsversuche
+    uint8_t conn_fails_{0};
+    time_t unreachable_since_{0};
+    bool unreachable_logged_{false};
+    void conn_fail_();
+    void conn_ok_();
+    void ev_fail_(const char *why);
+    void publish_events_();
     void request_connect_();
 
     std::string getClientState() {
@@ -194,6 +225,14 @@ class EqivaKeyBle : public BLEClientBase {
         void set_user_id_sensor(text_sensor::TextSensor *user_id_sensor) { this->user_id_sensor_ = user_id_sensor; }
         void set_mac_address_sensor(text_sensor::TextSensor *mac_address_sensor) { this->mac_address_sensor_ = mac_address_sensor; }
         void set_rssi_sensor(sensor::Sensor *rssi_sensor) { this->rssi_sensor_ = rssi_sensor; }
+        void set_events_sensor(text_sensor::TextSensor *events_sensor) { this->events_sensor_ = events_sensor; }
+        // Reaktionszeit: vom Befehl bis das Schloss sich dreht (Sekunden, letzte 10 als Liste)
+        void set_reaction_time_sensor(sensor::Sensor *s) { this->reaction_sensor_ = s; }
+        void set_reaction_list_sensor(text_sensor::TextSensor *s) { this->reaction_list_sensor_ = s; }
+        // Ereignisprotokoll: Eintrag mit Uhrzeit (sofern bekannt) hinzufügen
+        void log_event(const std::string &text);
+        // Auslöser für den nächsten Befehl setzen (z. B. "Max", "Zeitplan 1"); gilt 3 s, sonst "HA/Web"
+        void set_cmd_source(const std::string &src) { this->cmd_source_ = src; this->cmd_source_at_ = millis(); }
         // Simulation: kein BLE, Schloss wird nachgebildet (Zustände, Fahrzeit, Sparmodus-Verbindung)
         void set_simulate(bool s) { this->simulate_ = s; }
         bool is_simulated() const { return this->simulate_; }
@@ -201,6 +240,15 @@ class EqivaKeyBle : public BLEClientBase {
         void set_sim_travel_ms(uint32_t ms) { this->sim_travel_ms_ = ms < 500 ? 500 : ms; }
         void sim_connect();
         void sim_disconnect();
+        void sim_turn_by_hand();         // Simulation: Schlüssel/Drehknauf von Hand drehen
+        // Kopplung vergessen (z. B. Schloss getauscht): trennen, Schlüssel löschen, nicht mehr verbinden.
+        // Der Benutzer bleibt im Schloss angelernt (austragen per Eqiva-App oder Werksreset).
+        void forget_pairing();
+        void set_pair_prev_address(uint64_t a) { this->prev_address_ = a; }
+        // Laufendes Pairing abbrechen, bisherige Kopplung bleibt
+        void cancel_pair();
+        // Seit wann das Schloss nicht erreichbar ist (ab 2 Fehlversuchen in Folge), sonst 0; 1 = Uhrzeit unbekannt
+        time_t unreachable_since() const { return conn_fails_ >= 2 ? (unreachable_since_ ? unreachable_since_ : 1) : 0; }
 
         void set_state(esphome::esp32_ble_tracker::ClientState st) override {
             BLEClientBase::set_state(st);
@@ -219,6 +267,12 @@ class EqivaKeyBle : public BLEClientBase {
         text_sensor::TextSensor *user_id_sensor_{nullptr};
         text_sensor::TextSensor *mac_address_sensor_{nullptr};
         sensor::Sensor *rssi_sensor_{nullptr};   // Patch: Empfang der aktiven Verbindung
+        text_sensor::TextSensor *events_sensor_{nullptr};
+        sensor::Sensor *reaction_sensor_{nullptr};
+        text_sensor::TextSensor *reaction_list_sensor_{nullptr};
+        uint32_t reaction_started_{0};
+        bool reaction_pending_{false};
+        std::vector<uint16_t> reaction_hist_;   // ms, älteste zuerst, max. 10
 
 };
 
@@ -291,6 +345,7 @@ class EqivaPair : public Action<Ts...>, public Parented<EqivaKeyBle> {
             // sonst ginge der Pairing-Versuch zuerst an das alte Schloss.
             const uint64_t new_mac = string_to_mac(mac_address);
             const uint64_t cur_mac = this->parent_->get_address();
+            this->parent_->set_pair_prev_address(cur_mac);   // für Wiederherstellung, falls das Pairing scheitert
             if (cur_mac > 1 && new_mac != cur_mac) {
                 ESP_LOGI("eqiva_key_ble", "Pairing mit anderem Schloss - trenne alte Verbindung");
                 this->parent_->disconnect();

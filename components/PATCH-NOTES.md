@@ -1,6 +1,6 @@
 # Eqiva Key-BLE – gepatchte Version
 
-**Version 2.1.0** (2026-11-04) – Komponente mit Testmodus (simulate), passend zu den Beispiel-YAMLs und der Anleitung mit gleicher Version.
+**Version 3.5.0** (2026-11-08) – Komponente mit Testmodus (simulate) und Ereignisprotokoll (`events`), Reaktionszeit (`reaction_time`, `reaction_list`), passend zu den Beispiel-YAMLs und der Anleitung mit gleicher Version.
 
 Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (Fix für ESPHome 2026.8).
 
@@ -46,6 +46,22 @@ Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (
 | 20 | Keepalive nur über YAML-`interval` | Im Sparmodus würde der 4-min-Poll ständig neu verbinden | Keepalive/Status-Abfrage in der Komponente, abhängig vom Modus |
 | 21 | Pairing mit anderem Schloss bei bestehender Verbindung | Pairing-Versuch ging zuerst ans alte Schloss | Alte Verbindung wird bei neuer MAC zuerst getrennt |
 | 22 | (neu) | – | Testmodus `simulate: true`: kein BLE, Schloss wird nachgebildet (Fahrzeit, Sparmodus-Verbindung, „nicht erreichbar“) |
+| 23 | (neu) | – | Ereignisprotokoll: optionaler Text-Sensor `events` (letzte 10 Ereignisse), Auslöser je Befehl (`set_cmd_source()`, sonst „HA/Web“), Erkennung „von Hand“, eigene Einträge über `log_event()` |
+| 24 | (neu) | – | `forget_pairing()`: Kopplung vergessen (trennen, Schlüssel löschen, nicht mehr verbinden), z. B. beim Tausch des Schlosses |
+| 25 | Pairing überschrieb Schlüssel/User-ID sofort | Gescheitertes Neu-Pairing machte eine funktionierende Kopplung ungültig | Neue Daten erst nach Bestätigung, sonst alte Kopplung wiederhergestellt; Status-Abfrage direkt nach dem Pairing |
+| 26 | (neu) | – | `cancel_pair()`, Erreichbarkeit `unreachable_since()` (ab 2 gescheiterten Verbindungsversuchen), Ereignisse „Schloss nicht/wieder erreichbar“ |
+
+Ereignisprotokoll (optional):
+
+```yaml
+text_sensor:
+  - platform: eqiva_key_ble
+    events:
+      name: "Ereignisse"
+```
+
+Aus Lambdas: `id(key_ble)->set_cmd_source("Zeitplan 1");` direkt vor einem Befehl (gilt 3 s) und
+`id(key_ble)->log_event("🔔 Klingel");` für eigene Einträge.
 
 Neuer Sensor:
 

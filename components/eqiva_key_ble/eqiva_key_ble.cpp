@@ -7,6 +7,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstring>
+#include <ctime>
 #include "esp_random.h"
 
 #ifdef USE_ESP32
@@ -22,6 +23,8 @@ static const char *const TAG = "eqiva_key_ble";
 // -----------------------------------------------------------------------------
 void EqivaKeyBle::setup() {
   BLEClientBase::setup();
+  this->set_interval("eqiva_events", 1000, [this]() { this->ev_tick_(); });
+  this->publish_events_();
   if (this->simulate_) {
     // Simulation: kein BLE-Verbindungsaufbau, nur nachgebildetes Schloss
     this->set_auto_connect(false);
@@ -57,16 +60,17 @@ void EqivaKeyBle::watchdog_() {
     ESP_LOGW(TAG, "Zurückgehaltene Nachricht 0x%02X nach %u ms verworfen (Schloss nicht erreichbar)",
              (uint8_t) currentMsg->id, (unsigned) command_timeout_);
     clear_pending_();
+    this->ev_fail_("Schloss nicht erreichbar");
   }
 
-  // Pairing-Anfrage nach 2 min verwerfen
-  if (requestPair && (now - pair_started_) > 120000) {
-    ESP_LOGW(TAG, "Pairing abgebrochen (2 min ohne Erfolg)");
-    requestPair = false;
+  // Pairing nach 60 s ohne Bestätigung abbrechen, bisherige Kopplung wiederherstellen
+  if ((requestPair || pair_pending_) && (now - pair_started_) > 60000) {
+    this->pair_restore_("keine Bestätigung vom Schloss innerhalb von 60 s");
   }
 
   // Sparmodus: Status periodisch abfragen (baut dafür kurz eine Verbindung auf)
-  if (power_mode_ == POWER_ECO && (!eco_poll_done_ || (now - last_eco_poll_) > eco_poll_interval_)) {
+  if (power_mode_ == POWER_ECO && clientState.user_key.length() == 16 &&   // nur wenn gekoppelt
+      (!eco_poll_done_ || (now - last_eco_poll_) > eco_poll_interval_)) {
     eco_poll_done_ = true;
     last_eco_poll_ = now;
     ESP_LOGD(TAG, "Sparmodus: periodische Status-Abfrage");
@@ -298,8 +302,14 @@ bool EqivaKeyBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t 
   this->publish_(this->lock_ble_state_sensor_, getClientState());
 
   switch (event) {
+    case ESP_GATTC_OPEN_EVT: {
+      if (param->open.status != ESP_GATT_OK && param->open.status != ESP_GATT_ALREADY_OPEN)
+        this->conn_fail_();
+      break;
+    }
     case ESP_GATTC_SEARCH_CMPL_EVT: {
       if (this->state() == espbt::ClientState::ESTABLISHED) {
+        this->conn_ok_();
         reset_session_();
         write = this->get_characteristic(esp32_ble_tracker::ESPBTUUID::from_raw("58e06900-15d8-11e6-b737-0002a5d5c51b"), esp32_ble_tracker::ESPBTUUID::from_raw("3141dd40-15db-11e6-a24b-0002a5d5c51b"));
         read = this->get_characteristic(esp32_ble_tracker::ESPBTUUID::from_raw("58e06900-15d8-11e6-b737-0002a5d5c51b"), esp32_ble_tracker::ESPBTUUID::from_raw("359d4820-15db-11e6-82bd-0002a5d5c51b"));
@@ -415,8 +425,16 @@ bool EqivaKeyBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t 
             ESP_LOGV(TAG, "user_key: %s", string_to_hex(clientState.user_key).c_str());
             clientState.card_key.clear();
             const int uid = (uint8_t) clientState.user_id;
+            // Erst jetzt neuen Schlüssel und User-ID melden (werden in der YAML gespeichert)
+            pair_pending_ = false;
+            prev_user_key_.clear();
+            this->publish_(this->user_key_sensor_, string_to_hex(clientState.user_key));
+            this->publish_(this->user_id_sensor_, std::to_string(uid));
             for (auto *t : paired_triggers_)
               t->trigger(uid);   // Patch: on_paired-Automation (z. B. Pairing-Info speichern)
+            this->log_event("🔗 Gekoppelt (User " + std::to_string(uid) + ")");
+            // Schlosszustand gleich abfragen, damit Einrichtungsstatus/App sofort stimmen
+            this->set_timeout("eqiva_post_pair", 1500, [this]() { this->sendCommand(REQUEST_STATUS); });
           }
           msgdata = decrypted;
           ESP_LOGV(TAG, "Decrypted: %s", string_to_hex(msgdata).c_str());
@@ -468,6 +486,9 @@ bool EqivaKeyBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t 
                   ESP_LOGW(TAG, "Schloss ist nicht im Pairing-Modus - Öffnen-Taste ca. 5 s halten, bis die LED schnell orange blinkt. "
                                 "Neuer Versuch bei der nächsten Verbindung.");
                   this->disconnect();
+                } else if (pair_pending_) {
+                  // Neuer Schlüssel wurde nicht bestätigt (Pairing-Modus vorbei): alte Kopplung zurück
+                  this->pair_restore_("Schloss hat das Pairing nicht bestätigt (Pairing-Modus vorbei?)");
                 } else {
                   ESP_LOGE(TAG, "ESP ist am Schloss nicht (mehr) angelernt (user_id 255). Bitte neu pairen. "
                                 "Automatisches Verbinden pausiert, um die Schloss-Batterie zu schonen.");
@@ -478,8 +499,10 @@ bool EqivaKeyBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t 
                 break;
               }
 
-              this->publish_(this->user_key_sensor_, string_to_hex(clientState.user_key));
-              this->publish_(this->user_id_sensor_, std::to_string(uid));
+              if (!pair_pending_) {   // während des Pairings erst nach Bestätigung melden
+                this->publish_(this->user_key_sensor_, string_to_hex(clientState.user_key));
+                this->publish_(this->user_id_sensor_, std::to_string(uid));
+              }
 
               if (connect_requested_at_ != 0) {
                 ESP_LOGI(TAG, "Sparmodus: Verbindung + Session nach %u ms bereit", (unsigned) (millis() - connect_requested_at_));
@@ -519,6 +542,7 @@ bool EqivaKeyBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t 
               if (this->lock_status_sensor_ != nullptr)
                 this->lock_status_sensor_->publish_state(lockStatus);
               this->publish_(this->low_battery_sensor_, message.isBatteryLow() ? "true" : "false");
+              this->on_lock_state_(message.getLockStatus());
 
               ESP_LOGD(TAG, "# Lock state: %d, battery low: %s", message.getLockStatus(), message.isBatteryLow() ? "true" : "false");
               break;
@@ -551,6 +575,20 @@ void EqivaKeyBle::init() {
 }
 
 void EqivaKeyBle::sendCommand(CommandType command) {
+  if (command == LOCK || command == UNLOCK || command == OPEN) {
+    // Ereignisprotokoll: Auslöser merken, Bestätigung kommt über den Status
+    const uint32_t now = millis();
+    const bool src_ok = !cmd_source_.empty() && (now - cmd_source_at_) < 3000;
+    ev_pending_ = (int) command;
+    ev_pending_src_ = src_ok ? cmd_source_ : std::string("HA/Web");
+    ev_pending_at_ = now;
+    ev_moved_ = false;
+    reaction_started_ = now;
+    reaction_pending_ = true;
+    last_command_ms_ = now;
+    last_command_valid_ = true;
+    cmd_source_.clear();
+  }
   if (this->simulate_) {
     // Befehle haben Vorrang vor Status-Abfragen (wie beim echten Schloss)
     if (!(command == REQUEST_STATUS && sim_pending_ >= 0 && sim_pending_ != REQUEST_STATUS)) {
@@ -578,6 +616,10 @@ void EqivaKeyBle::applySettings() {
 
 void EqivaKeyBle::startPair() {
     if (clientState.card_key.length() > 0) {
+      // Bisherige Kopplung merken: Sie gilt weiter, bis das Schloss das neue Pairing bestätigt
+      pair_pending_ = true;
+      prev_user_key_ = clientState.user_key.length() == 16 ? clientState.user_key : std::string();
+      prev_user_id_ = clientState.user_id;
       clientState.user_id = 255;
       clientState.user_key.clear();
       clientState.remote_session_nonce.clear();
@@ -750,9 +792,11 @@ void EqivaKeyBle::sim_publish_state_(uint8_t st) {
   if (this->lock_status_sensor_ != nullptr)
     this->lock_status_sensor_->publish_state(names[st <= 4 ? st : 0]);
   this->publish_(this->low_battery_sensor_, "false");
+  this->on_lock_state_(st <= 4 ? st : 0);
 }
 
 void EqivaKeyBle::sim_set_connected_(bool c) {
+  if (c) this->conn_ok_();
   sim_connected_ = c;
   sim_connecting_ = false;
   this->publish_(this->lock_ble_state_sensor_, c ? "ESTABLISHED" : "IDLE");
@@ -794,6 +838,14 @@ void EqivaKeyBle::sim_execute_(int cmd) {
   sim_publish_state_(1);   // MOVING
 }
 
+void EqivaKeyBle::sim_turn_by_hand() {
+  if (!simulate_ || sim_target_ != 0) return;
+  ESP_LOGI(SIM_TAG, "Simulation: von Hand gedreht");
+  sim_target_ = sim_state_ == 3 ? 2 : 3;
+  sim_move_end_ = millis() + 1500;
+  sim_publish_state_(1);
+}
+
 void EqivaKeyBle::sim_tick_() {
   const uint32_t now = millis();
   // Verbindungsaufbau
@@ -810,6 +862,8 @@ void EqivaKeyBle::sim_tick_() {
     } else if ((now - sim_pending_since_) > command_timeout_) {
       ESP_LOGW(SIM_TAG, "Simulation: Befehl verworfen (Schloss nicht erreichbar)");
       sim_pending_ = -1;
+      this->conn_fail_();
+      this->ev_fail_("Schloss nicht erreichbar");
       if (sim_connecting_) {
         sim_connecting_ = false;
         this->publish_(this->lock_ble_state_sensor_, "IDLE");
@@ -845,6 +899,192 @@ void EqivaKeyBle::sim_tick_() {
   // Wieder erreichbar und Dauerverbindung gewünscht -> verbinden
   if (sim_reachable_ && !sim_connected_ && !sim_connecting_ && power_mode_ != POWER_ECO)
     this->sim_connect();
+}
+
+// ---------------------------------------------------------------
+// Ereignisprotokoll: wer hat wann auf-/zugeschlossen, Hand-Bedienung,
+// fehlgeschlagene Befehle. Weitere Einträge (Klingel, Sabotage …) kommen
+// über log_event() aus den YAML-Paketen.
+// ---------------------------------------------------------------
+static const char *const EV_TAG = "eqiva_event";
+
+void EqivaKeyBle::log_event(const std::string &text) {
+  time_t now = ::time(nullptr);
+  if (now < 1600000000) now = 0;         // Uhrzeit noch unbekannt
+  ESP_LOGI(EV_TAG, "%s", text.c_str());
+  events_.push_front({now, text});
+  while (events_.size() > 10) events_.pop_back();
+  this->publish_events_();
+}
+
+void EqivaKeyBle::publish_events_() {
+  if (this->events_sensor_ == nullptr) return;
+  // Heute nur Uhrzeit, ältere Einträge mit Datum
+  time_t now = ::time(nullptr);
+  struct tm today {};
+  const bool now_ok = now > 1600000000 && localtime_r(&now, &today) != nullptr;
+  // Home Assistant erlaubt max. 255 Zeichen je Zustand -> ältere Einträge ggf. weglassen
+  auto chars = [](const std::string &s) {
+    size_t n = 0;
+    for (unsigned char ch : s) if ((ch & 0xC0) != 0x80) n++;
+    return n;
+  };
+  std::string out;
+  size_t len = 0;
+  for (const auto &e : events_) {
+    char ts[20] = "";
+    struct tm lt;
+    if (e.t != 0 && localtime_r(&e.t, &lt) != nullptr) {
+      const bool same_day = now_ok && lt.tm_yday == today.tm_yday && lt.tm_year == today.tm_year;
+      strftime(ts, sizeof(ts), same_day ? "%H:%M " : "%d.%m. %H:%M ", &lt);
+    }
+    const std::string add = (out.empty() ? "" : " · ") + std::string(ts) + e.text;
+    const size_t l = chars(add);
+    if (len + l > 255) break;
+    out += add;
+    len += l;
+  }
+  if (out.empty()) out = "–";
+  this->publish_(this->events_sensor_, out);
+}
+
+void EqivaKeyBle::on_lock_state_(uint8_t st) {
+  const uint32_t now = millis();
+  if (st == 1 && reaction_pending_) {    // erster Motorstart nach dem Befehl = Reaktionszeit
+    reaction_pending_ = false;
+    uint32_t ms = now - reaction_started_;
+    if (ms > 65535) ms = 65535;
+    reaction_hist_.push_back((uint16_t) ms);
+    if (reaction_hist_.size() > 10) reaction_hist_.erase(reaction_hist_.begin());
+    if (this->reaction_sensor_ != nullptr) this->reaction_sensor_->publish_state(ms / 1000.0f);
+    std::string list;
+    for (size_t i = 0; i < reaction_hist_.size(); i++) {
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%s%.1f", i ? "," : "", reaction_hist_[i] / 1000.0f);
+      list += buf;
+    }
+    this->publish_(this->reaction_list_sensor_, list);
+    ESP_LOGI(TAG, "Reaktionszeit: %.1f s", ms / 1000.0f);
+  }
+  if (st == 1) {                         // MOVING
+    if (ev_pending_ >= 0) ev_moved_ = true;
+    return;
+  }
+  if (st < 2 || st > 4) return;          // UNKNOWN: nichts protokollieren
+  static const char *const icon[] = {"", "", "🔓", "🔒", "🚪"};
+  static const char *const word[] = {"", "", "auf", "zu", "geöffnet"};
+  if (ev_pending_ >= 0) {
+    const uint8_t want = ev_pending_ == LOCK ? 3 : (ev_pending_ == UNLOCK ? 2 : 4);
+    if (st == want) {
+      this->log_event(std::string(icon[st]) + " " + ev_pending_src_);
+      ev_pending_ = -1;
+    } else if (ev_moved_ && !(ev_pending_ == OPEN && st == 2)) {
+      // nach der Fahrt ein anderer Endzustand -> Befehl nicht ausgeführt
+      this->log_event(std::string("✗ ") + (want == 3 ? "zu" : want == 2 ? "auf" : "öffnen") + " " +
+                      ev_pending_src_ + " (jetzt " + word[st] + ")");
+      ev_pending_ = -1;
+    }
+    ev_last_state_ = st;
+    return;
+  }
+  // Ohne Befehl: Zustandswechsel = von Hand (Schlüssel, Drehknauf, Taste am Schloss)
+  if (ev_last_state_ != 255 && st != ev_last_state_ &&
+      !(ev_last_state_ == 4 && st == 2) &&          // OPENED -> UNLOCKED: Falle zurück, kein Ereignis
+      (!last_command_valid_ || (now - last_command_ms_) > 40000)) {
+    this->log_event(std::string("🖐 ") + icon[st] + " von Hand");
+  }
+  ev_last_state_ = st;
+}
+
+void EqivaKeyBle::ev_fail_(const char *why) {
+  if (ev_pending_ < 0) return;
+  static const char *const w[] = {"zu", "auf", "öffnen"};
+  this->log_event(std::string("✗ ") + w[ev_pending_ <= 2 ? ev_pending_ : 0] + " " + ev_pending_src_ +
+                  " (" + why + ")");
+  ev_pending_ = -1;
+}
+
+void EqivaKeyBle::ev_tick_() {
+  if (ev_pending_ >= 0 && (millis() - ev_pending_at_) > 60000) this->ev_fail_("keine Bestätigung");
+  // Tageswechsel: gestrige Einträge bekommen ihr Datum
+  static int last_yday = -1;
+  time_t now = ::time(nullptr);
+  struct tm lt;
+  if (now > 1600000000 && localtime_r(&now, &lt) != nullptr && lt.tm_yday != last_yday) {
+    if (last_yday >= 0) this->publish_events_();
+    last_yday = lt.tm_yday;
+  }
+}
+
+
+void EqivaKeyBle::forget_pairing() {
+  ESP_LOGW(TAG, "Kopplung entfernt - Benutzer im Schloss bleibt angelernt (Eqiva-App oder Werksreset)");
+  clear_pending_();
+  requestPair = false;
+  if (simulate_) {
+    this->sim_disconnect();
+  } else {
+    this->set_auto_connect(false);
+    this->disconnect();
+    this->set_address(1);              // wie "Disconnect": keine echte Adresse mehr
+  }
+  clientState.user_key.clear();
+  clientState.card_key.clear();
+  clientState.remote_session_nonce.clear();
+  clientState.user_id = 255;
+  ev_pending_ = -1;
+  ev_last_state_ = 255;
+  this->publish_(this->lock_status_sensor_, "");
+  this->log_event("🔗 Kopplung entfernt");
+}
+
+void EqivaKeyBle::cancel_pair() {
+  if (pair_pending_ || requestPair) this->pair_restore_("vom Nutzer abgebrochen", true);
+  else ESP_LOGI(TAG, "Kein Pairing aktiv");
+}
+
+void EqivaKeyBle::conn_fail_() {
+  if (conn_fails_ == 0) {
+    const time_t now = ::time(nullptr);
+    unreachable_since_ = now > 1600000000 ? now : 0;
+  }
+  if (conn_fails_ < 255) conn_fails_++;
+  if (conn_fails_ >= 2 && !unreachable_logged_) {
+    unreachable_logged_ = true;
+    ESP_LOGW(TAG, "Schloss nicht erreichbar (%u Versuche) - Batterie und Reichweite prüfen", conn_fails_);
+    this->log_event("⚠️ Schloss nicht erreichbar");
+  }
+}
+
+void EqivaKeyBle::conn_ok_() {
+  if (unreachable_logged_) this->log_event("✓ Schloss wieder erreichbar");
+  conn_fails_ = 0;
+  unreachable_since_ = 0;
+  unreachable_logged_ = false;
+}
+
+void EqivaKeyBle::pair_restore_(const char *why, bool cancelled) {
+  requestPair = false;
+  pair_pending_ = false;
+  clientState.card_key.clear();
+  clientState.remote_session_nonce.clear();
+  clear_pending_();
+  if (prev_user_key_.length() == 16) {
+    clientState.user_key = prev_user_key_;
+    clientState.user_id = prev_user_id_;
+    if (prev_address_ > 1) this->set_address(prev_address_);
+    ESP_LOGW(TAG, "Pairing gescheitert: %s - bisherige Kopplung (User %d) bleibt", why, prev_user_id_);
+    this->log_event(cancelled ? "✗ Pairing abgebrochen – bisherige Kopplung bleibt" : "✗ Pairing nicht bestätigt – bisherige Kopplung bleibt");
+    this->set_auto_connect(true);
+  } else {
+    clientState.user_key.clear();
+    clientState.user_id = 255;
+    ESP_LOGW(TAG, "Pairing gescheitert: %s", why);
+    this->log_event(cancelled ? "✗ Pairing abgebrochen" : "✗ Pairing nicht bestätigt");
+    this->set_auto_connect(false);
+  }
+  prev_user_key_.clear();
+  this->disconnect();
 }
 
 }  // namespace eqiva_key_ble
