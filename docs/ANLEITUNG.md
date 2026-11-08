@@ -1,6 +1,6 @@
 # Eqiva Smart Lock – Anleitung & Hilfe
 
-Gilt für Version 3.2.2 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
+Gilt für Version 3.3.0 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
 Änderungen: [CHANGELOG.md](../CHANGELOG.md)
 
 ## Die Web-App
@@ -44,6 +44,9 @@ oder Google Lens scannen, den Text kopieren und einfügen; der Assistent führt 
 3. Am Schloss die Taste **Öffnen** ca. 5 s halten, bis die LED **schnell orange blinkt**.
 4. Sofort **BLE Pair _Start_** drücken.
 5. Fertig, wenn der **Einrichtungsstatus** ✅ zeigt und **Lock Status** einen Zustand anzeigt.
+
+**Pairing abbrechen:** Im Assistenten „Pairing abbrechen“ (Expertenansicht: Button „Pairing abbrechen“). Ein abgebrochenes
+oder nicht bestätigtes Pairing ändert nichts: MAC-Adresse, Schlüssel und User-ID bleiben, auch nach einem Neustart.
 
 **Schloss tauschen / Kopplung entfernen:** Einstellungen → Einrichtung → **„Kopplung entfernen“** (zweimal bestätigen).
 Der ESP vergisst MAC-Adresse und Schlüssel und verbindet sich nicht mehr. Danach das neue Schloss wie oben koppeln.
@@ -136,6 +139,7 @@ Die Übersicht **„Angelernte Finger“** zeigt alle Finger, z. B. `#0 St R-Dau
 | 🔴 rot atmend | Finger nicht erkannt |
 | 🔴 rot blinkend | Fehler: Schloss nicht erreicht oder Status unbekannt · beim Anlernen: Finger schon angelernt · schnell (6×): Sabotage-Alarm |
 | 🔵 blau atmend | Anlernen: Finger einmal zur Prüfung auflegen |
+| 🩵 türkis atmend | verbinde mit dem Schloss (Sparmodus, „Umschalten“ holt zuerst den Zustand) – Finger darf weg |
 | 🟣 lila blinkend | abgewiesen (Fingerprint aus, Sperre nach Fehlversuchen, Übereinstimmung zu gering, Finger gesperrt, Sabotage-Alarm) |
 | 🟡 gelb blinkend | Finger schlecht aufgelegt – nochmal versuchen |
 | 🌈 Regenbogen (Standard) | Klingel – Muster wählbar unter „Klingel-Anzeige“: Regenbogen, Weiß atmen, Blau blinken, Rot/Blau, Gelb/Grün oder Aus |
@@ -212,6 +216,10 @@ Bei einem Alarm: **„Fingerprint Sabotage“** wird „an“ (in Home Assistant
 > Die Prüfung läuft alle „Sabotage-Prüfintervall“ Minuten (Standard 10) und nur, wenn am Sensor gerade nichts passiert. Der Sensor wird dafür kurz eingeschaltet (Ring geht dabei kurz aus).
 
 ## Wenn es nicht klappt
+
+- **„⚠️ Schloss nicht erreichbar seit …“** (Einrichtungsstatus, App, „Ereignisse“): zwei Verbindungsversuche hintereinander
+  gescheitert. Batterien des Schlosses und Abstand zum ESP prüfen. Sobald eine Verbindung wieder klappt, steht dort
+  „✓ Schloss wieder erreichbar“. Ein Verbindungsversuch dauert höchstens `ble_connect_timeout` (Standard 12 s).
 
 - **„Versionskonflikt …“ beim Kompilieren** oder **„Firmware v… – App v…: Dateien passen nicht zusammen“** in der Web-App: Dateien unterschiedlicher Versionen gemischt. Alle Pakete, `eqiva-smart-lock-app.js` und den Ordner `eqiva_components` aus derselben Version verwenden (in eigenen Kopien der Hauptdatei `config_version` anpassen). Für Tests: `version_check: "false"`.
 - **Sabotage-Alarm ohne Grund** (z. B. „Sensor antwortet nicht“ bei Wackelkontakt): Kabel prüfen, quittieren. Tritt er wiederholt auf, die betreffende Erkennung in „Sabotage-Erkennung“ abschalten und im Log (`[fp]`) nachsehen.

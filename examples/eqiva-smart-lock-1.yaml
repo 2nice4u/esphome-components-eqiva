@@ -1,13 +1,13 @@
 # ---------------------------------------------------------------
 # Eqiva Smart Lock – ESP32-C3 + optional R503 Fingerprint
-# Version 3.2.2 (2026-11-08) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.3.0 (2026-11-08) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Für ein weiteres Schloss: Datei kopieren (eqiva-smart-lock-2.yaml),
 # lock_nr ändern und die vier !secret-Namen unten auf _2_ anpassen.
 # Schloss-spezifisches (MAC, Keys) wird nur in der Web-GUI eingetragen.
 # (!secret kann keine Substitutions verwenden).
 # ---------------------------------------------------------------
 substitutions:
-  config_version: "3.2.2"   # Version dieser Konfiguration (siehe Kopfzeile)
+  config_version: "3.3.0"   # Version dieser Konfiguration (siehe Kopfzeile)
   lock_nr: "1"
   # --- Funktionen ein-/ausschalten: true = an, false = aus ---
   # (Nicht vorhandene Hardware einfach auf false setzen, sonst nichts ändern.)
@@ -21,6 +21,9 @@ substitutions:
   # Versionsprüfung: Kompilieren bricht ab, wenn Pakete/Komponente eine andere Version haben.
   # Nur für Tests mit gemischten Dateien auf "false" setzen.
   version_check: "true"
+  # Wie lange ein Verbindungsversuch zum Schloss dauern darf (ESPHome-Standard 20s, min. 10s).
+  # Kürzer = schnellere Rückmeldung "Schloss nicht erreichbar"; erfolgreiche Verbindungen brauchen meist < 8 s.
+  ble_connect_timeout: "12s"
   # use_door: "false"       # Reedkontakt / Auto-Lock (folgt)
   # use_button: "false"     # Taster innen (folgt)
   # use_keypad: "false"     # Wiegand-Keypad (folgt)
@@ -186,6 +189,9 @@ external_components:
 # ---------------------------------------------------------------
 # Eqiva BLE
 # ---------------------------------------------------------------
+esp32_ble:
+  connection_timeout: ${ble_connect_timeout}
+
 esp32_ble_tracker:
   scan_parameters:
     window: 300ms
@@ -204,6 +210,19 @@ eqiva_key_ble:
     - globals.set:
         id: paired_uid
         value: !lambda 'return user_id;'
+    # MAC erst jetzt dauerhaft übernehmen (Pairing bestätigt)
+    - text.set:
+        id: mac_address
+        value: !lambda |-
+          const std::string &q = id(card_key).state;
+          if (q.size() < 46 || (q[0] != 'M' && q[0] != 'm') || (q[13] != 'K' && q[13] != 'k'))
+            return id(mac_address).state;
+          std::string m;
+          for (int i = 1; i <= 12; i++) {
+            m += (char) toupper((unsigned char) q[i]);
+            if (i % 2 == 0 && i < 12) m += ':';
+          }
+          return m;
     - text.set:
         id: pairing_info_store
         value: !lambda |-
@@ -313,6 +332,17 @@ button:
           value: '-1'
       - lambda: 'global_preferences->sync();'   # sofort sichern
 
+  # Laufendes Pairing abbrechen (bisherige Kopplung bleibt)
+  - platform: template
+    id: ble_pair_cancel
+    name: "Pairing abbrechen"
+    icon: "mdi:close-circle-outline"
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_ble
+    on_press:
+      - lambda: 'id(key_ble)->cancel_pair();'
+
   - platform: template
     id: ble_pair
     name: BLE Pair _Start_
@@ -321,26 +351,21 @@ button:
     web_server:
       sorting_group_id: sg_ble
     on_press:
-      # MAC automatisch aus dem QR-Text übernehmen (Format: M<12 Hex-MAC>K<Card Key><Seriennr.>)
-      - if:
-          condition:
-            lambda: |-
-              const std::string &q = id(card_key).state;
-              return q.size() >= 46 && (q[0] == 'M' || q[0] == 'm') && (q[13] == 'K' || q[13] == 'k');
-          then:
-            - text.set:
-                id: mac_address
-                value: !lambda |-
-                  const std::string &q = id(card_key).state;
-                  std::string m;
-                  for (int i = 1; i <= 12; i++) {
-                    m += (char) toupper((unsigned char) q[i]);
-                    if (i % 2 == 0 && i < 12) m += ':';
-                  }
-                  return m;
+      # MAC aus dem QR-Text (Format: M<12 Hex-MAC>K<Card Key><Seriennr.>) nur an das Pairing übergeben.
+      # Gespeichert wird sie erst, wenn das Schloss das Pairing bestätigt (on_paired). Scheitert es,
+      # bleibt die bisherige Kopplung auch nach einem Neustart erhalten.
       - eqiva_key_ble.pair:
           card_key: !lambda 'return id(card_key).state;'
-          mac_address: !lambda 'return id(mac_address).state;'
+          mac_address: !lambda |-
+            const std::string &q = id(card_key).state;
+            if (q.size() < 46 || (q[0] != 'M' && q[0] != 'm') || (q[13] != 'K' && q[13] != 'k'))
+              return id(mac_address).state;
+            std::string m;
+            for (int i = 1; i <= 12; i++) {
+              m += (char) toupper((unsigned char) q[i]);
+              if (i % 2 == 0 && i < 12) m += ':';
+            }
+            return m;
 
   - platform: template
     id: lock_settings
@@ -623,6 +648,16 @@ text_sensor:
         if (id(user_key).state.size() != 32)
           return std::string("② Nicht gekoppelt: Pairing durchführen (Schritt 3)");
         const bool eco = id(power_mode).current_option() == "Sparsam";
+        const time_t us = id(key_ble)->unreachable_since();
+        if (us != 0 && id(ble_state).state != "ESTABLISHED") {
+          char b[110] = "";
+          struct tm lt;
+          if (us > 1 && localtime_r(&us, &lt) != nullptr)
+            strftime(b, sizeof(b), "⚠️ Schloss nicht erreichbar seit %H:%M – Batterie und Reichweite prüfen", &lt);
+          else
+            snprintf(b, sizeof(b), "⚠️ Schloss nicht erreichbar – Batterie und Reichweite prüfen");
+          return std::string(b);
+        }
         if (id(ble_state).state != "ESTABLISHED") {
           // Sparsam: Trennen ist normal – auch wenn der Zustand noch nicht gelesen wurde (z. B. direkt nach dem Pairing)
           if (eco)

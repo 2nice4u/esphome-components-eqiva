@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # R503 Fingerprint – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 3.2.2 (2026-11-08) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.3.0 (2026-11-08) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Einbinden: packages: fingerprint: !include eqiva-smart-lock-fingerprint.yaml
 # Nutzt ${name}, lock_status, ble_state, door_handle und ha_time aus der Hauptdatei.
 #
@@ -104,6 +104,7 @@ uart:
 # R503-Ring: state 1=atmen 2=blinken 3=an 4=aus | Farbe 1=rot 2=blau 3=lila 4=grün 5=gelb 6=cyan 7=weiß
 # Bedeutung: blau = Finger wird gelesen · grün atmen = erkannt, Aktion läuft
 #            danach 2 s an: grün = verriegelt, rot = aufgeschlossen/geöffnet
+#            türkis atmen = verbinde mit Schloss (Sparmodus, Umschalten)
 #            rot atmen = nicht erkannt · rot blinken = Fehler/Schloss nicht erreicht
 #            lila blinken = abgewiesen/gesperrt · gelb blinken = Finger schlecht aufgelegt
 #            ohne Finger bedient: grün atmen = zu, rot atmen = auf, blau atmen = geöffnet
@@ -163,6 +164,9 @@ globals:
     type: uint32_t
     initial_value: '0'
   - id: fp_was_connected
+    type: bool
+    initial_value: 'false'
+  - id: fp_seen_conn          # Verbindungsversuch für die Status-Abfrage hat begonnen
     type: bool
     initial_value: 'false'
   - id: fp_ev_result
@@ -485,8 +489,8 @@ script:
   - id: ver_check_fingerprint
     then:
       - lambda: |-
-          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.2.2") == 0,
-                        "Versionskonflikt: eqiva-smart-lock-fingerprint.yaml ist 3.2.2, Hauptdatei ist ${config_version} "
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.3.0") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-fingerprint.yaml ist 3.3.0, Hauptdatei ist ${config_version} "
                         "(alle Dateien gleicher Version verwenden oder version_check: false)");
   # Meldung in "Fingerprint: Letzte Aktion" (mit Uhrzeit, wenn bekannt)
   - id: fp_msg
@@ -574,11 +578,19 @@ script:
           condition:
             lambda: 'return id(fp_act) == 1 && !id(fp_was_connected);'
           then:
-            - lambda: 'id(fp)->aura_led_control(1, 60, 4, 0);'   # grün atmen = erkannt, wird ausgeführt
+            - lambda: |-
+                id(fp)->aura_led_control(1, 60, 6, 0);   // türkis atmen = verbinde mit Schloss
+                id(fp_msg).execute("Verbinde mit Schloss … – " + id(fp_who));
+            - lambda: 'id(fp_seen_conn) = false;'
             - eqiva_key_ble.status:
+            # fertig, sobald der Status da ist – oder sobald der Verbindungsversuch gescheitert ist
+            # (CONNECTING -> IDLE), statt die volle Zeit zu warten
             - wait_until:
                 condition:
-                  lambda: 'return id(fp_status_seq) != id(fp_seq_mark) && id(lock_status).state != "MOVING";'
+                  lambda: |-
+                    if (id(ble_state).state != "IDLE") id(fp_seen_conn) = true;
+                    if (id(fp_status_seq) != id(fp_seq_mark) && id(lock_status).state != "MOVING") return true;
+                    return id(fp_seen_conn) && id(ble_state).state == "IDLE";
                 timeout: 20s
       - lambda: |-
           const std::string &st = id(lock_status).state;
@@ -605,6 +617,8 @@ script:
           id(fp_pending_since) = millis();
           id(key_ble)->set_cmd_source(id(fp_who_short));   // Ereignisprotokoll: wer war es
           id(fp)->aura_led_control(1, 60, 4, 0);   // grün atmen = erkannt, wird ausgeführt
+          if (id(ble_state).state != "ESTABLISHED")
+            id(fp_msg).execute("Wird ausgeführt – verbinde mit Schloss … – " + id(fp_who));
       - if:
           condition:
             lambda: 'return id(fp_pending_cmd) == 1;'
@@ -701,6 +715,7 @@ script:
     then:
       - lambda: |-
           if (id(fp_pending_cmd) != 0) return;
+          if (id(fp_execute).is_running()) return;   // verbinde gerade: Anzeige stehen lassen, keine Klingel
           if (id(fp_enrolling).state) { id(fp_enroll_led).execute(1); return; }   // Anlernen: gelb, dann lila
           if (id(fp_dup_pending) >= 0) { id(fp)->aura_led_control(2, 25, 5, 2); return; }   // Prüfung: nochmal auflegen
           id(fp)->aura_led_control(2, 25, 5, 2);
@@ -1117,7 +1132,8 @@ fingerprint_grow:
   # password: 0x1A2B3C4D
 
   on_finger_scan_start:
-    - lambda: 'if (id(fp_pending_cmd) == 0 && !id(fp_enrolling).state) id(fp)->aura_led_control(3, 0, 2, 0);'   # blau = Finger wird gelesen
+    # blau = Finger wird gelesen (nicht während eine Aktion läuft – dann bleibt deren Anzeige stehen)
+    - lambda: 'if (id(fp_pending_cmd) == 0 && !id(fp_enrolling).state && !id(fp_execute).is_running()) id(fp)->aura_led_control(3, 0, 2, 0);'
   # Schlecht aufgelegt: gelb blinken. Auch hier wird die Klingel (mit Verzögerung) vorgemerkt –
   # ein Besucher legt oft schief auf. Wird danach ein bekannter Finger erkannt, entfällt sie.
   on_finger_scan_misplaced:
@@ -1181,6 +1197,9 @@ fingerprint_grow:
           // Läuft noch eine Aktion oder Sperrzeit danach? -> Scan ignorieren (kein zweites Umschalten)
           if (id(fp_pending_cmd) != 0 || id(fp_execute).is_running() || (millis() - id(fp_cd_start)) < id(fp_cd_ms)) {
             ESP_LOGD("fp", "Scan ignoriert (Aktion läuft / Sperrzeit)");
+            // Laufende Anzeige wieder zeigen: grün = Befehl unterwegs, türkis = verbinde für Status
+            if (id(fp_pending_cmd) != 0) id(fp)->aura_led_control(1, 60, 4, 0);
+            else if (id(fp_execute).is_running()) id(fp)->aura_led_control(1, 60, 6, 0);
             return;
           }
           // abgelaufene Fehlversuch-Sperre aufheben (überlaufsicher)
@@ -1266,7 +1285,7 @@ fingerprint_grow:
                 - script.execute: fp_enroll_start
     - if:
         condition:
-          lambda: 'return id(fp_pending_cmd) == 0 && id(fp_dup_pending) < 0 && !id(fp_enroll_start).is_running() && !id(fp_enrolling).state;'
+          lambda: 'return id(fp_pending_cmd) == 0 && id(fp_dup_pending) < 0 && !id(fp_enroll_start).is_running() && !id(fp_enrolling).state && !id(fp_execute).is_running();'
         then:
           - lambda: |-
               id(fp_failed_attempts)++;

@@ -23,6 +23,31 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.3.0 – 2026-11-08
+
+### Behoben
+- **Abgebrochenes Pairing mit einem anderen Schloss verstellte die MAC-Adresse dauerhaft.** „BLE Pair _Start_“ hat die MAC
+  aus dem QR-Text sofort gespeichert; nach einem Neustart verband sich der ESP dann mit dem falschen Schloss.
+  Jetzt wird die MAC erst gespeichert, wenn das Schloss das Pairing bestätigt.
+- Fingerprint im Sparmodus bei nicht erreichbarem Schloss: Der Ring blieb beim erneuten Auflegen dauerhaft blau,
+  scheinbar passierte nichts. Jetzt bleibt die laufende Anzeige stehen, ignorierte Scans zählen nicht als Fehlversuch
+  und lösen keine Klingel aus.
+
+### Neu
+- **„Pairing abbrechen“** (Button, in der App im Pairing-Assistenten): bricht sofort ab, die bisherige Kopplung bleibt.
+- **„⚠️ Schloss nicht erreichbar seit HH:MM“** im Einrichtungsstatus und in der App nach zwei gescheiterten
+  Verbindungsversuchen, dazu Einträge „⚠️ Schloss nicht erreichbar“ / „✓ Schloss wieder erreichbar“ in „Ereignisse“.
+- Fingerprint: Ring **türkis atmend** = verbinde mit dem Schloss; „Letzte Aktion“ zeigt sofort „Verbinde mit Schloss …“.
+  Die Status-Abfrage für „Umschalten“ endet, sobald der Verbindungsversuch scheitert, statt die vollen 20 s zu warten.
+- Zeitgrenze für einen Verbindungsversuch einstellbar: `ble_connect_timeout` (Standard jetzt 12 s statt 20 s).
+
+### ⚠️ Handlungsbedarf für eigene Kopien der Hauptdatei
+- `config_version: "3.3.0"` setzen.
+- **Wichtig (sonst bleibt der MAC-Fehler):** den Button-Block „BLE Pair _Start_“ (`name: BLE Pair _Start_`) und unter
+  `eqiva_key_ble:` → `on_paired:` den neuen `text.set` für `mac_address` aus `eqiva-smart-lock-1.yaml` übernehmen.
+- Optional: Button „Pairing abbrechen“ (`id: ble_pair_cancel`), Block `esp32_ble:` mit `connection_timeout` plus
+  Substitution `ble_connect_timeout`, im „Einrichtungsstatus“ die Abfrage `unreachable_since()`.
+
 ## 3.2.2 – 2026-11-08
 
 ### Behoben (Web-App)

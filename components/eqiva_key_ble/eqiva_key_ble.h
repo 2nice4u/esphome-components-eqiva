@@ -28,7 +28,7 @@ namespace eqiva_key_ble {
 using namespace esp32_ble_client;
 
 // Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
-#define EQIVA_PATCH_VERSION "3.2.2"
+#define EQIVA_PATCH_VERSION "3.3.0"
 
 // Patch-Konstanten
 static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
@@ -130,7 +130,13 @@ class EqivaKeyBle : public BLEClientBase {
     std::string prev_user_key_;
     int prev_user_id_{255};
     uint64_t prev_address_{0};
-    void pair_restore_(const char *why);
+    void pair_restore_(const char *why, bool cancelled = false);
+    // Erreichbarkeit: aufeinanderfolgende fehlgeschlagene Verbindungsversuche
+    uint8_t conn_fails_{0};
+    time_t unreachable_since_{0};
+    bool unreachable_logged_{false};
+    void conn_fail_();
+    void conn_ok_();
     void ev_fail_(const char *why);
     void publish_events_();
     void request_connect_();
@@ -236,6 +242,10 @@ class EqivaKeyBle : public BLEClientBase {
         // Der Benutzer bleibt im Schloss angelernt (austragen per Eqiva-App oder Werksreset).
         void forget_pairing();
         void set_pair_prev_address(uint64_t a) { this->prev_address_ = a; }
+        // Laufendes Pairing abbrechen, bisherige Kopplung bleibt
+        void cancel_pair();
+        // Seit wann das Schloss nicht erreichbar ist (ab 2 Fehlversuchen in Folge), sonst 0; 1 = Uhrzeit unbekannt
+        time_t unreachable_since() const { return conn_fails_ >= 2 ? (unreachable_since_ ? unreachable_since_ : 1) : 0; }
 
         void set_state(esphome::esp32_ble_tracker::ClientState st) override {
             BLEClientBase::set_state(st);

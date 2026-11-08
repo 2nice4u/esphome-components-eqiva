@@ -302,8 +302,14 @@ bool EqivaKeyBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t 
   this->publish_(this->lock_ble_state_sensor_, getClientState());
 
   switch (event) {
+    case ESP_GATTC_OPEN_EVT: {
+      if (param->open.status != ESP_GATT_OK && param->open.status != ESP_GATT_ALREADY_OPEN)
+        this->conn_fail_();
+      break;
+    }
     case ESP_GATTC_SEARCH_CMPL_EVT: {
       if (this->state() == espbt::ClientState::ESTABLISHED) {
+        this->conn_ok_();
         reset_session_();
         write = this->get_characteristic(esp32_ble_tracker::ESPBTUUID::from_raw("58e06900-15d8-11e6-b737-0002a5d5c51b"), esp32_ble_tracker::ESPBTUUID::from_raw("3141dd40-15db-11e6-a24b-0002a5d5c51b"));
         read = this->get_characteristic(esp32_ble_tracker::ESPBTUUID::from_raw("58e06900-15d8-11e6-b737-0002a5d5c51b"), esp32_ble_tracker::ESPBTUUID::from_raw("359d4820-15db-11e6-82bd-0002a5d5c51b"));
@@ -788,6 +794,7 @@ void EqivaKeyBle::sim_publish_state_(uint8_t st) {
 }
 
 void EqivaKeyBle::sim_set_connected_(bool c) {
+  if (c) this->conn_ok_();
   sim_connected_ = c;
   sim_connecting_ = false;
   this->publish_(this->lock_ble_state_sensor_, c ? "ESTABLISHED" : "IDLE");
@@ -853,6 +860,7 @@ void EqivaKeyBle::sim_tick_() {
     } else if ((now - sim_pending_since_) > command_timeout_) {
       ESP_LOGW(SIM_TAG, "Simulation: Befehl verworfen (Schloss nicht erreichbar)");
       sim_pending_ = -1;
+      this->conn_fail_();
       this->ev_fail_("Schloss nicht erreichbar");
       if (sim_connecting_) {
         sim_connecting_ = false;
@@ -1012,7 +1020,32 @@ void EqivaKeyBle::forget_pairing() {
   this->log_event("🔗 Kopplung entfernt");
 }
 
-void EqivaKeyBle::pair_restore_(const char *why) {
+void EqivaKeyBle::cancel_pair() {
+  if (pair_pending_ || requestPair) this->pair_restore_("vom Nutzer abgebrochen", true);
+  else ESP_LOGI(TAG, "Kein Pairing aktiv");
+}
+
+void EqivaKeyBle::conn_fail_() {
+  if (conn_fails_ == 0) {
+    const time_t now = ::time(nullptr);
+    unreachable_since_ = now > 1600000000 ? now : 0;
+  }
+  if (conn_fails_ < 255) conn_fails_++;
+  if (conn_fails_ >= 2 && !unreachable_logged_) {
+    unreachable_logged_ = true;
+    ESP_LOGW(TAG, "Schloss nicht erreichbar (%u Versuche) - Batterie und Reichweite prüfen", conn_fails_);
+    this->log_event("⚠️ Schloss nicht erreichbar");
+  }
+}
+
+void EqivaKeyBle::conn_ok_() {
+  if (unreachable_logged_) this->log_event("✓ Schloss wieder erreichbar");
+  conn_fails_ = 0;
+  unreachable_since_ = 0;
+  unreachable_logged_ = false;
+}
+
+void EqivaKeyBle::pair_restore_(const char *why, bool cancelled) {
   requestPair = false;
   pair_pending_ = false;
   clientState.card_key.clear();
@@ -1023,13 +1056,13 @@ void EqivaKeyBle::pair_restore_(const char *why) {
     clientState.user_id = prev_user_id_;
     if (prev_address_ > 1) this->set_address(prev_address_);
     ESP_LOGW(TAG, "Pairing gescheitert: %s - bisherige Kopplung (User %d) bleibt", why, prev_user_id_);
-    this->log_event("✗ Pairing nicht bestätigt – bisherige Kopplung bleibt");
+    this->log_event(cancelled ? "✗ Pairing abgebrochen – bisherige Kopplung bleibt" : "✗ Pairing nicht bestätigt – bisherige Kopplung bleibt");
     this->set_auto_connect(true);
   } else {
     clientState.user_key.clear();
     clientState.user_id = 255;
     ESP_LOGW(TAG, "Pairing gescheitert: %s", why);
-    this->log_event("✗ Pairing nicht bestätigt");
+    this->log_event(cancelled ? "✗ Pairing abgebrochen" : "✗ Pairing nicht bestätigt");
     this->set_auto_connect(false);
   }
   prev_user_key_.clear();

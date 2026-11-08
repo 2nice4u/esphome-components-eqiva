@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.2.2 (2026-11-08) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.3.0 (2026-11-08) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.2.2';
+  const APP_VERSION = '3.3.0';
   const GUIDE_URL = 'https://github.com/2nice4u/esphome-components-eqiva/blob/main/docs/ANLEITUNG.md';
 
   // ---------------------------------------------------------------- Zustand
@@ -262,7 +262,8 @@
       : '<p class="muted">Noch keine Ereignisse seit dem Start.</p>')) : '';
     const setup = txt('text_sensor/Einrichtungsstatus');
     const setupHtml = setup && !/^✅/.test(setup) && !/TESTMODUS/.test(setup) ? card('<span class="lbl">Einrichtung</span><p>' + esc(setup) + '</p>' +
-      (has('button/BLE Pair _Start_') ? '<div class="foot">' + btn(/^[①②]/.test(setup) ? 'pair' : 'tab', /^[①②]/.test(setup) ? 'Jetzt koppeln' : 'Zur Einrichtung', 'b pri', /^[①②]/.test(setup) ? undefined : 'more') + '</div>' : ''), 'info') : '';
+      (has('button/BLE Pair _Start_') && /^[①②]/.test(setup) ? '<div class="foot">' + btn('pair', 'Jetzt koppeln', 'b pri') + '</div>' :
+        (/User ID/.test(setup) ? '<div class="foot">' + btn('tab', 'Zur Einrichtung', 'b pri', 'more') + '</div>' : '')), /nicht erreichbar/.test(setup) ? 'warnc' : 'info') : '';
     return '<div class="grid2"><div class="col">' + hero + tilesHtml + setupHtml + '</div><div class="col">' + evHtml + '</div></div>';
   }
 
@@ -493,7 +494,7 @@
       } else {
         body = '<div class="live"><div class="ring2 pulse">' + icon('spin', 44) + '</div><p class="hl2">Pairing läuft …</p>' +
           '<p class="muted">' + esc(st || '…') + '</p><p class="muted small">' + Math.round(age / 1000) + ' s</p></div>';
-        foot = btn('p-close', 'Ausblenden', 'b');
+        foot = has('button/Pairing abbrechen') ? btn('p-cancel', 'Pairing abbrechen', 'b') : btn('p-close', 'Ausblenden', 'b');
       }
     }
     return card('<div class="headrow"><h2>Schloss koppeln</h2><span class="muted">' + (w.step ? 'Schritt ' + w.step + ' von 3' : '') + '</span></div>' +
@@ -626,6 +627,7 @@
         S.tab = 'more'; S.pair = { step: paired ? 0 : 1, key: '' }; root.scrollTop = 0; break;
       }
       case 'p-force': S.pair.step = 1; break;
+      case 'p-cancel': S.pair = null; draw(); return run([['button/Pairing abbrechen', 'press']], 'Pairing abgebrochen – bisherige Kopplung bleibt');
       case 'p-next': if (!parseCardKey(S.pair.key)) return; S.pair.step = 2; break;
       case 'p-back': S.pair.step = 1; break;
       case 'p-close': S.pair = null; break;
