@@ -585,6 +585,8 @@ void EqivaKeyBle::sendCommand(CommandType command) {
     ev_moved_ = false;
     reaction_started_ = now;
     reaction_pending_ = true;
+    reaction_act_ = command == LOCK ? 'z' : (command == UNLOCK ? 'a' : 'o');
+    reaction_src_ = ev_pending_src_.substr(0, 16);
     last_command_ms_ = now;
     last_command_valid_ = true;
     cmd_source_.clear();
@@ -954,14 +956,15 @@ void EqivaKeyBle::on_lock_state_(uint8_t st) {
     reaction_pending_ = false;
     uint32_t ms = now - reaction_started_;
     if (ms > 65535) ms = 65535;
-    reaction_hist_.push_back((uint16_t) ms);
+    reaction_hist_.push_back({reaction_act_, (uint16_t) ms, reaction_src_});
     if (reaction_hist_.size() > 10) reaction_hist_.erase(reaction_hist_.begin());
     if (this->reaction_sensor_ != nullptr) this->reaction_sensor_->publish_state(ms / 1000.0f);
+    // Format je Eintrag: Aktion|Sekunden|Quelle, Einträge mit ";" getrennt (z|4.1|Zeitplan 1;a|3.0|HA/Web)
     std::string list;
     for (size_t i = 0; i < reaction_hist_.size(); i++) {
-      char buf[16];
-      snprintf(buf, sizeof(buf), "%s%.1f", i ? "," : "", reaction_hist_[i] / 1000.0f);
-      list += buf;
+      char buf[32];
+      snprintf(buf, sizeof(buf), "%s%c|%.1f|", i ? ";" : "", reaction_hist_[i].act, reaction_hist_[i].ms / 1000.0f);
+      list += buf + reaction_hist_[i].src;
     }
     this->publish_(this->reaction_list_sensor_, list);
     ESP_LOGI(TAG, "Reaktionszeit: %.1f s", ms / 1000.0f);

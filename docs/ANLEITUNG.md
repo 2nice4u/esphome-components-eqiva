@@ -1,6 +1,6 @@
 # Eqiva Smart Lock – Anleitung & Hilfe
 
-Gilt für Version 3.5.0 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
+Gilt für Version 3.5.1 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
 Änderungen: [CHANGELOG.md](../CHANGELOG.md)
 
 ## Die Web-App
@@ -104,9 +104,10 @@ Das Schloss erlaubt nur **eine** Bluetooth-Verbindung gleichzeitig. Vor der App 
 Gemessen wird die Zeit vom Absetzen des Befehls (App, HA, Fingerprint, Zeitplan) bis das Schloss meldet, dass der Motor läuft. Im Sparmodus ist der Verbindungsaufbau mit dabei, bei bestehender Verbindung nicht.
 
 - **Startseite:** Kachel „Reaktion“ mit dem letzten Wert.
-- **Einstellungen → Reaktionszeit:** zuletzt, Ø und max der letzten 10 Bedienungen, darunter ein Balkendiagramm.
+- **Einstellungen → Reaktionszeit:** zuletzt, Ø und max der letzten 10 Bedienungen, darunter ein Balkendiagramm mit Piktogrammen (zu = ausgefülltes Schloss, auf = offenes Schloss, öffnen = Tür).
+- Darunter die Liste der letzten 10 Bedienungen, neueste oben: Aktion, Quelle (z. B. HA/Web, Zeitplan, Fingerprint, Taster) und Dauer in Ampelfarbe.
 - Farben: **grün** bis 4 s · **gelb** bis 8 s · **rot** darüber.
-- Der Sensor „Reaktionszeit“ (Sekunden) ist in Home Assistant mit Verlauf verfügbar. Die Liste „Reaktionszeiten“ enthält die letzten 10 Werte, kommagetrennt. Nach einem Neustart ist sie leer.
+- Der Sensor „Reaktionszeit“ (Sekunden) ist in Home Assistant mit Verlauf verfügbar. Die Liste „Reaktionszeiten“ enthält die letzten 10 Bedienungen mit Aktion, Dauer und Quelle. Nach einem Neustart ist sie leer.
 
 Der Motorlauf bis zum Endzustand (ca. 3–4 s) ist Mechanik und nicht enthalten.
 

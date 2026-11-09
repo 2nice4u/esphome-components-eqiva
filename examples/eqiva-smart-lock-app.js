@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.5.0 (2026-11-08) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.5.1 (2026-11-09) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.5.0';
+  const APP_VERSION = '3.5.1';
   const GUIDE_URL = 'https://github.com/2nice4u/esphome-components-eqiva/blob/main/docs/ANLEITUNG.md';
 
   // ---------------------------------------------------------------- Zustand
@@ -181,6 +181,7 @@
     lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
     unlock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.6-1.7"/>',
     door: '<path d="M6 21V4h12v17"/><path d="M3 21h18"/><path d="M14 12h.5"/>',
+    lockF: '<rect x="5" y="11" width="14" height="10" rx="2" fill="currentColor"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
     spin: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/>',
     alert: '<path d="M12 3l10 18H2z"/><path d="M12 10v4"/><path d="M12 17v.5"/>',
     finger: '<path d="M6.5 6.3A8 8 0 0 1 20 12v1.5"/><path d="M4 12a8 8 0 0 1 1-3.9"/><path d="M4.5 16.5c.3-1 .5-2 .5-3.5"/><path d="M8 12a4 4 0 0 1 8 0v1.5a13 13 0 0 1-1.2 5.5"/><path d="M12 12v1.5a9 9 0 0 1-2.4 6.2"/><path d="M19.5 17a16 16 0 0 0 .4-2"/>',
@@ -588,13 +589,19 @@
     add('text_sensor/Pairing-Info', 'Pairing');
     add('sensor/Fingerabdrücke gespeichert', 'Fingerabdrücke', (v) => Math.round(v));
     if (has('text_sensor/Reaktionszeiten')) {
-      const r = txt('text_sensor/Reaktionszeiten').split(',').map(Number).filter(isFinite);
+      // Format je Eintrag: Aktion|Sekunden|Quelle, Einträge durch ";" getrennt (z = zu, a = auf, o = öffnen)
+      const RA = { z: ['lockF', 'zu'], a: ['unlock', 'auf'], o: ['door', 'öffnen'] };
+      const r = txt('text_sensor/Reaktionszeiten').split(';').map((s) => { const p = s.split('|'); return { act: p[0], v: Number(p[1]), src: p[2] || '' }; })
+        .filter((e) => RA[e.act] && isFinite(e.v));
       if (r.length) {
-        const f = (v) => v.toFixed(1).replace('.', ',') + ' s', avg = r.reduce((a, b) => a + b, 0) / r.length, mx = Math.max(...r), top = Math.max(mx, 5);
+        const f = (v) => v.toFixed(1).replace('.', ',') + ' s', vals = r.map((e) => e.v), last = r[r.length - 1];
+        const avg = vals.reduce((a, b) => a + b, 0) / vals.length, mx = Math.max(...vals), top = Math.max(mx, 5);
         h += card('<h3>Reaktionszeit</h3><p class="muted small">Befehl abgeschickt → Motor dreht · letzte ' + r.length + ' Bedienungen</p>' +
-          '<div class="rtnum"><b class="' + rtClass(r[r.length - 1]) + '">' + f(r[r.length - 1]) + '</b><span>zuletzt</span><b class="' + rtClass(avg) + '">' + f(avg) + '</b><span>Ø</span><b class="' + rtClass(mx) + '">' + f(mx) + '</b><span>max</span></div>' +
-          '<div class="rtbars" role="img" aria-label="Reaktionszeiten">' + r.map((v) => '<div class="' + rtClass(v) + '" style="height:' + Math.max(6, v / top * 100) + '%" title="' + f(v) + '"><i>' + v.toFixed(1).replace('.', ',') + '</i></div>').join('') + '</div>' +
-          '<div class="rtax"><span>älter</span><span>neu</span></div>');
+          '<div class="rtnum"><b class="' + rtClass(last.v) + '">' + f(last.v) + '</b><span>zuletzt</span><b class="' + rtClass(avg) + '">' + f(avg) + '</b><span>Ø</span><b class="' + rtClass(mx) + '">' + f(mx) + '</b><span>max</span></div>' +
+          '<div class="rtbars" role="img" aria-label="Reaktionszeiten">' + r.map((e) => '<div class="' + rtClass(e.v) + '" style="height:' + Math.max(6, e.v / top * 100) + '%" title="' + RA[e.act][1] + ' · ' + f(e.v) + (e.src ? ' · ' + esc(e.src) : '') + '"><i>' + e.v.toFixed(1).replace('.', ',') + '</i></div>').join('') + '</div>' +
+          '<div class="rtic-row">' + r.map((e) => '<span>' + icon(RA[e.act][0], 15) + '</span>').join('') + '</div>' +
+          '<div class="rtax"><span>älter</span><span>neu</span></div>' +
+          '<ol class="rtlist">' + r.slice().reverse().map((e) => '<li><span>' + icon(RA[e.act][0], 18) + '</span><b>' + RA[e.act][1] + '</b><span class="muted">' + esc(e.src) + '</span><span class="' + rtClass(e.v) + '">' + f(e.v) + '</span></li>').join('') + '</ol>');
       }
     }
     h += card('<h3>Diagnose</h3>' + diag.join(''));
@@ -839,6 +846,8 @@ html.eqa-expert #eqa-back{display:block}
 #eqa .rtbars div{flex:1;border-radius:5px 5px 0 0;position:relative}#eqa .rtbars div.g{background:var(--lk)}#eqa .rtbars div.y{background:#D69E2E}#eqa .rtbars div.r{background:var(--ul)}
 #eqa .rtbars i{position:absolute;top:-16px;left:50%;transform:translateX(-50%);font:600 10px system-ui,sans-serif;font-style:normal;color:var(--muted)}
 #eqa .rtax{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px}
+#eqa .rtic-row{display:flex;gap:6px;margin-top:6px}#eqa .rtic-row span{flex:1;display:flex;justify-content:center;color:var(--muted)}
+#eqa .rtlist{list-style:none;margin:14px 0 0;padding:0;font-size:14px}#eqa .rtlist li{display:grid;grid-template-columns:22px auto 1fr auto;gap:8px;align-items:center;padding:7px 0;border-top:1px solid var(--line)}#eqa .rtlist li b{font-weight:600}#eqa .rtlist li span:last-child{font-weight:600;font-variant-numeric:tabular-nums}#eqa .rtlist .g{color:var(--lk)}#eqa .rtlist .y{color:#B7791F}#eqa .rtlist .r{color:var(--ul)}
 #eqa .tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;min-width:0}
 #eqa .tile span{font-size:12px;color:var(--muted)}#eqa .tile b{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#eqa .tile.g b{color:var(--lk)}#eqa .tile.y b{color:#B7791F}#eqa .tile.r b{color:var(--ul)}#eqa .tile.warn{background:var(--wrb);color:var(--wr)}#eqa .tile.warn span{color:inherit}
 #eqa .ev{list-style:none;margin:0;padding:0}#eqa .ev li{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line)}

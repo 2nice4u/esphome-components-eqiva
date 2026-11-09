@@ -23,6 +23,17 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.5.1 – 2026-11-09
+
+### Neu
+- **Reaktionszeiten zeigen, was passiert ist:** jeder Eintrag speichert jetzt die Aktion (zu, auf oder öffnen) und die Quelle (z. B. HA/Web, Zeitplan, Fingerprint, Taster), nicht nur die Dauer.
+- Web-App: Die Balken der Reaktionszeit haben Piktogramme (zu = ausgefülltes Schloss, auf = offenes Schloss, öffnen = Tür).
+  Darunter steht die Liste der letzten 10 Bedienungen, neueste oben, mit Aktion, Quelle und Ampelfarbe.
+
+### Update
+- Der Textsensor „Reaktionszeiten“ hat ein neues Format (`aktion|sekunden|quelle;…`). Die Web-App 3.5.1 kann nur dieses Format lesen, daher Komponente und App gemeinsam ersetzen.
+- Eigene Hauptdatei: nur `config_version: "3.5.1"` setzen, sonst nichts ändern.
+
 ## 3.5.0 – 2026-11-08
 
 ### Neu
