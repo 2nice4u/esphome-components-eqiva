@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # Zeitplan – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 3.5.1 (2026-11-09) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.5.2 (2026-11-09) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Einbinden:   packages:
 #                schedule: !include eqiva-smart-lock-schedule.yaml
 #
@@ -61,8 +61,8 @@ script:
   - id: ver_check_schedule
     then:
       - lambda: |-
-          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.1") == 0,
-                        "Versionskonflikt: eqiva-smart-lock-schedule.yaml ist 3.5.1, Hauptdatei ist ${config_version} "
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.2") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-schedule.yaml ist 3.5.2, Hauptdatei ist ${config_version} "
                         "(alle Dateien gleicher Version verwenden oder version_check: false)");
   # Befehl ans Schloss (lokal, ohne HA)
   - id: sched_send

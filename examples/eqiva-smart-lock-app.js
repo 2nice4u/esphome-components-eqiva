@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.5.1 (2026-11-09) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.5.2 (2026-11-09) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.5.1';
+  const APP_VERSION = '3.5.2';
   const GUIDE_URL = 'https://github.com/2nice4u/esphome-components-eqiva/blob/main/docs/ANLEITUNG.md';
 
   // ---------------------------------------------------------------- Zustand
@@ -106,7 +106,10 @@
     if (!raw || raw === '–') return [];
     return raw.split(' · ').map((e) => {
       const m = e.match(/^(?:(\d\d\.\d\d\.) )?(?:(\d\d:\d\d) )?(.*)$/) || [];
-      let t = m[3] || e, kind = 'info', label = t;
+      let t = m[3] || e, kind = 'info', rt = NaN;
+      const d = t.match(/^(.*) \((\d+),(\d) s\)$/);    // Reaktionszeit am Ende, z. B. "🔒 HA/Web (2,4 s)"
+      if (d) { t = d[1]; rt = +(d[2] + '.' + d[3]); }
+      let label = t;
       const rules = [
         [/^🖐\s*🔒/, 'locked', 'Zu · von Hand'], [/^🖐\s*🔓/, 'unlocked', 'Auf · von Hand'], [/^🖐\s*🚪/, 'opened', 'Geöffnet · von Hand'],
         [/^🔒\s*/, 'locked', 'Zu · '], [/^🔓\s*/, 'unlocked', 'Auf · '], [/^🚪\s*/, 'opened', 'Geöffnet · '],
@@ -121,7 +124,7 @@
           break;
         }
       }
-      return { day: m[1] || '', time: m[2] || '', kind, label };
+      return { day: m[1] || '', time: m[2] || '', kind, label, rt };
     });
   }
 
@@ -235,6 +238,22 @@
 
   // ---------------------------------------------------------------- Ansichten
   const rtClass = (v) => v <= 4 ? 'g' : v <= 8 ? 'y' : 'r';
+  // Reaktionszeit-Kopf der Startseiten-Karte: zuletzt/Ø/max und Balken mit Piktogrammen.
+  // "Reaktionszeiten" je Eintrag: Aktion|Sekunden|Quelle, durch ";" getrennt (z = zu, a = auf, o = öffnen)
+  function reactionHead() {
+    if (!has('text_sensor/Reaktionszeiten')) return '';
+    const RA = { z: ['lockF', 'zu'], a: ['unlock', 'auf'], o: ['door', 'öffnen'] };
+    const r = txt('text_sensor/Reaktionszeiten').split(';').map((s) => { const p = s.split('|'); return { act: p[0], v: Number(p[1]), src: p[2] || '' }; })
+      .filter((e) => RA[e.act] && isFinite(e.v));
+    if (!r.length) return '';
+    const f = (v) => v.toFixed(1).replace('.', ',') + ' s', vals = r.map((e) => e.v), last = r[r.length - 1];
+    const avg = vals.reduce((a, b) => a + b, 0) / vals.length, mx = Math.max(...vals), top = Math.max(mx, 5);
+    return '<p class="muted small">Reaktionszeit: Befehl abgeschickt → Motor dreht · letzte ' + r.length + ' Bedienungen</p>' +
+      '<div class="rtnum"><b class="' + rtClass(last.v) + '">' + f(last.v) + '</b><span>zuletzt</span><b class="' + rtClass(avg) + '">' + f(avg) + '</b><span>Ø</span><b class="' + rtClass(mx) + '">' + f(mx) + '</b><span>max</span></div>' +
+      '<div class="rtbars" role="img" aria-label="Reaktionszeiten">' + r.map((e) => '<div class="' + rtClass(e.v) + '" style="height:' + Math.max(6, e.v / top * 100) + '%" title="' + RA[e.act][1] + ' · ' + f(e.v) + (e.src ? ' · ' + esc(e.src) : '') + '"><i>' + e.v.toFixed(1).replace('.', ',') + '</i></div>').join('') + '</div>' +
+      '<div class="rtic-row">' + r.map((e) => '<span>' + icon(RA[e.act][0], 15) + '</span>').join('') + '</div>' +
+      '<div class="rtax"><span>älter</span><span>neu</span></div>';
+  }
   function viewStart() {
     const st = txt('text_sensor/Lock Status', '');
     const unpaired = /^[①②]/.test(txt('text_sensor/Einrichtungsstatus'));
@@ -257,12 +276,14 @@
     if (has('binary_sensor/Batterie schwach')) tiles.push(['Batterie', on('binary_sensor/Batterie schwach') ? 'Schwach' : 'OK', on('binary_sensor/Batterie schwach') ? 'warn' : '']);
     if (has('sensor/Schloss Signal')) { const v = Number(val('sensor/Schloss Signal', NaN)); tiles.push(['Signal', isFinite(v) ? Math.round(v) + ' dBm' : '–', '']); }
     if (has('select/Energiemodus')) tiles.push(['Energie', txt('select/Energiemodus'), '']);
-    if (has('sensor/Reaktionszeit')) { const v = Number(val('sensor/Reaktionszeit', NaN)); tiles.push(['Reaktion', isFinite(v) ? v.toFixed(1).replace('.', ',') + ' s' : '–', rtClass(v)]); }
     const tilesHtml = tiles.length ? '<div class="tiles">' + tiles.map((t) => '<div class="tile ' + t[2] + '"><span>' + esc(t[0]) + '</span><b>' + esc(t[1]) + '</b></div>').join('') + '</div>' : '';
-    const ev = events();
-    const evHtml = has('text_sensor/Ereignisse') ? card('<h2>Ereignisse</h2>' + (ev.length ? '<ul class="ev">' + ev.map((e) =>
-      '<li><span class="dot k-' + e.kind + '"></span><span class="et">' + esc(e.label) + '</span><span class="tm">' + esc((e.day ? e.day + ' ' : '') + e.time) + '</span></li>').join('') + '</ul>'
-      : '<p class="muted">Noch keine Ereignisse seit dem Start.</p>')) : '';
+    const ev = events(), rtHead = reactionHead();
+    const f1 = (v) => v.toFixed(1).replace('.', ',') + ' s';
+    const evHtml = has('text_sensor/Ereignisse') || rtHead ? card('<h2>' + (rtHead ? 'Ereignisse und Reaktionszeit' : 'Ereignisse') + '</h2>' + rtHead +
+      (ev.length ? '<ul class="ev evrt">' + ev.map((e) =>
+        '<li><span class="dot k-' + e.kind + '"></span><span class="et">' + esc(e.label) + '<small>' + esc((e.day ? e.day + ' ' : '') + e.time) + '</small></span>' +
+        '<span class="rtv ' + (isFinite(e.rt) ? rtClass(e.rt) : '') + '">' + (isFinite(e.rt) ? f1(e.rt) : '') + '</span></li>').join('') + '</ul>'
+        : '<p class="muted">Noch keine Ereignisse seit dem Start.</p>')) : '';
     const setup = txt('text_sensor/Einrichtungsstatus');
     const setupHtml = setup && !/^✅/.test(setup) && !/TESTMODUS/.test(setup) ? card('<span class="lbl">Einrichtung</span><p>' + esc(setup) + '</p>' +
       (has('button/BLE Pair _Start_') && /^[①②]/.test(setup) ? '<div class="foot">' + btn('pair', 'Jetzt koppeln', 'b pri') + '</div>' :
@@ -588,22 +609,6 @@
     add('sensor/Uptime', 'Laufzeit', (v) => { v = +v; const d = Math.floor(v / 86400), hh = Math.floor(v % 86400 / 3600), mm = Math.floor(v % 3600 / 60); return (d ? d + ' T ' : '') + hh + ' h ' + mm + ' min'; });
     add('text_sensor/Pairing-Info', 'Pairing');
     add('sensor/Fingerabdrücke gespeichert', 'Fingerabdrücke', (v) => Math.round(v));
-    if (has('text_sensor/Reaktionszeiten')) {
-      // Format je Eintrag: Aktion|Sekunden|Quelle, Einträge durch ";" getrennt (z = zu, a = auf, o = öffnen)
-      const RA = { z: ['lockF', 'zu'], a: ['unlock', 'auf'], o: ['door', 'öffnen'] };
-      const r = txt('text_sensor/Reaktionszeiten').split(';').map((s) => { const p = s.split('|'); return { act: p[0], v: Number(p[1]), src: p[2] || '' }; })
-        .filter((e) => RA[e.act] && isFinite(e.v));
-      if (r.length) {
-        const f = (v) => v.toFixed(1).replace('.', ',') + ' s', vals = r.map((e) => e.v), last = r[r.length - 1];
-        const avg = vals.reduce((a, b) => a + b, 0) / vals.length, mx = Math.max(...vals), top = Math.max(mx, 5);
-        h += card('<h3>Reaktionszeit</h3><p class="muted small">Befehl abgeschickt → Motor dreht · letzte ' + r.length + ' Bedienungen</p>' +
-          '<div class="rtnum"><b class="' + rtClass(last.v) + '">' + f(last.v) + '</b><span>zuletzt</span><b class="' + rtClass(avg) + '">' + f(avg) + '</b><span>Ø</span><b class="' + rtClass(mx) + '">' + f(mx) + '</b><span>max</span></div>' +
-          '<div class="rtbars" role="img" aria-label="Reaktionszeiten">' + r.map((e) => '<div class="' + rtClass(e.v) + '" style="height:' + Math.max(6, e.v / top * 100) + '%" title="' + RA[e.act][1] + ' · ' + f(e.v) + (e.src ? ' · ' + esc(e.src) : '') + '"><i>' + e.v.toFixed(1).replace('.', ',') + '</i></div>').join('') + '</div>' +
-          '<div class="rtic-row">' + r.map((e) => '<span>' + icon(RA[e.act][0], 15) + '</span>').join('') + '</div>' +
-          '<div class="rtax"><span>älter</span><span>neu</span></div>' +
-          '<ol class="rtlist">' + r.slice().reverse().map((e) => '<li><span>' + icon(RA[e.act][0], 18) + '</span><b>' + RA[e.act][1] + '</b><span class="muted">' + esc(e.src) + '</span><span class="' + rtClass(e.v) + '">' + f(e.v) + '</span></li>').join('') + '</ol>');
-      }
-    }
     h += card('<h3>Diagnose</h3>' + diag.join(''));
     h += '<div class="links"><a class="b lnk" href="' + GUIDE_URL + '" target="_blank" rel="noopener">' + icon('book', 18) + 'Anleitung</a>' +
       btn('expert', icon('table', 18) + 'Expertenansicht', 'b lnk') + '</div>';
@@ -846,8 +851,8 @@ html.eqa-expert #eqa-back{display:block}
 #eqa .rtbars div{flex:1;border-radius:5px 5px 0 0;position:relative}#eqa .rtbars div.g{background:var(--lk)}#eqa .rtbars div.y{background:#D69E2E}#eqa .rtbars div.r{background:var(--ul)}
 #eqa .rtbars i{position:absolute;top:-16px;left:50%;transform:translateX(-50%);font:600 10px system-ui,sans-serif;font-style:normal;color:var(--muted)}
 #eqa .rtax{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px}
+#eqa .evrt{margin-top:12px}#eqa .evrt li{align-items:center}#eqa .evrt .et small{display:block;font-size:12px;color:var(--muted)}#eqa .evrt .rtv{font-weight:600;font-variant-numeric:tabular-nums;min-width:48px;text-align:right}#eqa .evrt .rtv.g{color:var(--lk)}#eqa .evrt .rtv.y{color:#B7791F}#eqa .evrt .rtv.r{color:var(--ul)}
 #eqa .rtic-row{display:flex;gap:6px;margin-top:6px}#eqa .rtic-row span{flex:1;display:flex;justify-content:center;color:var(--muted)}
-#eqa .rtlist{list-style:none;margin:14px 0 0;padding:0;font-size:14px}#eqa .rtlist li{display:grid;grid-template-columns:22px auto 1fr auto;gap:8px;align-items:center;padding:7px 0;border-top:1px solid var(--line)}#eqa .rtlist li b{font-weight:600}#eqa .rtlist li span:last-child{font-weight:600;font-variant-numeric:tabular-nums}#eqa .rtlist .g{color:var(--lk)}#eqa .rtlist .y{color:#B7791F}#eqa .rtlist .r{color:var(--ul)}
 #eqa .tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;min-width:0}
 #eqa .tile span{font-size:12px;color:var(--muted)}#eqa .tile b{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#eqa .tile.g b{color:var(--lk)}#eqa .tile.y b{color:#B7791F}#eqa .tile.r b{color:var(--ul)}#eqa .tile.warn{background:var(--wrb);color:var(--wr)}#eqa .tile.warn span{color:inherit}
 #eqa .ev{list-style:none;margin:0;padding:0}#eqa .ev li{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line)}

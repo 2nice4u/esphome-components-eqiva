@@ -1,6 +1,6 @@
 # Eqiva Smart Lock – Anleitung & Hilfe
 
-Gilt für Version 3.5.1 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
+Gilt für Version 3.5.2 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
 Änderungen: [CHANGELOG.md](../CHANGELOG.md)
 
 ## Die Web-App
@@ -10,7 +10,7 @@ Sie läuft direkt auf dem ESP, auch ohne Internet, am Handy und am PC.
 
 | Bereich | Inhalt |
 |---|---|
-| **Schloss** | Zustand, Buttons Zu · Auf · Öffnen, Batterie, Empfang, Energiemodus, Reaktionszeit, „Ereignisse“ |
+| **Schloss** | Zustand, Buttons Zu · Auf · Öffnen, Batterie, Empfang, Energiemodus, „Ereignisse und Reaktionszeit“ |
 | **Fingerprint** | Personen mit ihren Fingern; Finger antippen = Aktion ändern, neu anlernen, löschen; Stift = Person umbenennen; „+ Anlernen“ = Assistent |
 | **Zeitplan** | bis zu 6 Zeitpläne als Liste: antippen = bearbeiten, Schalter Ein/Aus, + Zeitplan |
 | **Einstellungen** | Einrichtung (Pairing, Schlossantrieb, Neustart), Energiemodus, Türgriff, Fingerprint, Sabotage-Erkennung, Darstellung (Automatisch · Hell · Dunkel), Diagnose |
@@ -75,7 +75,7 @@ Was „Öffnen“ macht, hängt von der Auswahl **„Türgriff außen“** (Schl
 
 > Gilt für alle Wege: Web-GUI, Home Assistant (`lock.open`) und Fingerprint mit Aktion „Öffnen“. Beim kompletten Öffnen meldet „Lock Status“ kurz **OPENED**, beim reinen Aufschließen nicht.
 
-**Ereignisse** zeigt die letzten 10 Ereignisse, neueste zuerst, z. B. `18:42 🔓 Max R-Daumen · 18:05 🔒 Zeitplan 1 · 17:30 🖐 🔓 von Hand · 06.11. 22:10 🔔 unbekannter Finger`. **HA/Web** = Home Assistant oder die Web-GUI · **🖐 von Hand** = Schlüssel, Drehknauf oder Taste am Schloss · **✗** = Befehl nicht ausgeführt (Grund in Klammern) · ⛔ abgewiesen · ❓ unbekannter Finger · ⚠️ Sabotage. Ältere Einträge fallen weg, wenn die 255 Zeichen von Home Assistant voll sind; alle stehen im Log. „Von Hand“ erkennt der ESP erst, wenn das Schloss den neuen Zustand meldet – im Energiemodus „Sparsam“ also beim nächsten Verbinden. Nach einem Neustart ist die Liste leer.
+**Ereignisse** zeigt die letzten 10 Ereignisse, neueste zuerst, z. B. `18:42 🔓 Max R-Daumen (1,6 s) · 18:05 🔒 Zeitplan 1 (2,4 s) · 17:30 🖐 🔓 von Hand · 06.11. 22:10 🔔 unbekannter Finger`. **HA/Web** = Home Assistant oder die Web-GUI · **🖐 von Hand** = Schlüssel, Drehknauf oder Taste am Schloss · **✗** = Befehl nicht ausgeführt (Grund in Klammern) · ⛔ abgewiesen · ❓ unbekannter Finger · ⚠️ Sabotage. Ältere Einträge fallen weg, wenn die 255 Zeichen von Home Assistant voll sind; alle stehen im Log. „Von Hand“ erkennt der ESP erst, wenn das Schloss den neuen Zustand meldet – im Energiemodus „Sparsam“ also beim nächsten Verbinden. Nach einem Neustart ist die Liste leer.
 
 ## 5. Eqiva-App zusätzlich nutzen
 
@@ -103,11 +103,10 @@ Das Schloss erlaubt nur **eine** Bluetooth-Verbindung gleichzeitig. Vor der App 
 
 Gemessen wird die Zeit vom Absetzen des Befehls (App, HA, Fingerprint, Zeitplan) bis das Schloss meldet, dass der Motor läuft. Im Sparmodus ist der Verbindungsaufbau mit dabei, bei bestehender Verbindung nicht.
 
-- **Startseite:** Kachel „Reaktion“ mit dem letzten Wert.
-- **Einstellungen → Reaktionszeit:** zuletzt, Ø und max der letzten 10 Bedienungen, darunter ein Balkendiagramm mit Piktogrammen (zu = ausgefülltes Schloss, auf = offenes Schloss, öffnen = Tür).
-- Darunter die Liste der letzten 10 Bedienungen, neueste oben: Aktion, Quelle (z. B. HA/Web, Zeitplan, Fingerprint, Taster) und Dauer in Ampelfarbe.
+- **Startseite → Ereignisse und Reaktionszeit:** zuletzt, Ø und max der letzten 10 Bedienungen und ein Balkendiagramm mit Piktogrammen (zu = ausgefülltes Schloss, auf = offenes Schloss, öffnen = Tür).
+- Darunter alle Ereignisse mit Uhrzeit (auch Handbedienung, Klingel, Abweisungen, Fehler). Bei Bedienungen mit Messung steht rechts die Reaktionszeit.
 - Farben: **grün** bis 4 s · **gelb** bis 8 s · **rot** darüber.
-- Der Sensor „Reaktionszeit“ (Sekunden) ist in Home Assistant mit Verlauf verfügbar. Die Liste „Reaktionszeiten“ enthält die letzten 10 Bedienungen mit Aktion, Dauer und Quelle. Nach einem Neustart ist sie leer.
+- Der Sensor „Reaktionszeit“ (Sekunden) ist in Home Assistant mit Verlauf verfügbar. Die Liste „Reaktionszeiten“ enthält die letzten 10 Bedienungen mit Aktion, Dauer und Quelle. Die Ereignisse enthalten die Reaktionszeit im Text, z. B. „18:05 🔒 Zeitplan 1 (2,4 s)“. Nach einem Neustart sind beide Listen leer.
 
 Der Motorlauf bis zum Endzustand (ca. 3–4 s) ist Mechanik und nicht enthalten.
 

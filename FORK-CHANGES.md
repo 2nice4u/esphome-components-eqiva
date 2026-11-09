@@ -1,6 +1,6 @@
 # Änderungen in diesem Fork
 
-**Version 3.5.1** (2026-11-09) – Komponente, Beispiel-YAMLs und Anleitung tragen dieselbe Versionsnummer.
+**Version 3.5.2** (2026-11-09) – Komponente, Beispiel-YAMLs und Anleitung tragen dieselbe Versionsnummer.
 1.1.0: Fingerprint-Paket mit Zuordnung Person/Hand/Finger, Aktion pro Finger (inkl. Umschalten), Ring-Rückmeldung und Scan-Pause.
 1.1.1: Pinbelegung als Substitutions, R503-Stromabschaltung per PNP-Transistor (sensor_power_pin), mehrere Status-LEDs.
 1.2.0: Paket Zeitplan (2 Zeitpläne mit Uhrzeit, Wochentagen und Aktion, SNTP).
@@ -38,6 +38,7 @@
 3.4.0: Bis zu 6 Zeitpläne als Textfelder, Zeitplan-Liste mit Bearbeitungsfenster in der Web-App.
 3.5.0: Reaktionszeit (Befehl bis Motor läuft) als Sensor und Liste, Anzeige in der Web-App.
 3.5.1: Reaktionszeiten speichern Aktion (zu/auf/öffnen) und Quelle; Piktogramme in Balken und Liste der Web-App.
+3.5.2: Startseite mit Karte „Ereignisse und Reaktionszeit“, Reaktionszeit auch im Ereignistext.
 
 Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (Fix für ESPHome 2026.8).
 
@@ -45,7 +46,7 @@ Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (
 
 ```yaml
 external_components:
-  - source: github://DEIN-GITHUB-NAME/esphome-components-eqiva@v3.5.1
+  - source: github://DEIN-GITHUB-NAME/esphome-components-eqiva@v3.5.2
 ```
 
 Vollständiges Beispiel mit Web-GUI, Energiemodi, Pairing-Info, optionalem R503-Fingerprint und Status-LED:

@@ -23,6 +23,20 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.5.2 – 2026-11-09
+
+### Neu
+- **Startseite: Karte „Ereignisse und Reaktionszeit“.** Oben zuletzt, Ø und max mit den 10 Balken und Piktogrammen,
+  darunter wie bisher alle Ereignisse mit Uhrzeit (auch Handbedienung, Klingel, Abweisungen, Fehler).
+  Bei Bedienungen mit Messung steht rechts die Reaktionszeit in Ampelfarbe.
+- Die Ereignisse enthalten die Reaktionszeit jetzt auch im Text, z. B. `18:05 🔒 Zeitplan 1 (2,4 s)` (auch in Home Assistant sichtbar).
+  Wegen der Grenze von 255 Zeichen passt dadurch eventuell ein Ereignis weniger in die Liste.
+- Die Karte „Reaktionszeit“ unter Einstellungen und die Kachel „Reaktion“ auf der Startseite entfallen (Werte stehen jetzt in der neuen Karte).
+
+### Update
+- Pakete, `app.js` und `eqiva_components/` ersetzen, flashen.
+- Eigene Hauptdatei: nur `config_version: "3.5.2"` setzen, sonst nichts ändern.
+
 ## 3.5.1 – 2026-11-09
 
 ### Neu

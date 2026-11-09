@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # R503 Fingerprint – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 3.5.1 (2026-11-09) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.5.2 (2026-11-09) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Einbinden: packages: fingerprint: !include eqiva-smart-lock-fingerprint.yaml
 # Nutzt ${name}, lock_status, ble_state, door_handle und ha_time aus der Hauptdatei.
 #
@@ -489,8 +489,8 @@ script:
   - id: ver_check_fingerprint
     then:
       - lambda: |-
-          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.1") == 0,
-                        "Versionskonflikt: eqiva-smart-lock-fingerprint.yaml ist 3.5.1, Hauptdatei ist ${config_version} "
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.2") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-fingerprint.yaml ist 3.5.2, Hauptdatei ist ${config_version} "
                         "(alle Dateien gleicher Version verwenden oder version_check: false)");
   # Meldung in "Fingerprint: Letzte Aktion" (mit Uhrzeit, wenn bekannt)
   - id: fp_msg
