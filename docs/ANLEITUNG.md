@@ -1,6 +1,6 @@
 # Eqiva Smart Lock – Anleitung & Hilfe
 
-Gilt für Version 3.5.2 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
+Gilt für Version 3.5.3 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
 Änderungen: [CHANGELOG.md](../CHANGELOG.md)
 
 ## Die Web-App
@@ -75,7 +75,7 @@ Was „Öffnen“ macht, hängt von der Auswahl **„Türgriff außen“** (Schl
 
 > Gilt für alle Wege: Web-GUI, Home Assistant (`lock.open`) und Fingerprint mit Aktion „Öffnen“. Beim kompletten Öffnen meldet „Lock Status“ kurz **OPENED**, beim reinen Aufschließen nicht.
 
-**Ereignisse** zeigt die letzten 10 Ereignisse, neueste zuerst, z. B. `18:42 🔓 Max R-Daumen (1,6 s) · 18:05 🔒 Zeitplan 1 (2,4 s) · 17:30 🖐 🔓 von Hand · 06.11. 22:10 🔔 unbekannter Finger`. **HA/Web** = Home Assistant oder die Web-GUI · **🖐 von Hand** = Schlüssel, Drehknauf oder Taste am Schloss · **✗** = Befehl nicht ausgeführt (Grund in Klammern) · ⛔ abgewiesen · ❓ unbekannter Finger · ⚠️ Sabotage. Ältere Einträge fallen weg, wenn die 255 Zeichen von Home Assistant voll sind; alle stehen im Log. „Von Hand“ erkennt der ESP erst, wenn das Schloss den neuen Zustand meldet – im Energiemodus „Sparsam“ also beim nächsten Verbinden. Nach einem Neustart ist die Liste leer.
+**Ereignisse** zeigt die letzten 10 Ereignisse, neueste zuerst, z. B. `18:42 🔓 Max R-Daumen (1,6 s) · 18:05 🔒 Zeitplan 1 (2,4 s) · 17:30 🖐 🔓 von Hand · 06.11. 22:10 🔔 unbekannter Finger`. **HA/Web** = Home Assistant oder die Web-GUI · **🖐 von Hand** = Schlüssel, Drehknauf oder Taste am Schloss · **✗** = Befehl nicht ausgeführt (Grund in Klammern) · ⛔ abgewiesen · ❓ unbekannter Finger · ⚠️ Sabotage. Ältere Einträge fallen weg, wenn die 255 Zeichen von Home Assistant voll sind; alle stehen im Log. „Von Hand“ erkennt der ESP, sobald das Schloss den neuen Zustand meldet – auch direkt nach einem Befehl (z. B. zugeschlossen und gleich wieder von Hand aufgedreht). Nur 10 s nach „Öffnen“ (Falle springt zurück) und nach einem nicht ausgeführten Befehl zählt eine Drehung nicht. Im Energiemodus „Sparsam“ meldet das Schloss nur, solange die Verbindung besteht (nach einem Befehl standardmäßig 30 s); sonst sieht der ESP die Handbedienung erst beim nächsten Verbinden und nur den Endzustand. Nach einem Neustart ist die Liste leer.
 
 ## 5. Eqiva-App zusätzlich nutzen
 
@@ -173,7 +173,9 @@ Die Übersicht **„Angelernte Finger“** zeigt alle Finger, z. B. `#0 St R-Dau
 
 Bis zu **6 Zeitpläne**, z. B. „täglich 22:00 zuschließen“, „Mo–Fr 07:45 zuschließen“, „Sa+So 09:00 aufschließen“.
 
-**In der Web-App** (Reiter Zeitplan): jede Zeile zeigt Aktion (🔒 grün = zuschließen, 🔓 rot = aufschließen), Uhrzeit und Wochentage, rechts der Schalter Ein/Aus. Zeile antippen = bearbeiten (Uhrzeit, Aktion, Wochentage oder Schnellwahl Mo–Fr / Sa+So / Täglich, Löschen). **+ Zeitplan** legt einen neuen an.
+**In der Web-App** (Reiter Zeitplan): jede Zeile zeigt Aktion (🔒 grün = zuschließen, 🔓 rot = aufschließen), Uhrzeit und Wochentage, rechts der Schalter Ein/Aus. Zeile antippen = bearbeiten (Uhrzeit, Aktion, Wochentage oder Schnellwahl Mo–Fr / Sa+So / Täglich, zufällige Abweichung, Löschen). **+ Zeitplan** legt einen neuen an.
+
+**Zufällige Abweichung:** damit nicht jeden Tag auf die Minute genau geschlossen wird. Im Bearbeitungsfenster **Genau · Früher · Später · Beides** wählen und die Minuten (1–60) mit − / + oder per Eingabe einstellen. Darunter steht der Zeitraum im Klartext, z. B. „Zuschließen zufällig zwischen 21:50 und 22:10 Uhr“. Die Zeit wird für jeden Zeitplan einmal am Tag neu ausgewürfelt; in der Liste steht die Abweichung unter der Uhrzeit (z. B. „±10 min“). Für „auf“ empfiehlt sich **Später**, dann öffnet das Schloss nie vor der eingestellten Zeit.
 
 **Von Hand** (Expertenansicht, Home Assistant): jeder Zeitplan ist ein Textfeld **„Zeitplan 1“ … „Zeitplan 6“**:
 
@@ -182,9 +184,12 @@ Bis zu **6 Zeitpläne**, z. B. „täglich 22:00 zuschließen“, „Mo–Fr 07:
 | `an 22:00 Mo-So zu` | täglich 22:00 zuschließen |
 | `an 07:45 Mo-Fr zu` | werktags 07:45 zuschließen |
 | `aus 09:00 Sa,So auf` | ausgeschaltet (bleibt gespeichert) |
+| `an 22:00 Mo-So zu ±10` | täglich zufällig zwischen 21:50 und 22:10 zuschließen (`+-10` geht auch) |
+| `an 06:30 Mo-Fr auf +15` | werktags zufällig zwischen 06:30 und 06:45 aufschließen (nie früher) |
+| `an 07:45 Mo-Fr zu -5` | werktags zufällig zwischen 07:40 und 07:45 zuschließen (nie später) |
 | *(leer)* | nicht belegt |
 
-`an`/`aus` (ohne Angabe: an) · Uhrzeit `HH:MM` · Wochentage · `zu`/`auf` (ohne Angabe: zu). Reihenfolge und Groß-/Kleinschreibung egal. Ist ein Text nicht lesbar, steht in „Zeitplan“ **„Zeitplan N ungültig!“** und die App zeigt die Zeile gelb.
+`an`/`aus` (ohne Angabe: an) · Uhrzeit `HH:MM` · Wochentage · `zu`/`auf` (ohne Angabe: zu) · optional Zufall `+N` / `-N` / `±N` (N = 1–60 Minuten). Ein Zeitraum über Mitternacht wird bei 00:00 bzw. 23:59 gekappt. Reihenfolge und Groß-/Kleinschreibung egal. Ist ein Text nicht lesbar, steht in „Zeitplan“ **„Zeitplan N ungültig!“** und die App zeigt die Zeile gelb.
 
 | Wochentage | Bedeutung |
 |---|---|
@@ -196,7 +201,7 @@ Bis zu **6 Zeitpläne**, z. B. „täglich 22:00 zuschließen“, „Mo–Fr 07:
 
 Fallen zwei Zeitpläne auf dieselbe Minute, gilt der mit der kleineren Nummer. Beim Update von einer Version vor 3.4.0 übernimmt der ESP die bisherigen Zeitpläne 1 und 2 beim ersten Start automatisch.
 
-Die Anzeige **„Zeitplan“** zeigt den nächsten Termin und das letzte Ergebnis (✓ bestätigt, ✗ Schloss hat nicht reagiert). Ohne Bestätigung wird bis zu 3× im Minutenabstand wiederholt.
+Die Anzeige **„Zeitplan“** zeigt den nächsten Termin (mit Zufall: die heute ausgewürfelte Zeit, z. B. „Fr 22:07 zuschließen (22:00 ±10)“) und das letzte Ergebnis (✓ bestätigt, ✗ Schloss hat nicht reagiert). Ohne Bestätigung wird bis zu 3× im Minutenabstand wiederholt.
 
 > Die Uhrzeit kommt per SNTP aus dem Internet, ersatzweise von Home Assistant – der Zeitplan läuft also auch ohne HA. Ohne gültige Uhrzeit pausiert er (Meldung in „Zeitplan“).
 

@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # Zeitplan – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 3.5.2 (2026-11-09) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.5.3 (2026-11-09) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Einbinden:   packages:
 #                schedule: !include eqiva-smart-lock-schedule.yaml
 #
@@ -10,10 +10,14 @@
 #     an 22:00 Mo-So zu        täglich 22:00 zuschließen
 #     an 07:45 Mo-Fr zu        werktags 07:45 zuschließen
 #     aus 09:00 Sa,So auf      ausgeschaltet (bleibt gespeichert)
+#     an 22:00 Mo-So zu ±10    zufällig zwischen 21:50 und 22:10
+#     an 06:30 Mo-Fr auf +15   zufällig zwischen 06:30 und 06:45 (nie früher)
 #     (leer)                   nicht belegt
 #
 # an/aus (Standard an) · Uhrzeit HH:MM · Wochentage wie "Mo-Fr", "Sa,So", "Mo-Do,So", "täglich"
-# (ohne Angabe = täglich) · zu/auf. Reihenfolge egal, Groß-/Kleinschreibung egal.
+# (ohne Angabe = täglich) · zu/auf · optional Zufall: +N (nur später), -N (nur früher), ±N oder +-N
+# (beides), N = 1…60 Minuten. Reihenfolge egal, Groß-/Kleinschreibung egal.
+# Die zufällige Zeit wird je Zeitplan einmal am Tag neu ausgewürfelt (am Tagesanfang gekappt, 00:00–23:59).
 # Läuft ohne Home Assistant: Uhrzeit per SNTP, ersatzweise von HA.
 # Kommt keine Bestätigung vom Schloss, wird bis zu 3× im Minutenabstand wiederholt.
 # Zeitpläne 1 und 2 aus Versionen vor 3.4.0 werden beim ersten Start automatisch übernommen.
@@ -61,8 +65,8 @@ script:
   - id: ver_check_schedule
     then:
       - lambda: |-
-          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.2") == 0,
-                        "Versionskonflikt: eqiva-smart-lock-schedule.yaml ist 3.5.2, Hauptdatei ist ${config_version} "
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.3") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-schedule.yaml ist 3.5.3, Hauptdatei ist ${config_version} "
                         "(alle Dateien gleicher Version verwenden oder version_check: false)");
   # Befehl ans Schloss (lokal, ohne HA)
   - id: sched_send
@@ -109,10 +113,11 @@ interval:
             global_preferences->sync();
           }
 
-          // Eine Zeile auswerten (Rückgabe: gültig, leer, an, Stunde, Minute, Tage-Maske Bit0=Mo…Bit6=So, Aktion 1 auf/2 zu)
-          static const auto sched_parse = [](const std::string &line) -> std::array<int, 7> {
-            // Rückgabe: {gültig, leer, an, Stunde, Minute, Tage-Maske, Aktion}
-            std::array<int, 7> r{0, 0, 1, 0, 0, 0x7F, 2};
+          // Eine Zeile auswerten
+          static const auto sched_parse = [](const std::string &line) -> std::array<int, 9> {
+            // Rückgabe: {gültig, leer, an, Stunde, Minute, Tage-Maske Bit0=Mo…Bit6=So, Aktion 1 auf/2 zu,
+            //            Zufall 0 aus/1 früher/2 später/3 beides, Zufall-Minuten}
+            std::array<int, 9> r{0, 0, 1, 0, 0, 0x7F, 2, 0, 0};
             std::string s = line;
             for (auto &c : s) c = tolower((unsigned char) c);
             auto days_mask = [](std::string d) -> int {
@@ -148,7 +153,18 @@ interval:
               if (tok.empty()) continue;
               any = true;
               int hh, mm; char extra;
-              if (tok == "an" || tok == "ein" || tok == "on") r[2] = 1;
+              // Zufall: "+10", "-10", "±10" (UTF-8 C2 B1) oder "+-10"
+              int rdir = 0; size_t rp = 0;
+              if (tok.compare(0, 2, "\xc2\xb1") == 0 || tok.compare(0, 2, "+-") == 0) { rdir = 3; rp = 2; }
+              else if (tok[0] == '+') { rdir = 2; rp = 1; }
+              else if (tok[0] == '-') { rdir = 1; rp = 1; }
+              const std::string rnum = rdir ? tok.substr(rp) : std::string();
+              const bool rnum_ok = !rnum.empty() && rnum.size() <= 2 &&
+                                   std::all_of(rnum.begin(), rnum.end(), [](char c) { return c >= '0' && c <= '9'; });
+              if (rdir && rnum_ok && atoi(rnum.c_str()) <= 60) {
+                r[8] = atoi(rnum.c_str());
+                r[7] = r[8] ? rdir : 0;
+              } else if (tok == "an" || tok == "ein" || tok == "on") r[2] = 1;
               else if (tok == "aus" || tok == "off") r[2] = 0;
               else if (tok == "zu" || tok == "zuschließen" || tok == "zuschliessen" || tok == "lock") r[6] = 2;
               else if (tok == "auf" || tok == "aufschließen" || tok == "aufschliessen" || tok == "unlock") r[6] = 1;
@@ -170,10 +186,18 @@ interval:
           static const char *const wdn[] = {"Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"};
           const std::string *lines[6] = {&id(sched_txt1).state, &id(sched_txt2).state, &id(sched_txt3).state,
                                          &id(sched_txt4).state, &id(sched_txt5).state, &id(sched_txt6).state};
-          std::array<std::array<int, 7>, 6> sc;
+          std::array<std::array<int, 9>, 6> sc;
           for (int i = 0; i < 6; i++) sc[i] = sched_parse(*lines[i]);
           // aktiv = gültig, belegt und eingeschaltet
           auto active = [&](int i) { return sc[i][0] && !sc[i][1] && sc[i][2]; };
+          // Zufall: je Zeitplan einmal am Tag auswürfeln (neu bei geändertem Text). done_* verhindert, dass ein
+          // unveränderter Zeitplan am selben Tag zweimal auslöst; nach einer Änderung darf er wieder.
+          static int roll_day[6] = {-1, -1, -1, -1, -1, -1}, roll_off[6] = {0}, done_day[6] = {-1, -1, -1, -1, -1, -1};
+          static std::string roll_line[6], done_line[6];
+          auto done_today = [&](int i, int doy) { return done_day[i] == doy && done_line[i] == *lines[i]; };
+          static const char *const rsym[] = {"", "-", "+", "±"};
+          auto base_min = [&](int i) { return sc[i][3] * 60 + sc[i][4]; };
+          auto eff_min = [&](int i) { int m = base_min(i) + roll_off[i]; return m < 0 ? 0 : (m > 1439 ? 1439 : m); };
 
           std::string status;
           if (!t.is_valid()) {
@@ -182,6 +206,18 @@ interval:
             static int last_key = -1;
             const int key = t.day_of_year * 1440 + t.hour * 60 + t.minute;
             const int wd = (t.day_of_week + 5) % 7;   // ESPTime: 1 = So … 7 = Sa -> 0 = Mo
+            for (int i = 0; i < 6; i++) {
+              if (roll_day[i] == t.day_of_year && roll_line[i] == *lines[i]) continue;
+              roll_day[i] = t.day_of_year;
+              roll_line[i] = *lines[i];
+              roll_off[i] = 0;
+              if (!sc[i][0] || !sc[i][7]) continue;
+              const int m = sc[i][8], dir = sc[i][7];
+              const int r = (int) (random_uint32() % (uint32_t) (dir == 3 ? 2 * m + 1 : m + 1));
+              roll_off[i] = dir == 1 ? -r : (dir == 2 ? r : r - m);
+              ESP_LOGI("sched", "Zeitplan %d: heute %02d:%02d (%02d:%02d %s%d)", i + 1, eff_min(i) / 60, eff_min(i) % 60,
+                       sc[i][3], sc[i][4], rsym[dir], m);
+            }
             if (key != last_key) {
               last_key = key;
               // 1) Bestätigung prüfen / wiederholen
@@ -208,7 +244,10 @@ interval:
               }
               // 2) Fällige Zeitpläne auslösen (bei mehreren gleichzeitig gilt der erste)
               for (int i = 0; i < 6; i++) {
-                if (!active(i) || !(sc[i][5] & (1 << wd)) || sc[i][3] != t.hour || sc[i][4] != t.minute) continue;
+                if (!active(i) || !(sc[i][5] & (1 << wd)) || eff_min(i) != t.hour * 60 + t.minute ||
+                    done_today(i, t.day_of_year)) continue;
+                done_day[i] = t.day_of_year;
+                done_line[i] = *lines[i];
                 const int cmd = sc[i][6];
                 ESP_LOGI("sched", "Zeitplan %d: %s", i + 1, cmd == 2 ? "zuschließen" : "aufschließen");
                 id(sched_which) = i + 1;
@@ -220,24 +259,35 @@ interval:
               }
             }
             // 3) Nächsten Termin berechnen
-            int best = -1, best_i = -1, best_day = 0;
+            // heute: ausgewürfelte Zeit, andere Tage: eingestellte Zeit (Zufall steht dann dahinter)
+            int best = -1, best_i = -1, best_day = 0, best_min = 0;
+            bool best_today = false;
             const int now_min = t.hour * 60 + t.minute;
             for (int i = 0; i < 6; i++) {
               if (!active(i)) continue;
               for (int d = 0; d <= 7; d++) {
                 const int day = (wd + d) % 7;
-                const int off = d * 1440 + sc[i][3] * 60 + sc[i][4] - now_min;
-                if (!(sc[i][5] & (1 << day)) || off <= 0) continue;
-                if (best < 0 || off < best) { best = off; best_i = i; best_day = day; }
+                const int at = d == 0 ? eff_min(i) : base_min(i);
+                const int off = d * 1440 + at - now_min;
+                if (!(sc[i][5] & (1 << day)) || off <= 0 || (d == 0 && done_today(i, t.day_of_year))) continue;
+                if (best < 0 || off < best) { best = off; best_i = i; best_day = day; best_min = at; best_today = d == 0; }
                 break;
               }
             }
             for (int i = 0; i < 6; i++)
               if (!sc[i][1] && !sc[i][0]) status += "Zeitplan " + to_string(i + 1) + " ungültig! ";
             if (best >= 0) {
-              char buf[64];
-              snprintf(buf, sizeof(buf), "Nächstes: %s %02d:%02d %s", wdn[best_day], sc[best_i][3], sc[best_i][4],
-                       sc[best_i][6] == 1 ? "aufschließen" : "zuschließen");
+              char buf[96];
+              const char *what = sc[best_i][6] == 1 ? "aufschließen" : "zuschließen";
+              const int rd = sc[best_i][7], rm = sc[best_i][8];
+              if (!rd)
+                snprintf(buf, sizeof(buf), "Nächstes: %s %02d:%02d %s", wdn[best_day], best_min / 60, best_min % 60, what);
+              else if (best_today)   // z. B. "Nächstes: Fr 22:07 zuschließen (22:00 ±10)"
+                snprintf(buf, sizeof(buf), "Nächstes: %s %02d:%02d %s (%02d:%02d %s%d)", wdn[best_day], best_min / 60,
+                         best_min % 60, what, sc[best_i][3], sc[best_i][4], rsym[rd], rm);
+              else                   // z. B. "Nächstes: Sa 22:00 ±10 zuschließen"
+                snprintf(buf, sizeof(buf), "Nächstes: %s %02d:%02d %s%d %s", wdn[best_day], best_min / 60,
+                         best_min % 60, rsym[rd], rm, what);
               status += buf;
             } else if (status.empty()) {
               status = "Kein Zeitplan aktiv";

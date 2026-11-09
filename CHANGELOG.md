@@ -23,6 +23,26 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.5.3 – 2026-11-09
+
+### Neu
+- **Zeitpläne mit zufälliger Abweichung:** pro Zeitplan „Genau“, „Früher“, „Später“ oder „Beides“ und 1–60 Minuten.
+  Die Zeit wird einmal am Tag neu ausgewürfelt. Im Textfeld z. B. `an 22:00 Mo-So zu ±10`, `+15` (nur später) oder `-5` (nur früher).
+  Die Anzeige „Zeitplan“ zeigt die heute ausgewürfelte Zeit, z. B. „Nächstes: Fr 22:07 zuschließen (22:00 ±10)“.
+- **Mehr Kontrast in der Web-App:** dunklerer Hintergrund, Kacheln mit kräftigerem Rand und leichtem Schatten,
+  Überschriften als farbige Titelleiste (hell und dunkel).
+
+### Geändert
+- **Handbedienung direkt nach einem Befehl wird erkannt** (z. B. zugeschlossen und gleich wieder von Hand aufgedreht).
+  Das bisherige 40-s-Fenster nach jedem Befehl entfällt. Nur 10 s nach „Öffnen“ (Falle springt zurück) und nach einem
+  nicht ausgeführten Befehl zählt eine Drehung nicht als „von Hand“.
+- Die Startseiten-Karte heißt immer „Ereignisse und Reaktionszeit“, auch direkt nach einem Neustart
+  (vorher zunächst nur „Ereignisse“). Ohne Einträge steht dort „Noch keine Ereignisse und Messungen seit dem Start.“
+
+### Update
+- Pakete, `app.js` und `eqiva_components/` ersetzen, flashen.
+- Eigene Hauptdatei: nur `config_version: "3.5.3"` setzen, sonst nichts ändern.
+
 ## 3.5.2 – 2026-11-09
 
 ### Neu

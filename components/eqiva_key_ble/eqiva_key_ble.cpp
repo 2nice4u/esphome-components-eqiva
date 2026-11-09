@@ -588,8 +588,6 @@ void EqivaKeyBle::sendCommand(CommandType command) {
     reaction_act_ = command == LOCK ? 'z' : (command == UNLOCK ? 'a' : 'o');
     reaction_src_ = ev_pending_src_.substr(0, 16);
     ev_reaction_ms_ = 0;
-    last_command_ms_ = now;
-    last_command_valid_ = true;
     cmd_source_.clear();
   }
   if (this->simulate_) {
@@ -989,6 +987,7 @@ void EqivaKeyBle::on_lock_state_(uint8_t st) {
         dur = b;
       }
       this->log_event(std::string(icon[st]) + " " + ev_pending_src_ + dur);
+      if (ev_pending_ == OPEN) { hand_quiet_ = true; hand_quiet_since_ = now; }
       ev_pending_ = -1;
       ev_reaction_ms_ = 0;
     } else if (ev_moved_ && !(ev_pending_ == OPEN && st == 2)) {
@@ -996,14 +995,17 @@ void EqivaKeyBle::on_lock_state_(uint8_t st) {
       this->log_event(std::string("✗ ") + (want == 3 ? "zu" : want == 2 ? "auf" : "öffnen") + " " +
                       ev_pending_src_ + " (jetzt " + word[st] + ")");
       ev_pending_ = -1;
+      hand_quiet_ = true;
+      hand_quiet_since_ = now;
     }
     ev_last_state_ = st;
     return;
   }
   // Ohne Befehl: Zustandswechsel = von Hand (Schlüssel, Drehknauf, Taste am Schloss)
+  if (hand_quiet_ && (now - hand_quiet_since_) >= HAND_QUIET_MS) hand_quiet_ = false;
   if (ev_last_state_ != 255 && st != ev_last_state_ &&
       !(ev_last_state_ == 4 && st == 2) &&          // OPENED -> UNLOCKED: Falle zurück, kein Ereignis
-      (!last_command_valid_ || (now - last_command_ms_) > 40000)) {
+      !hand_quiet_) {
     this->log_event(std::string("🖐 ") + icon[st] + " von Hand");
   }
   ev_last_state_ = st;
@@ -1015,6 +1017,8 @@ void EqivaKeyBle::ev_fail_(const char *why) {
   this->log_event(std::string("✗ ") + w[ev_pending_ <= 2 ? ev_pending_ : 0] + " " + ev_pending_src_ +
                   " (" + why + ")");
   ev_pending_ = -1;
+  hand_quiet_ = true;
+  hand_quiet_since_ = millis();
 }
 
 void EqivaKeyBle::ev_tick_() {

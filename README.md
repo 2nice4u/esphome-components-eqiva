@@ -11,7 +11,7 @@ Protokoll und Verschlüsselung sind unverändert. Die wichtigsten Änderungen:
 - **Ereignisse und Reaktionszeit:** alle Ereignisse mit Uhrzeit auf der Startseite, dazu die Zeit vom Befehl bis der Motor dreht, mit Ø, max und Ampel
 - **Pairing abgesichert:** bei Fehlschlag oder Abbruch bleibt die bisherige Kopplung, Hinweis „Schloss nicht erreichbar“
 - **Neu in der Komponente:** RSSI-Sensor der Verbindung, `on_paired`-Auslöser, klare Meldungen bei fehlendem Pairing oder Pairing-Modus
-- **Beispiel-Konfiguration** in [`examples/`](examples/): Energiemodi, Testmodus ohne Schloss und optionale Pakete für R503-Fingerprint, Status-LED, Statistik und bis zu 6 Zeitpläne
+- **Beispiel-Konfiguration** in [`examples/`](examples/): Energiemodi, Testmodus ohne Schloss und optionale Pakete für R503-Fingerprint, Status-LED, Statistik und bis zu 6 Zeitpläne (optional mit zufälliger Abweichung, offline per SNTP)
 
 Alle Details: [FORK-CHANGES.md](FORK-CHANGES.md)
 Versionen und Änderungen: [CHANGELOG.md](CHANGELOG.md)
@@ -43,7 +43,7 @@ Die Bilder zeigen Testdaten, keine echten Personen oder Bedienungen.
 
    ```yaml
    external_components:
-     - source: github://2nice4u/esphome-components-eqiva@v3.5.2
+     - source: github://2nice4u/esphome-components-eqiva@v3.5.3
    ```
 
    YAMLs und Komponente gehören zusammen. Für ein Update die Dateien des neuen
