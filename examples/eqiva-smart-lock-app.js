@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.5.3 (2026-11-09) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.5.4 (2026-11-09) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.5.3';
+  const APP_VERSION = '3.5.4';
   const GUIDE_URL = 'https://github.com/2nice4u/esphome-components-eqiva/blob/main/docs/ANLEITUNG.md';
 
   // ---------------------------------------------------------------- Zustand
@@ -96,6 +96,10 @@
   const ACTIONS = ['Standard', 'Umschalten', 'Aufschließen', 'Zuschließen', 'Öffnen', 'Nur Klingel', 'Gesperrt'];
   const ACTION_HINT = ['nutzt die Standard-Aktion', 'zu → öffnen, offen → zuschließen', 'nur aufschließen',
     'nur zuschließen', 'aufschließen und Falle ziehen', 'keine Schlossaktion, nur Klingel', 'vorübergehend deaktiviert'];
+  // Beschreibung passend zu "Türgriff außen": bei Türklinke schließen Umschalten/Öffnen nur auf
+  const knauf = () => txt('select/Türgriff außen') !== 'Türklinke';
+  const actionHint = (i) => i === 1 ? (knauf() ? 'zu → öffnen (Falle ziehen), offen → zuschließen' : 'zu → aufschließen, offen → zuschließen') :
+    i === 4 ? (knauf() ? 'aufschließen und Falle ziehen' : 'nur aufschließen (Türgriff außen = Türklinke)') : ACTION_HINT[i];
   const FINGERS = ['Daumen', 'Zeigefinger', 'Mittelfinger', 'Ringfinger', 'Kleiner Finger'];
   const FSHORT = ['Daumen', 'Zeige', 'Mittel', 'Ring', 'Klein'];
   const HANDS = ['Links', 'Rechts'];
@@ -243,7 +247,7 @@
   function reactionHead() {
     if (!has('text_sensor/Reaktionszeiten')) return '';
     const RA = { z: ['lockF', 'zu'], a: ['unlock', 'auf'], o: ['door', 'öffnen'] };
-    const r = txt('text_sensor/Reaktionszeiten').split(';').map((s) => { const p = s.split('|'); return { act: p[0], v: Number(p[1]), src: p[2] || '' }; })
+    const r = txt('text_sensor/Reaktionszeiten').split(/;\s*/).map((s) => { const p = s.split('|'); return { act: p[0], v: Number(p[1]), src: p[2] || '' }; })
       .filter((e) => RA[e.act] && isFinite(e.v));
     if (!r.length) return '';
     const f = (v) => v.toFixed(1).replace('.', ',') + ' s', vals = r.map((e) => e.v), last = r[r.length - 1];
@@ -271,7 +275,8 @@
       btn('unlock', icon('unlock', 20) + 'Auf', 'big r') +
       btn('open', icon('door', 20) + 'Öffnen', 'big bl') +
       '</div>') +
-      (txt('select/Türgriff außen') === 'Türklinke' ? '<p class="note">Türgriff außen = Türklinke: „Öffnen“ schließt nur auf.</p>' : ''));
+      (txt('select/Türgriff außen') === 'Türklinke' ? '<p class="note">Türgriff außen = Türklinke: „Öffnen“ schließt nur auf.</p>' :
+        txt('select/Türgriff außen') === 'Knauf' ? '<div class="knauf">' + icon('alert', 22) + '<div><b>Türgriff außen = Knauf</b><span>„Öffnen“ und der Finger (Umschalten/Öffnen) ziehen die Falle – die Tür wird komplett geöffnet. „Auf“ schließt nur auf.</span></div></div>' : ''));
     const tiles = [];
     if (has('binary_sensor/Batterie schwach')) tiles.push(['Batterie', on('binary_sensor/Batterie schwach') ? 'Schwach' : 'OK', on('binary_sensor/Batterie schwach') ? 'warn' : '']);
     if (has('sensor/Schloss Signal')) { const v = Number(val('sensor/Schloss Signal', NaN)); tiles.push(['Signal', isFinite(v) ? Math.round(v) + ' dBm' : '–', '']); }
@@ -342,7 +347,7 @@
         }).join('') + '</div>';
     } else if (w.step === 3) {
       body = '<p class="q">Was soll der Finger tun?</p><div class="list">' + ACTIONS.map((a, i) =>
-        '<button type="button" class="opt' + (w.action === i ? ' sel' : '') + '" data-a="w-action" data-x="' + i + '"><b>' + a + '</b><span>' + ACTION_HINT[i] + '</span></button>').join('') + '</div>';
+        '<button type="button" class="opt' + (w.action === i ? ' sel' : '') + '" data-a="w-action" data-x="' + i + '"><b>' + a + '</b><span>' + actionHint(i) + '</span></button>').join('') + '</div>';
     } else if (w.step === 4 && w.mode === 'assign') {
       body = '<div class="live"><div class="ring2 rs-blue">' + icon('finger', 44) + '</div>' +
         '<p><b>Jetzt den Finger von Platz ' + w.slot + ' auflegen</b></p>' +
@@ -400,7 +405,7 @@
     if (s.type === 'finger') {
       h = '<h2>' + esc(s.person) + ' · ' + HANDS[s.hand] + ', ' + FINGERS[s.finger] + '</h2><p class="muted">Speicherplatz ' + s.slot + '</p>' +
         '<p class="q">Aktion</p><div class="list">' + ACTIONS.map((a, i) =>
-          '<button type="button" class="opt' + (s.action === i ? ' sel' : '') + '" data-a="f-action" data-x="' + i + '"><b>' + a + '</b><span>' + ACTION_HINT[i] + '</span></button>').join('') + '</div>' +
+          '<button type="button" class="opt' + (s.action === i ? ' sel' : '') + '" data-a="f-action" data-x="' + i + '"><b>' + a + '</b><span>' + actionHint(i) + '</span></button>').join('') + '</div>' +
         '<div class="foot">' + btn('f-reenroll', 'Neu anlernen', 'b') +
         (S.confirm === 'del' ? btn('f-delete', 'Wirklich löschen', 'b danger') : btn('ask-del', 'Löschen', 'b')) + '</div>';
     } else if (s.type === 'person') {
@@ -608,6 +613,8 @@
     if (has('switch/Simulation: Schloss erreichbar')) h += grp('Testmodus (Simulation)', [toggle('switch/Simulation: Schloss erreichbar', 'Schloss erreichbar'),
       num('number/Simulation: Fahrzeit', 'Fahrzeit'), has('button/Simulation: von Hand drehen') ? '<div class="foot">' + btn('press', 'Von Hand drehen', 'b', 'button/Simulation: von Hand drehen') + '</div>' : '']);
     h += grp('Schloss', [choice('select/Energiemodus', 'Energiemodus'), choice('select/Türgriff außen', 'Türgriff außen'),
+      (!has('select/Türgriff außen') ? '' : knauf() ? '<div class="knauf sm">' + icon('alert', 18) + '<span>„Öffnen“ und „Umschalten“ per Finger ziehen die Falle. Der Motor dreht über „auf“ hinaus, bis die Tür frei ist – ohne eingebautes Schloss läuft er dabei lange.</span></div>' :
+        '<p class="muted small">„Öffnen“ und „Umschalten“ schließen nur auf, die Klinke drückt man selbst.</p>'),
       num('number/Ausgewogen: Verbindungsabstand', 'Ausgewogen: Abstand'), num('number/Sparsam: Trennen nach Leerlauf', 'Sparsam: trennen nach'),
       num('number/Sparsam: Status-Abfrage alle', 'Sparsam: Status alle')]);
     h += grp('Fingerprint', [choice('select/Standard-Aktion (Finger ohne Zuordnung)', 'Standard-Aktion'), toggle('switch/Klingel bei unbekanntem Finger', 'Klingel bei unbekanntem Finger'),
@@ -847,7 +854,7 @@ html:not(.eqa-expert) esp-app{display:none}html.eqa-expert #eqa{display:none}
 #eqa-back{position:fixed;right:16px;bottom:16px;z-index:20;display:none;min-height:44px;padding:0 16px;border:0;border-radius:12px;background:#1D4ED8;color:#fff;font:600 14px system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer}
 html.eqa-expert #eqa-back{display:block}
 #eqa *{box-sizing:border-box}#eqa h1{margin:0;font-size:20px;font-weight:700}#eqa h2{margin:0 0 8px;font-size:17px;font-weight:700}#eqa h3{margin:0 0 10px;padding-bottom:8px;border-bottom:2px solid var(--accs);font-size:16px;font-weight:700;color:var(--acci)}
-#eqa p{margin:6px 0}#eqa .muted{color:var(--muted)}#eqa .small{font-size:12px}#eqa .note{font-size:13px;color:var(--wr)}
+#eqa p{margin:6px 0}#eqa .muted{color:var(--muted)}#eqa .small{font-size:12px}#eqa .note{font-size:13px;color:var(--wr)}#eqa .knauf{display:flex;gap:10px;align-items:flex-start;margin-top:14px;padding:12px 14px;border-radius:12px;background:var(--wrb);color:var(--wr);border:1.5px solid var(--wr)}#eqa .knauf b{display:block;font-size:15px;margin-bottom:2px}#eqa .knauf span{font-size:14px;line-height:1.35}#eqa .knauf svg{flex:none;margin-top:1px}#eqa .knauf.sm{margin-top:8px;padding:10px 12px}#eqa .knauf.sm span{font-size:13px}
 #eqa header{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:14px 16px;background:var(--card);border-bottom:1px solid var(--line)}
 #eqa .brand{display:flex;flex-direction:column;flex:1;min-width:0}#eqa .brand h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #eqa main{max-width:1100px;margin:0 auto;padding:16px 16px 96px}

@@ -1,6 +1,6 @@
 # Eqiva Smart Lock – Anleitung & Hilfe
 
-Gilt für Version 3.5.3 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
+Gilt für Version 3.5.4 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
 Änderungen: [CHANGELOG.md](../CHANGELOG.md)
 
 ## Die Web-App
@@ -73,7 +73,9 @@ Was „Öffnen“ macht, hängt von der Auswahl **„Türgriff außen“** (Schl
 | **Knauf** (Standard) | Tür wird **komplett geöffnet** und lässt sich von außen aufziehen |
 | **Türklinke** | wie „Aufschließen“ – die Klinke drückt man selbst. Ist das Schloss schon auf, passiert nichts. |
 
-> Gilt für alle Wege: Web-GUI, Home Assistant (`lock.open`) und Fingerprint mit Aktion „Öffnen“. Beim kompletten Öffnen meldet „Lock Status“ kurz **OPENED**, beim reinen Aufschließen nicht.
+> Gilt für alle Wege: Web-GUI, Home Assistant (`lock.open`) und Fingerprint mit Aktion „Öffnen“ oder „Umschalten“. Bei „Knauf“ zeigt die Startseite das als gelben Hinweis unter den Knöpfen, die Einstellungen erklären es unter der Auswahl. Beim kompletten Öffnen meldet „Lock Status“ kurz **OPENED**, beim reinen Aufschließen nicht.
+
+> **Am Tisch (ohne Tür und Zylinder)** findet das Schloss beim Öffnen keinen Anschlag: Der Motor dreht dann lange (ca. 25 s) und meldet danach nur „auf“. Die Ereignisse zeigen trotzdem „🚪 …“, sobald 10 s nach „auf“ kein OPENED kommt. Zum Testen am Tisch „Türgriff außen“ auf **Türklinke** stellen.
 
 **Ereignisse** zeigt die letzten 10 Ereignisse, neueste zuerst, z. B. `18:42 🔓 Max R-Daumen (1,6 s) · 18:05 🔒 Zeitplan 1 (2,4 s) · 17:30 🖐 🔓 von Hand · 06.11. 22:10 🔔 unbekannter Finger`. **HA/Web** = Home Assistant oder die Web-GUI · **🖐 von Hand** = Schlüssel, Drehknauf oder Taste am Schloss · **✗** = Befehl nicht ausgeführt (Grund in Klammern) · ⛔ abgewiesen · ❓ unbekannter Finger · ⚠️ Sabotage. Ältere Einträge fallen weg, wenn die 255 Zeichen von Home Assistant voll sind; alle stehen im Log. „Von Hand“ erkennt der ESP, sobald das Schloss den neuen Zustand meldet – auch direkt nach einem Befehl (z. B. zugeschlossen und gleich wieder von Hand aufgedreht). Nur 10 s nach „Öffnen“ (Falle springt zurück) und nach einem nicht ausgeführten Befehl zählt eine Drehung nicht. Im Energiemodus „Sparsam“ meldet das Schloss nur, solange die Verbindung besteht (nach einem Befehl standardmäßig 30 s); sonst sieht der ESP die Handbedienung erst beim nächsten Verbinden und nur den Endzustand. Nach einem Neustart ist die Liste leer.
 
@@ -144,7 +146,8 @@ Die Übersicht **„Angelernte Finger“** zeigt alle Finger, z. B. `#0 St R-Dau
 | Ring | Bedeutung |
 |---|---|
 | 🔵 blau | Finger wird gelesen |
-| 🟢 grün atmend | erkannt – Aktion läuft. Finger darf weg. |
+| 🟢 2× kurz grün | Finger erkannt (kommt sofort, auch wenn erst noch verbunden wird) |
+| 🟢 grün atmend | Aktion läuft. Finger darf weg. |
 | 🟢 grün, 2 s an | bestätigt: **verriegelt** |
 | 🔴 rot, 2 s an | bestätigt: **aufgeschlossen / geöffnet** |
 | 🔴 rot atmend | Finger nicht erkannt |

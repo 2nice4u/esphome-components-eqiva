@@ -28,7 +28,7 @@ namespace eqiva_key_ble {
 using namespace esp32_ble_client;
 
 // Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
-#define EQIVA_PATCH_VERSION "3.5.3"
+#define EQIVA_PATCH_VERSION "3.5.4"
 
 // Patch-Konstanten
 static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
@@ -121,6 +121,14 @@ class EqivaKeyBle : public BLEClientBase {
     uint32_t ev_pending_at_{0};
     bool ev_moved_{false};               // seit dem Befehl MOVING gesehen
     uint32_t ev_reaction_ms_{0};         // gemessene Reaktionszeit des laufenden Befehls, 0 = keine
+    // Öffnen: manche Schlösser (z. B. ohne Falle/Tür) melden danach nur UNLOCKED, nie OPENED.
+    // Kommt binnen 10 s kein OPENED, zählt das Öffnen ab der UNLOCKED-Meldung als ausgeführt.
+    bool ev_open_unlocked_{false};
+    uint32_t ev_open_unlocked_ms_{0};
+    time_t ev_open_unlocked_t_{0};
+    static const uint32_t OPEN_NO_OPENED_MS = 10000;
+    void ev_success_(uint8_t st, uint32_t now, time_t t);
+    void log_event_at_(const std::string &text, time_t t);
     // Kurze Sperre der "von Hand"-Erkennung: nach Öffnen (Falle springt zurück) und nach
     // nicht bestätigten Befehlen (Schloss fährt evtl. verspätet). Sonst zählt jede Drehung sofort.
     uint32_t hand_quiet_since_{0};
