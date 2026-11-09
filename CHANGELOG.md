@@ -23,6 +23,31 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.5.4 – 2026-11-09
+
+### Behoben
+- **Öffnen wurde als Fehlschlag protokolliert**, wenn das Schloss danach nur „auf“ und nie „geöffnet“ meldet
+  (z. B. am Tisch ohne Tür und Zylinder): nach 60 s stand „✗ öffnen … (keine Bestätigung)“ statt „🚪 …“.
+  Jetzt zählt das Öffnen als ausgeführt, wenn 10 s nach „auf“ kein „geöffnet“ kommt (Zeitpunkt = Meldung „auf“).
+- **Kurze Blockade durch die Sabotage-Prüfung** des Fingerprint-Sensors („interval took a long time“, bis ca. 1,5 s):
+  Die Prüfung läuft nicht mehr im 1-s-Intervall und wartet, bis das Schloss nicht beschäftigt ist
+  (Motor läuft, Verbindung wird aufgebaut). Der Sensorzugriff selbst blockiert weiterhin kurz, aber nicht mehr während einer Schlossaktion.
+- **„Reaktionszeiten“ lief in der Expertenansicht über den Rand:** Die Einträge sind jetzt mit `; ` (Semikolon + Leerzeichen)
+  getrennt, damit der Text umbricht. Die Web-App liest beide Schreibweisen.
+
+### Neu
+- **Fingerprint: 2× kurz grün direkt nach dem Erkennen**, auch wenn danach erst verbunden wird (türkis). Der Befehl geht dabei sofort raus.
+- **Türgriff außen deutlicher erklärt:** Bei „Knauf“ steht auf der Startseite ein gelber Hinweis unter den Knöpfen
+  („Öffnen“ und der Finger mit Umschalten/Öffnen ziehen die Falle, die Tür wird komplett geöffnet; „Auf“ schließt nur auf),
+  in den Einstellungen eine Erklärung unter der Auswahl. Die Beschreibungen der Finger-Aktionen „Umschalten“ und „Öffnen“
+  passen sich der Einstellung an.
+
+### Update
+- Pakete, `app.js` und den Komponenten-Ordner ersetzen, flashen. Im Release-ZIP bzw. Repo heißt der Ordner `components/`
+  (darin `eqiva_ble/` und `eqiva_key_ble/`); lokal heißt er so, wie bei `path:` unter `external_components` eingetragen,
+  in der Vorlage `eqiva_components/`.
+- Eigene Hauptdatei: nur `config_version: "3.5.4"` setzen, sonst nichts ändern.
+
 ## 3.5.3 – 2026-11-09
 
 ### Neu

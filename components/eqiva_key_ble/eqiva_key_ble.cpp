@@ -588,6 +588,7 @@ void EqivaKeyBle::sendCommand(CommandType command) {
     reaction_act_ = command == LOCK ? 'z' : (command == UNLOCK ? 'a' : 'o');
     reaction_src_ = ev_pending_src_.substr(0, 16);
     ev_reaction_ms_ = 0;
+    ev_open_unlocked_ = false;
     cmd_source_.clear();
   }
   if (this->simulate_) {
@@ -909,11 +910,12 @@ void EqivaKeyBle::sim_tick_() {
 // ---------------------------------------------------------------
 static const char *const EV_TAG = "eqiva_event";
 
-void EqivaKeyBle::log_event(const std::string &text) {
-  time_t now = ::time(nullptr);
-  if (now < 1600000000) now = 0;         // Uhrzeit noch unbekannt
+void EqivaKeyBle::log_event(const std::string &text) { this->log_event_at_(text, ::time(nullptr)); }
+
+void EqivaKeyBle::log_event_at_(const std::string &text, time_t t) {
+  if (t < 1600000000) t = 0;             // Uhrzeit noch unbekannt
   ESP_LOGI(EV_TAG, "%s", text.c_str());
-  events_.push_front({now, text});
+  events_.push_front({t, text});
   while (events_.size() > 10) events_.pop_back();
   this->publish_events_();
 }
@@ -958,11 +960,12 @@ void EqivaKeyBle::on_lock_state_(uint8_t st) {
     reaction_hist_.push_back({reaction_act_, (uint16_t) ms, reaction_src_});
     if (reaction_hist_.size() > 10) reaction_hist_.erase(reaction_hist_.begin());
     if (this->reaction_sensor_ != nullptr) this->reaction_sensor_->publish_state(ms / 1000.0f);
-    // Format je Eintrag: Aktion|Sekunden|Quelle, Einträge mit ";" getrennt (z|4.1|Zeitplan 1;a|3.0|HA/Web)
+    // Format je Eintrag: Aktion|Sekunden|Quelle, Einträge mit "; " getrennt (z|4.1|Zeitplan 1; a|3.0|HA/Web).
+    // Das Leerzeichen erlaubt den Zeilenumbruch in der ESPHome-Expertenansicht.
     std::string list;
     for (size_t i = 0; i < reaction_hist_.size(); i++) {
       char buf[32];
-      snprintf(buf, sizeof(buf), "%s%c|%.1f|", i ? ";" : "", reaction_hist_[i].act, reaction_hist_[i].ms / 1000.0f);
+      snprintf(buf, sizeof(buf), "%s%c|%.1f|", i ? "; " : "", reaction_hist_[i].act, reaction_hist_[i].ms / 1000.0f);
       list += buf + reaction_hist_[i].src;
     }
     this->publish_(this->reaction_list_sensor_, list);
@@ -979,17 +982,10 @@ void EqivaKeyBle::on_lock_state_(uint8_t st) {
   if (ev_pending_ >= 0) {
     const uint8_t want = ev_pending_ == LOCK ? 3 : (ev_pending_ == UNLOCK ? 2 : 4);
     if (st == want) {
-      std::string dur;
-      if (ev_reaction_ms_ > 0) {         // Reaktionszeit mit Dezimalkomma anhängen
-        char b[16];
-        snprintf(b, sizeof(b), " (%.1f s)", ev_reaction_ms_ / 1000.0f);
-        for (char *c = b; *c; c++) if (*c == '.') *c = ',';
-        dur = b;
-      }
-      this->log_event(std::string(icon[st]) + " " + ev_pending_src_ + dur);
-      if (ev_pending_ == OPEN) { hand_quiet_ = true; hand_quiet_since_ = now; }
-      ev_pending_ = -1;
-      ev_reaction_ms_ = 0;
+      this->ev_success_(st, now, ::time(nullptr));
+    } else if (ev_pending_ == OPEN && st == 2 && ev_moved_) {
+      // Öffnen gefahren, Schloss meldet "auf": auf OPENED warten, sonst nach 10 s als Erfolg werten (ev_tick_)
+      if (!ev_open_unlocked_) { ev_open_unlocked_ = true; ev_open_unlocked_ms_ = now; ev_open_unlocked_t_ = ::time(nullptr); }
     } else if (ev_moved_ && !(ev_pending_ == OPEN && st == 2)) {
       // nach der Fahrt ein anderer Endzustand -> Befehl nicht ausgeführt
       this->log_event(std::string("✗ ") + (want == 3 ? "zu" : want == 2 ? "auf" : "öffnen") + " " +
@@ -1011,17 +1007,38 @@ void EqivaKeyBle::on_lock_state_(uint8_t st) {
   ev_last_state_ = st;
 }
 
+// Befehl bestätigt: Ereignis "🔒 Quelle (2,4 s)" mit Zeitpunkt t
+void EqivaKeyBle::ev_success_(uint8_t st, uint32_t now, time_t t) {
+  static const char *const icon[] = {"", "", "🔓", "🔒", "🚪"};
+  std::string dur;
+  if (ev_reaction_ms_ > 0) {             // Reaktionszeit mit Dezimalkomma anhängen
+    char b[16];
+    snprintf(b, sizeof(b), " (%.1f s)", ev_reaction_ms_ / 1000.0f);
+    for (char *c = b; *c; c++) if (*c == '.') *c = ',';
+    dur = b;
+  }
+  this->log_event_at_(std::string(icon[st]) + " " + ev_pending_src_ + dur, t);
+  if (ev_pending_ == OPEN) { hand_quiet_ = true; hand_quiet_since_ = now; }
+  ev_pending_ = -1;
+  ev_reaction_ms_ = 0;
+  ev_open_unlocked_ = false;
+}
+
 void EqivaKeyBle::ev_fail_(const char *why) {
   if (ev_pending_ < 0) return;
   static const char *const w[] = {"zu", "auf", "öffnen"};
   this->log_event(std::string("✗ ") + w[ev_pending_ <= 2 ? ev_pending_ : 0] + " " + ev_pending_src_ +
                   " (" + why + ")");
   ev_pending_ = -1;
+  ev_open_unlocked_ = false;
   hand_quiet_ = true;
   hand_quiet_since_ = millis();
 }
 
 void EqivaKeyBle::ev_tick_() {
+  // Öffnen ohne OPENED-Meldung: 10 s nach "auf" als ausgeführt werten (Zeitpunkt = Meldung "auf")
+  if (ev_pending_ == OPEN && ev_open_unlocked_ && (millis() - ev_open_unlocked_ms_) >= OPEN_NO_OPENED_MS)
+    this->ev_success_(4, ev_open_unlocked_ms_, ev_open_unlocked_t_);
   if (ev_pending_ >= 0 && (millis() - ev_pending_at_) > 60000) this->ev_fail_("keine Bestätigung");
   // Tageswechsel: gestrige Einträge bekommen ihr Datum
   static int last_yday = -1;

@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # R503 Fingerprint – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 3.5.3 (2026-11-09) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.5.4 (2026-11-09) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Einbinden: packages: fingerprint: !include eqiva-smart-lock-fingerprint.yaml
 # Nutzt ${name}, lock_status, ble_state, door_handle und ha_time aus der Hauptdatei.
 #
@@ -102,7 +102,7 @@ uart:
   baud_rate: 57600
 
 # R503-Ring: state 1=atmen 2=blinken 3=an 4=aus | Farbe 1=rot 2=blau 3=lila 4=grün 5=gelb 6=cyan 7=weiß
-# Bedeutung: blau = Finger wird gelesen · grün atmen = erkannt, Aktion läuft
+# Bedeutung: blau = Finger wird gelesen · 2× kurz grün = erkannt · grün atmen = Aktion läuft
 #            danach 2 s an: grün = verriegelt, rot = aufgeschlossen/geöffnet
 #            türkis atmen = verbinde mit Schloss (Sparmodus, Umschalten)
 #            rot atmen = nicht erkannt · rot blinken = Fehler/Schloss nicht erreicht
@@ -110,6 +110,9 @@ uart:
 #            ohne Finger bedient: grün atmen = zu, rot atmen = auf, blau atmen = geöffnet
 #            Klingel = auswählbar (Standard Regenbogen) · Anlernen: lila atmen = auflegen, 2× grün = Bild ok (abheben), 2× gelb = schief
 globals:
+  - id: fp_ok_ms               # Zeitpunkt "Finger erkannt" (grünes Blinken, danach erst die nächste Ringanzeige)
+    type: uint32_t
+    initial_value: '0'
   # --- Zuordnung (bleibt erhalten) ---
   # Bit 15 = belegt, 12-14 = Person, 11 = Hand (0 links, 1 rechts), 8-10 = Finger, 0-3 = Aktion
   - id: fp_map_v2
@@ -489,8 +492,8 @@ script:
   - id: ver_check_fingerprint
     then:
       - lambda: |-
-          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.3") == 0,
-                        "Versionskonflikt: eqiva-smart-lock-fingerprint.yaml ist 3.5.3, Hauptdatei ist ${config_version} "
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.4") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-fingerprint.yaml ist 3.5.4, Hauptdatei ist ${config_version} "
                         "(alle Dateien gleicher Version verwenden oder version_check: false)");
   # Meldung in "Fingerprint: Letzte Aktion" (mit Uhrzeit, wenn bekannt)
   - id: fp_msg
@@ -573,16 +576,19 @@ script:
       - lambda: |-
           id(fp_seq_mark) = id(fp_status_seq);
           id(fp_was_connected) = id(ble_state).state == "ESTABLISHED";
+          id(fp)->aura_led_control(2, 15, 4, 2);   // 2× kurz grün = Finger erkannt
+          id(fp_ok_ms) = millis();
       # Umschalten ohne Verbindung: erst aktuellen Status holen (Sparmodus / Handbedienung)
       - if:
           condition:
             lambda: 'return id(fp_act) == 1 && !id(fp_was_connected);'
           then:
             - lambda: |-
-                id(fp)->aura_led_control(1, 60, 6, 0);   // türkis atmen = verbinde mit Schloss
                 id(fp_msg).execute("Verbinde mit Schloss … – " + id(fp_who));
-            - lambda: 'id(fp_seen_conn) = false;'
+                id(fp_seen_conn) = false;
             - eqiva_key_ble.status:
+            - delay: 600ms   # grünes Blinken zu Ende zeigen, die Verbindung läuft schon
+            - lambda: 'id(fp)->aura_led_control(1, 60, 6, 0);'   # türkis atmen = verbinde mit Schloss
             # fertig, sobald der Status da ist – oder sobald der Verbindungsversuch gescheitert ist
             # (CONNECTING -> IDLE), statt die volle Zeit zu warten
             - wait_until:
@@ -616,7 +622,6 @@ script:
           id(fp_pending_cmd) = cmd;
           id(fp_pending_since) = millis();
           id(key_ble)->set_cmd_source(id(fp_who_short));   // Ereignisprotokoll: wer war es
-          id(fp)->aura_led_control(1, 60, 4, 0);   // grün atmen = erkannt, wird ausgeführt
           if (id(ble_state).state != "ESTABLISHED")
             id(fp_msg).execute("Wird ausgeführt – verbinde mit Schloss … – " + id(fp_who));
       - if:
@@ -634,6 +639,13 @@ script:
             lambda: 'return id(fp_pending_cmd) == 3;'
           then:
             - eqiva_key_ble.open:
+      # grün atmen = wird ausgeführt; erst nach dem grünen Blinken (Befehl ist schon unterwegs)
+      - if:
+          condition:
+            lambda: 'return id(fp_pending_cmd) != 0;'
+          then:
+            - delay: !lambda 'const uint32_t e = millis() - id(fp_ok_ms); return e >= 600 ? 0 : 600 - e;'
+            - lambda: 'if (id(fp_pending_cmd) != 0) id(fp)->aura_led_control(1, 60, 4, 0);'
 
   # Klingel-Anzeige am Ring, auswählbar über "Klingel-Anzeige" (Fingerprint Einstellungen)
   - id: fp_bell_rainbow
@@ -906,9 +918,12 @@ script:
           if (id(fp_pending_cmd) == 0 && !id(fp_enrolling).state) id(fp)->aura_led_control(2, 15, 1, 6);   // rot blinken
 
   # Regelmäßige Prüfung: antwortet der Sensor? Belegung und Notizspeicher unverändert?
+  # Der Sensorzugriff blockiert kurz (bis ca. 1,5 s). Die kurze Pause am Anfang sorgt dafür, dass das nicht
+  # im 1-s-Intervall passiert; gestartet wird nur, wenn das Schloss gerade nicht beschäftigt ist (siehe interval).
   - id: fp_sab_check
     mode: single
     then:
+      - delay: 10ms
       - script.execute: fp_np_wake
       - script.wait: fp_np_wake
       - lambda: |-
@@ -1091,7 +1106,10 @@ interval:
               id(fp_pending_cmd) == 0 && !id(fp_enrolling).state && id(fp_dup_pending) < 0 &&
               !id(fp_execute).is_running() && !id(fp_bell_rainbow).is_running() && !id(fp_np_save).is_running() &&
               !id(fp_np_boot).is_running() && !id(fp_sab_check).is_running() && !id(fp_touch).state &&
-              (millis() - id(fp_last_finish)) > 10000UL) {
+              (millis() - id(fp_last_finish)) > 10000UL &&
+              // nicht während das Schloss beschäftigt ist (Motor läuft, Verbindung wird aufgebaut) -> später nachholen
+              id(lock_status).state != "MOVING" &&
+              (id(ble_state).state == "IDLE" || id(ble_state).state == "ESTABLISHED")) {
             id(fp_sab_last_check) = millis();
             id(fp_sab_check).execute();
           }
