@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.5.2 (2026-11-09) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.5.3 (2026-11-09) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.5.2';
+  const APP_VERSION = '3.5.3';
   const GUIDE_URL = 'https://github.com/2nice4u/esphome-components-eqiva/blob/main/docs/ANLEITUNG.md';
 
   // ---------------------------------------------------------------- Zustand
@@ -279,11 +279,13 @@
     const tilesHtml = tiles.length ? '<div class="tiles">' + tiles.map((t) => '<div class="tile ' + t[2] + '"><span>' + esc(t[0]) + '</span><b>' + esc(t[1]) + '</b></div>').join('') + '</div>' : '';
     const ev = events(), rtHead = reactionHead();
     const f1 = (v) => v.toFixed(1).replace('.', ',') + ' s';
-    const evHtml = has('text_sensor/Ereignisse') || rtHead ? card('<h2>' + (rtHead ? 'Ereignisse und Reaktionszeit' : 'Ereignisse') + '</h2>' + rtHead +
+    const withRt = has('text_sensor/Reaktionszeiten');   // Titel bleibt gleich, auch ohne Messung (z. B. nach Neustart)
+    const evHtml = has('text_sensor/Ereignisse') || withRt ? card('<h2>' + (withRt ? 'Ereignisse und Reaktionszeit' : 'Ereignisse') + '</h2>' + rtHead +
+      (withRt && !rtHead && ev.length ? '<p class="muted small">Reaktionszeit: noch keine Messung seit dem Start.</p>' : '') +
       (ev.length ? '<ul class="ev evrt">' + ev.map((e) =>
         '<li><span class="dot k-' + e.kind + '"></span><span class="et">' + esc(e.label) + '<small>' + esc((e.day ? e.day + ' ' : '') + e.time) + '</small></span>' +
         '<span class="rtv ' + (isFinite(e.rt) ? rtClass(e.rt) : '') + '">' + (isFinite(e.rt) ? f1(e.rt) : '') + '</span></li>').join('') + '</ul>'
-        : '<p class="muted">Noch keine Ereignisse seit dem Start.</p>')) : '';
+        : '<p class="muted">' + (withRt && !rtHead ? 'Noch keine Ereignisse und Messungen seit dem Start.' : 'Noch keine Ereignisse seit dem Start.') + '</p>')) : '';
     const setup = txt('text_sensor/Einrichtungsstatus');
     const setupHtml = setup && !/^✅/.test(setup) && !/TESTMODUS/.test(setup) ? card('<span class="lbl">Einrichtung</span><p>' + esc(setup) + '</p>' +
       (has('button/BLE Pair _Start_') && /^[①②]/.test(setup) ? '<div class="foot">' + btn('pair', 'Jetzt koppeln', 'b pri') + '</div>' :
@@ -420,7 +422,7 @@
   // Zeitplan-Zeile "an 22:00 Mo-Fr zu" (gleiche Regeln wie im ESP)
   const SCHED_N = 6;
   function parseSched(t) {
-    const r = { empty: false, valid: false, on: true, time: '', mask: 0x7F, act: 2 };
+    const r = { empty: false, valid: false, on: true, time: '', mask: 0x7F, act: 2, rdir: '', rmin: 0 };
     const days = [];
     const toks = String(t || '').toLowerCase().split(/\s+/).filter(Boolean);
     if (!toks.length) { r.empty = true; return r; }
@@ -430,6 +432,8 @@
       else if (/^(aus|off)$/.test(k)) r.on = false;
       else if (/^(zu|zuschlie(ß|ss)en|lock)$/.test(k)) r.act = 2;
       else if (/^(auf|aufschlie(ß|ss)en|unlock)$/.test(k)) r.act = 1;
+      // Zufall: +N nur später, -N nur früher, ±N oder +-N beides (N = 0…60, 0 = aus)
+      else if ((m = k.match(/^(±|\+-|\+|-)(\d{1,2})$/)) && +m[2] <= 60) { r.rmin = +m[2]; r.rdir = !r.rmin ? '' : m[1] === '+' ? 'p' : m[1] === '-' ? 'm' : 'b'; }
       else if ((m = k.match(/^(\d{1,2}):(\d{1,2})(:00)?$/)) && +m[1] < 24 && +m[2] < 60) r.time = String(+m[1]).padStart(2, '0') + ':' + String(+m[2]).padStart(2, '0');
       else days.push(k);
     }
@@ -438,7 +442,8 @@
     r.valid = !!r.time && r.mask > 0;
     return r;
   }
-  const buildSched = (o) => (o.on ? 'an' : 'aus') + ' ' + o.time + ' ' + daysText(o.mask) + ' ' + (o.act === 1 ? 'auf' : 'zu');
+  const RSYM = { p: '+', m: '-', b: '±' };
+  const buildSched = (o) => (o.on ? 'an' : 'aus') + ' ' + o.time + ' ' + daysText(o.mask) + ' ' + (o.act === 1 ? 'auf' : 'zu') + (o.rdir && o.rmin ? ' ' + RSYM[o.rdir] + o.rmin : '');
   const schedId = (n) => 'text/Zeitplan ' + n;
 
   function viewPlan() {
@@ -463,13 +468,22 @@
       const what = p.act === 1 ? 'Aufschließen' : 'Zuschließen';
       h += '<div class="srow' + (p.on ? '' : ' off') + '"><button type="button" class="smain" data-a="sched-edit" data-x="' + n + '" aria-label="Zeitplan ' + n + ': ' + p.time + ' ' + daysText(p.mask) + ' ' + what + ' – bearbeiten">' +
         '<span class="sic ' + (p.act === 1 ? 'unl' : 'lck') + '">' + icon(p.act === 1 ? 'unlock' : 'lock', 20) + '</span>' +
-        '<span class="stime">' + p.time + '</span><span class="sdays" aria-hidden="true">' +
+        '<span class="stime">' + p.time + (p.rdir ? '<small class="srnd">' + RSYM[p.rdir] + p.rmin + ' min</small>' : '') + '</span><span class="sdays" aria-hidden="true">' +
         'MDMDFSS'.split('').map((d, i) => '<span' + (p.mask & (1 << i) ? ' class="on"' : '') + '>' + d + '</span>').join('') + '</span></button>' +
         '<button type="button" class="sw' + (p.on ? ' on' : '') + '" role="switch" aria-checked="' + p.on + '" aria-label="Zeitplan ' + n + ' aktiv" data-a="sched-tog" data-x="' + n + '"' + (S.busy ? ' disabled' : '') + '><span></span></button></div>';
     }
     if (!list.length) h += '<p class="muted">Noch kein Zeitplan angelegt.</p>';
     if (free) h += '<button type="button" class="sadd" data-a="sched-new" data-x="' + firstFree + '">+ Zeitplan (' + list.length + ' von ' + (list.length + free) + ')</button>';
     return h + '</div>';
+  }
+  // Klartext unter der Zufallsauswahl, z. B. "Zuschließen zufällig zwischen 21:50 und 22:10 Uhr …"
+  function rndPreview(s) {
+    const what = s.act === 1 ? 'Aufschließen' : 'Zuschließen';
+    if (!s.rdir || !s.time) return what + ' genau um ' + esc(s.time || '–') + ' Uhr.';
+    const [h, m] = s.time.split(':').map(Number), t = h * 60 + m;
+    const lo = Math.max(0, t - (s.rdir === 'p' ? 0 : s.rmin)), hi = Math.min(1439, t + (s.rdir === 'm' ? 0 : s.rmin));
+    const f = (x) => String(Math.floor(x / 60)).padStart(2, '0') + ':' + String(x % 60).padStart(2, '0');
+    return what + ' zufällig zwischen <b>' + f(lo) + '</b> und <b>' + f(hi) + '</b> Uhr, jeden Tag neu ausgewürfelt.';
   }
   function sheetSched(s) {
     const days = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
@@ -482,6 +496,12 @@
       days.map((d, i) => '<button type="button" class="' + (s.mask & (1 << i) ? 'sel' : '') + '" data-a="sc-day" data-x="' + i + '" aria-pressed="' + !!(s.mask & (1 << i)) + '">' + d + '</button>').join('') + '</div>' +
       '<div class="presets">' + pre.map((p) => '<button type="button" class="chip' + (s.mask === p[0] ? ' sel' : '') + '" data-a="sc-pre" data-x="' + p[0] + '">' + p[1] + '</button>').join('') + '</div></div>' +
       (s.mask ? '' : '<p class="note">Mindestens einen Wochentag wählen.</p>') +
+      '<div class="fld"><span class="lbl">Zufällige Abweichung</span><div class="seg">' +
+      [['', 'Genau'], ['m', 'Früher'], ['p', 'Später'], ['b', 'Beides']].map((d) => '<button type="button" class="' + (s.rdir === d[0] ? 'sel' : '') + '" data-a="sc-rdir" data-x="' + d[0] + '" aria-pressed="' + (s.rdir === d[0]) + '">' + d[1] + '</button>').join('') + '</div>' +
+      (s.rdir ? '<div class="rstep"><button type="button" class="b sm" data-a="sc-rmin" data-x="' + (s.rmin - 1) + '" aria-label="1 Minute weniger"' + (s.rmin <= 1 ? ' disabled' : '') + '>−</button>' +
+        '<label><span>' + RSYM[s.rdir] + '</span><input type="number" inputmode="numeric" min="1" max="60" data-c="sc-rmin" data-k="sc-rmin" value="' + s.rmin + '" aria-label="Minuten"><span>min</span></label>' +
+        '<button type="button" class="b sm" data-a="sc-rmin" data-x="' + (s.rmin + 1) + '" aria-label="1 Minute mehr"' + (s.rmin >= 60 ? ' disabled' : '') + '>+</button></div>' : '') +
+      '<p class="muted small rprev">' + rndPreview(s) + '</p></div>' +
       '<div class="foot">' + (s.isNew ? '' : (S.confirm === 'sched' ? btn('sc-del', 'Wirklich löschen', 'b danger') : btn('ask-sched', 'Löschen', 'b'))) +
       '<button type="button" class="b pri" data-a="sc-save"' + (s.mask && s.time && !S.busy ? '' : ' disabled') + '>Speichern</button></div>';
   }
@@ -692,7 +712,7 @@
       case 'sched-edit': case 'sched-new': {
         const n = +x, p = parseSched(txt(schedId(n))), isNew = a === 'sched-new' || p.empty;
         S.confirm = '';
-        S.sheet = { type: 'sched', n, isNew, on: isNew ? true : p.on, time: p.time || '22:00', act: p.act, mask: p.mask > 0 ? p.mask : 0x7F };
+        S.sheet = { type: 'sched', n, isNew, on: isNew ? true : p.on, time: p.time || '22:00', act: p.act, mask: p.mask > 0 ? p.mask : 0x7F, rdir: p.rdir || '', rmin: p.rmin || 10 };
         break;
       }
       case 'sched-tog': {
@@ -702,6 +722,8 @@
         return run([[schedId(n), 'set', { value: buildSched(p) }]], 'Zeitplan ' + (p.on ? 'eingeschaltet' : 'ausgeschaltet'));
       }
       case 'sc-act': S.sheet.act = +x; break;
+      case 'sc-rdir': S.sheet.rdir = x; break;
+      case 'sc-rmin': S.sheet.rmin = Math.min(60, Math.max(1, +x || 1)); break;
       case 'sc-day': S.sheet.mask ^= 1 << +x; break;
       case 'sc-pre': S.sheet.mask = +x; break;
       case 'ask-sched': S.confirm = 'sched'; break;
@@ -780,7 +802,11 @@
     if (!n.dataset) return;
     if (n.dataset.c === 'w-newperson' && S.wiz) { S.wiz.person = n.value.replace(/[,|]/g, ' ').trim(); draw(); }
     if (n.dataset.c === 'p-new' && S.sheet) S.sheet.newName = n.value;
-    if (n.dataset.c === 'sc-time' && S.sheet && n.value) S.sheet.time = n.value.slice(0, 5);
+    if (n.dataset.c === 'sc-time' && S.sheet && n.value) {   // nicht neu zeichnen (Zeitwähler bliebe sonst nicht offen)
+      S.sheet.time = n.value.slice(0, 5);
+      const pv = document.querySelector('#eqa .rprev'); if (pv) pv.innerHTML = rndPreview(S.sheet);
+    }
+    if (n.dataset.c === 'sc-rmin' && S.sheet && n.value) { S.sheet.rmin = Math.min(60, Math.max(1, Math.round(+n.value) || 1)); draw(); }
     if (n.dataset.c === 'pair-key' && S.pair) { S.pair.key = n.value; draw(); }
   }
   function onChange(e) {
@@ -810,12 +836,12 @@
   }
 
   const CSS_TEXT = `
-#eqa{--bg:#F3F4F6;--card:#FFF;--fg:#111827;--muted:#4B5563;--line:#E5E7EB;--bline:#C7CCD4;--soft:#F3F4F6;--acc:#1D4ED8;--accs:#EFF6FF;--acci:#1E3A8A;
+#eqa{--bg:#E4E7EC;--card:#FFF;--fg:#111827;--muted:#4B5563;--line:#D3D8E0;--bline:#C7CCD4;--soft:#F3F4F6;--acc:#1D4ED8;--accs:#EFF6FF;--acci:#1E3A8A;
 --lk:#15803D;--lkb:#DCFCE7;--ul:#B91C1C;--ulb:#FEE2E2;--op:#1D4ED8;--opb:#DBEAFE;--mv:#374151;--mvb:#E5E7EB;--wr:#92400E;--wrb:#FEF3C7;--pu:#6D28D9;--pub:#EDE9FE;
 color-scheme:light;position:fixed;inset:0;overflow-y:auto;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;z-index:10;-webkit-tap-highlight-color:transparent}
-@media (prefers-color-scheme:dark){html:not([data-eqa-theme=light]) #eqa{color-scheme:dark;--bg:#0F1115;--card:#171A21;--fg:#E6E9EF;--muted:#9AA3B2;--line:#2A2F3A;--soft:#20242D;--acc:#6EA0FF;--accs:#1E2F57;--acci:#D6E4FF;--bline:#46506A;
+@media (prefers-color-scheme:dark){html:not([data-eqa-theme=light]) #eqa{color-scheme:dark;--bg:#08090C;--card:#1B1F27;--fg:#E6E9EF;--muted:#9AA3B2;--line:#333A48;--soft:#20242D;--acc:#6EA0FF;--accs:#1E2F57;--acci:#D6E4FF;--bline:#46506A;
 --lk:#4ADE80;--lkb:#12301F;--ul:#F87171;--ulb:#3A1717;--op:#7AA7FF;--opb:#172645;--mv:#CBD5E1;--mvb:#252A33;--wr:#FCD34D;--wrb:#3A2E10;--pu:#C4B5FD;--pub:#2A2142}}
-html[data-eqa-theme=dark] #eqa{color-scheme:dark;--bg:#0F1115;--card:#171A21;--fg:#E6E9EF;--muted:#9AA3B2;--line:#2A2F3A;--soft:#20242D;--acc:#6EA0FF;--accs:#1E2F57;--acci:#D6E4FF;--bline:#46506A;
+html[data-eqa-theme=dark] #eqa{color-scheme:dark;--bg:#08090C;--card:#1B1F27;--fg:#E6E9EF;--muted:#9AA3B2;--line:#333A48;--soft:#20242D;--acc:#6EA0FF;--accs:#1E2F57;--acci:#D6E4FF;--bline:#46506A;
 --lk:#4ADE80;--lkb:#12301F;--ul:#F87171;--ulb:#3A1717;--op:#7AA7FF;--opb:#172645;--mv:#CBD5E1;--mvb:#252A33;--wr:#FCD34D;--wrb:#3A2E10;--pu:#C4B5FD;--pub:#2A2142}
 html:not(.eqa-expert) esp-app{display:none}html.eqa-expert #eqa{display:none}
 #eqa-back{position:fixed;right:16px;bottom:16px;z-index:20;display:none;min-height:44px;padding:0 16px;border:0;border-radius:12px;background:#1D4ED8;color:#fff;font:600 14px system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer}
@@ -831,7 +857,9 @@ html.eqa-expert #eqa-back{display:block}
 @media (min-width:900px){#eqa nav.bottom{display:none}#eqa nav.top{display:flex}#eqa nav.top button{flex-direction:row;gap:8px;font-size:14px;padding:0 14px;min-height:44px}
 #eqa nav.top button.act{background:var(--accs);color:var(--acci)}#eqa main{padding-bottom:32px}#eqa .grid2{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}#eqa .cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
 #eqa .grid2{display:grid;gap:16px}#eqa .col{display:flex;flex-direction:column;gap:16px;min-width:0}#eqa .cards{display:grid;gap:14px;margin-bottom:14px}
-#eqa .card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;min-width:0}
+#eqa .card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;min-width:0;overflow:hidden}
+#eqa .card,#eqa .tile,#eqa .srow{box-shadow:0 1px 2px rgba(16,24,40,.06),0 4px 14px rgba(16,24,40,.07)}
+#eqa .card>h2:first-child,#eqa .card>h3:first-child{margin:-16px -16px 14px;padding:12px 16px;background:var(--accs);color:var(--acci);border-bottom:1px solid var(--line);font-size:16px;font-weight:800}
 #eqa .card.info{border-color:var(--op)}#eqa .card.warnc{background:var(--wrb);border-color:transparent;color:var(--wr);margin-bottom:14px}
 #eqa .hero{display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 0 16px}
 #eqa .ring{width:120px;height:120px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin-bottom:6px}
@@ -913,6 +941,8 @@ html.eqa-expert #eqa-back{display:block}
 #eqa .sadd{min-height:52px;border:1.5px dashed var(--bline);border-radius:16px;background:transparent;color:var(--acci);font:700 15px system-ui,sans-serif;cursor:pointer}
 #eqa .stbig{display:block;width:100%;text-align:center;font-size:44px;margin:4px 0 8px}
 #eqa .presets{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}#eqa .presets .chip{min-height:34px;font-weight:600}
+#eqa .srnd{display:block;font:600 11px system-ui,sans-serif;color:var(--muted)}#eqa .rprev{margin:10px 0 0}#eqa .rprev b{color:var(--fg)}
+#eqa .rstep{display:flex;align-items:center;gap:10px;margin-top:10px}#eqa .rstep .b{min-width:48px;min-height:44px;font-size:20px}#eqa .rstep label{display:flex;align-items:center;gap:6px;font:700 18px system-ui,sans-serif}#eqa .rstep input{width:72px;min-height:44px;text-align:center;font:700 20px system-ui,sans-serif;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg)}
 #eqa .presets .chip.sel{border-color:var(--acc);background:var(--accs);color:var(--acci)}
 #eqa .seg button svg{vertical-align:-3px}
 #eqa .plan.off{opacity:.7}#eqa .bigtime{font:700 30px system-ui,sans-serif;border:0;background:transparent;color:var(--fg);padding:0;font-variant-numeric:tabular-nums}
