@@ -587,6 +587,7 @@ void EqivaKeyBle::sendCommand(CommandType command) {
     reaction_pending_ = true;
     reaction_act_ = command == LOCK ? 'z' : (command == UNLOCK ? 'a' : 'o');
     reaction_src_ = ev_pending_src_.substr(0, 16);
+    ev_reaction_ms_ = 0;
     last_command_ms_ = now;
     last_command_valid_ = true;
     cmd_source_.clear();
@@ -967,6 +968,7 @@ void EqivaKeyBle::on_lock_state_(uint8_t st) {
       list += buf + reaction_hist_[i].src;
     }
     this->publish_(this->reaction_list_sensor_, list);
+    ev_reaction_ms_ = ms ? ms : 1;       // fürs Ereignis "🔒 Quelle (2,4 s)"
     ESP_LOGI(TAG, "Reaktionszeit: %.1f s", ms / 1000.0f);
   }
   if (st == 1) {                         // MOVING
@@ -979,8 +981,16 @@ void EqivaKeyBle::on_lock_state_(uint8_t st) {
   if (ev_pending_ >= 0) {
     const uint8_t want = ev_pending_ == LOCK ? 3 : (ev_pending_ == UNLOCK ? 2 : 4);
     if (st == want) {
-      this->log_event(std::string(icon[st]) + " " + ev_pending_src_);
+      std::string dur;
+      if (ev_reaction_ms_ > 0) {         // Reaktionszeit mit Dezimalkomma anhängen
+        char b[16];
+        snprintf(b, sizeof(b), " (%.1f s)", ev_reaction_ms_ / 1000.0f);
+        for (char *c = b; *c; c++) if (*c == '.') *c = ',';
+        dur = b;
+      }
+      this->log_event(std::string(icon[st]) + " " + ev_pending_src_ + dur);
       ev_pending_ = -1;
+      ev_reaction_ms_ = 0;
     } else if (ev_moved_ && !(ev_pending_ == OPEN && st == 2)) {
       // nach der Fahrt ein anderer Endzustand -> Befehl nicht ausgeführt
       this->log_event(std::string("✗ ") + (want == 3 ? "zu" : want == 2 ? "auf" : "öffnen") + " " +

@@ -8,7 +8,7 @@ Protokoll und Verschlüsselung sind unverändert. Die wichtigsten Änderungen:
 - **Energiemodi:** Schnell / Ausgewogen / Sparsam, live umschaltbar
 - **Web-App direkt auf dem ESP:** Bedienung, Pairing per QR-Text, Schlossantrieb einstellen, Kopplung entfernen (Schloss tauschen)
 - **Ereignisprotokoll:** wer wann auf- oder zugeschlossen hat, von Hand, Klingel, Sabotage (letzte 10 Ereignisse)
-- **Reaktionszeit:** Zeit vom Befehl bis der Motor dreht, mit Ø, max und Ampel in der App
+- **Ereignisse und Reaktionszeit:** alle Ereignisse mit Uhrzeit auf der Startseite, dazu die Zeit vom Befehl bis der Motor dreht, mit Ø, max und Ampel
 - **Pairing abgesichert:** bei Fehlschlag oder Abbruch bleibt die bisherige Kopplung, Hinweis „Schloss nicht erreichbar“
 - **Neu in der Komponente:** RSSI-Sensor der Verbindung, `on_paired`-Auslöser, klare Meldungen bei fehlendem Pairing oder Pairing-Modus
 - **Beispiel-Konfiguration** in [`examples/`](examples/): Energiemodi, Testmodus ohne Schloss und optionale Pakete für R503-Fingerprint, Status-LED, Statistik und bis zu 6 Zeitpläne
@@ -21,9 +21,9 @@ Versionen und Änderungen: [CHANGELOG.md](CHANGELOG.md)
 Die Bedienung läuft über eine eigene Web-App direkt auf dem ESP – am Handy und am PC, hell oder dunkel,
 auch ohne Home Assistant und ohne Internet. Die ESPHome-Tabelle bleibt als „Expertenansicht“ erreichbar.
 
-| Schloss (hell) | Zeitplan | Reaktionszeit |
+| Schloss (hell) | Zeitplan | Ereignisse und Reaktionszeit |
 |---|---|---|
-| ![Schloss](docs/img/gh-schloss-hell.png) | ![Zeitplan](docs/img/gh-zeitplan-hell.png) | ![Reaktionszeit](docs/img/gh-reaktionszeit-hell.png) |
+| ![Schloss](docs/img/gh-schloss-hell.png) | ![Zeitplan](docs/img/gh-zeitplan-hell.png) | ![Ereignisse und Reaktionszeit](docs/img/gh-reaktionszeit-hell.png) |
 
 | Zeitplan bearbeiten | Schloss (dunkel) | Fingerprint (dunkel) |
 |---|---|---|
@@ -43,7 +43,7 @@ Die Bilder zeigen Testdaten, keine echten Personen oder Bedienungen.
 
    ```yaml
    external_components:
-     - source: github://2nice4u/esphome-components-eqiva@v3.5.1
+     - source: github://2nice4u/esphome-components-eqiva@v3.5.2
    ```
 
    YAMLs und Komponente gehören zusammen. Für ein Update die Dateien des neuen

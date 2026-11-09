@@ -28,7 +28,7 @@ namespace eqiva_key_ble {
 using namespace esp32_ble_client;
 
 // Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
-#define EQIVA_PATCH_VERSION "3.5.1"
+#define EQIVA_PATCH_VERSION "3.5.2"
 
 // Patch-Konstanten
 static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
@@ -120,6 +120,7 @@ class EqivaKeyBle : public BLEClientBase {
     std::string ev_pending_src_;
     uint32_t ev_pending_at_{0};
     bool ev_moved_{false};               // seit dem Befehl MOVING gesehen
+    uint32_t ev_reaction_ms_{0};         // gemessene Reaktionszeit des laufenden Befehls, 0 = keine
     uint32_t last_command_ms_{0};
     bool last_command_valid_{false};
     uint8_t ev_last_state_{255};         // letzter Endzustand (2/3/4), 255 = unbekannt
