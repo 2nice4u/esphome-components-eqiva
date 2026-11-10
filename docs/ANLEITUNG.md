@@ -1,6 +1,6 @@
 # Eqiva Smart Lock – Anleitung & Hilfe
 
-Gilt für Version 3.5.5 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
+Gilt für Version 3.5.6 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
 Änderungen: [CHANGELOG.md](../CHANGELOG.md)
 
 ## Die Web-App
@@ -17,6 +17,7 @@ Sie läuft direkt auf dem ESP, auch ohne Internet, am Handy und am PC.
 
 - **Kopfzeile** (auf allen Seiten): links das Schloss-Symbol in der Farbe des Zustands (grün zu, rot auf, blau geöffnet, grau Motor läuft) und der Zustand als Wort; rechts der Umschalter **Automatisch · Hell · Dunkel** und darunter die **Uhrzeit des ESP**. Steht dort ein gelbes „⚠ --:--“, kennt der ESP keine Uhrzeit – der Zeitplan pausiert dann.
 - **Kachel „Bluetooth“** (Startseite): **Verbunden** (grün) · **Verbindungsaufbau** (blau, Symbol pulsiert) · **Idle** (grau; im Sparmodus mit „verbindet bei Bedarf“ – das ist dort der Normalzustand) · **Schloss nicht gefunden** (gelb: ein Befehl kam bis zum Zeitlimit nicht zum Schloss durch) · **Verbindungsfehler** (rot: der Verbindungsaufbau ist gescheitert). Ein Fehler bleibt stehen, bis eine Verbindung klappt oder ein neuer Befehl kommt. In Home Assistant heißt der Sensor „Bluetooth“.
+- **„Stand: vor … min“** (Startseite, unter dem Zustand): erscheint, wenn keine Verbindung besteht und die letzte Statusmeldung des Schlosses älter als 5 Minuten ist – der angezeigte Zustand könnte dann veraltet sein (z. B. von Hand aufgeschlossen). **Aktualisieren** fragt den Zustand sofort ab (Sensor „Letzte Statusmeldung“, Knopf „Status abfragen“).
 - **Auf dem Handy wie eine App:** in Chrome die Seite öffnen, Menü ⋮ → „Zum Startbildschirm hinzufügen“.
 - **Einrichtung** (Einstellungen): Schloss koppeln (Pairing-Assistent), Kopplung entfernen, Schlossantrieb einstellen, ESP neu starten.
 - **Expertenansicht** (Einstellungen, ganz unten): die bisherige ESPHome-Tabelle mit allen Entitäten –
@@ -89,7 +90,7 @@ Das Schloss erlaubt nur **eine** Bluetooth-Verbindung gleichzeitig. Vor der App 
 
 - **Schnell**: Dauerverbindung, Tür öffnet am schnellsten, höchster Batterieverbrauch.
 - **Ausgewogen**: Dauerverbindung mit längerem Verbindungsabstand (Standard 100 ms). Spart Batterie, Befehle brauchen etwas länger.
-- **Sparsam**: Verbindet nur bei Bedarf und trennt nach Leerlauf (Standard 30 s). Der erste Befehl dauert ca. 3–5 s. Der Status wird periodisch abgefragt (Standard alle 30 min). Wird das Schloss von Hand bedient, sieht Home Assistant das erst bei der nächsten Abfrage.
+- **Sparsam**: Verbindet nur bei Bedarf und trennt nach Leerlauf (Standard 30 s). Der erste Befehl dauert ca. 3–5 s. Mit Fingerprint baut der ESP die Verbindung schon beim Auflegen auf („Bei Berührung vorab verbinden“, Fingerprint Einstellungen, Standard an, höchstens einmal pro Minute) – der Befehl geht dann schneller raus. Der Status wird periodisch abgefragt (Standard alle 30 min). Wird das Schloss von Hand bedient, sieht Home Assistant das erst bei der nächsten Abfrage.
 
 > Umschalten wirkt sofort, ohne neu zu flashen. In der Web-App steht unter der Auswahl eine kurze Erklärung zum gewählten Modus.
 

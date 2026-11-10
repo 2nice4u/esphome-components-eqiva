@@ -958,6 +958,18 @@ void EqivaKeyBle::publish_events_() {
 
 void EqivaKeyBle::on_lock_state_(uint8_t st) {
   const uint32_t now = millis();
+  if (this->last_status_sensor_ != nullptr) {   // jede Statusmeldung: Zeitpunkt merken, z. B. 2026-11-10T12:02:05+01:00
+    const time_t t = ::time(nullptr);
+    struct tm lt;
+    char iso[32] = "";
+    if (t > 1600000000 && localtime_r(&t, &lt) != nullptr) {
+      char tz[8];
+      strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%S", &lt);
+      strftime(tz, sizeof(tz), "%z", &lt);   // +0100 -> +01:00
+      if (strlen(tz) == 5) snprintf(iso + strlen(iso), sizeof(iso) - strlen(iso), "%.3s:%.2s", tz, tz + 3);
+    }
+    this->publish_(this->last_status_sensor_, iso);
+  }
   if (st == 1 && reaction_pending_) {    // erster Motorstart nach dem Befehl = Reaktionszeit
     reaction_pending_ = false;
     uint32_t ms = now - reaction_started_;

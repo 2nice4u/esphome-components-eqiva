@@ -28,7 +28,7 @@ namespace eqiva_key_ble {
 using namespace esp32_ble_client;
 
 // Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
-#define EQIVA_PATCH_VERSION "3.5.5"
+#define EQIVA_PATCH_VERSION "3.5.6"
 
 // Patch-Konstanten
 static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
@@ -239,6 +239,8 @@ class EqivaKeyBle : public BLEClientBase {
 
         void set_lock_ble_state_sensor(text_sensor::TextSensor *lock_ble_state_sensor) { this->lock_ble_state_sensor_ = lock_ble_state_sensor; }
         void set_ble_status_sensor(text_sensor::TextSensor *s) { this->ble_status_sensor_ = s; }
+        // Zeitpunkt der letzten Statusmeldung des Schlosses (ISO 8601, leer ohne Uhrzeit) – zeigt, wie aktuell der Zustand ist
+        void set_last_status_sensor(text_sensor::TextSensor *s) { this->last_status_sensor_ = s; }
         void set_low_battery_sensor(text_sensor::TextSensor *low_battery_sensor) { this->low_battery_sensor_ = low_battery_sensor; }
         void set_lock_status_sensor(text_sensor::TextSensor *lock_status_sensor) { this->lock_status_sensor_ = lock_status_sensor; }
         void set_user_key_sensor(text_sensor::TextSensor *user_key_sensor) { this->user_key_sensor_ = user_key_sensor; }
@@ -282,6 +284,7 @@ class EqivaKeyBle : public BLEClientBase {
     protected:
         text_sensor::TextSensor *lock_ble_state_sensor_{nullptr};
         text_sensor::TextSensor *ble_status_sensor_{nullptr};
+        text_sensor::TextSensor *last_status_sensor_{nullptr};
         text_sensor::TextSensor *low_battery_sensor_{nullptr};
         text_sensor::TextSensor *lock_status_sensor_{nullptr};
         text_sensor::TextSensor *user_key_sensor_{nullptr};

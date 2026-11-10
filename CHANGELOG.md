@@ -23,6 +23,48 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.5.6 – 2026-11-10
+
+### Neu
+- **„Stand: vor … min“ auf der Startseite:** Besteht keine Verbindung und ist die letzte Statusmeldung des Schlosses älter als 5 Minuten,
+  steht unter dem Zustand, wie alt er ist, mit dem Knopf **Aktualisieren**. So sieht man im Sparmodus, dass der Zustand veraltet sein kann
+  (z. B. von Hand aufgeschlossen). Neuer Sensor **„Letzte Statusmeldung“** (Komponente, `last_status`) und Knopf **„Status abfragen“**.
+- **Fingerprint im Sparmodus: Verbindung schon beim Auflegen.** Die Berührung startet den Verbindungsaufbau (nur Statusabfrage, kein
+  Schließbefehl), während der Finger gelesen wird. Höchstens einmal pro Minute, nicht bei Sabotage-Alarm, Fehlversuch-Sperre oder beim
+  Anlernen. Abschaltbar mit **„Bei Berührung vorab verbinden“** (Fingerprint Einstellungen, Standard an).
+
+### Behoben
+- Der Einrichtungsstatus zeigte während des Verbindungsaufbaus schon „🔄 Keine Verbindung: Empfang prüfen …“ (z. B. direkt nach
+  Neustart oder Moduswechsel). Jetzt steht dort „🔄 Verbinde mit dem Schloss …“, die Warnung erst, wenn keine Verbindung zustande kommt.
+
+### Hinweis
+- Nach dem Verbindungsaufbau fragt die Komponente den Zustand schon immer sofort ab, wenn kein Befehl wartet (in allen Energiemodi,
+  auch nach Neustart oder Abbruch). Daran ändert sich nichts.
+
+### Update
+- Pakete, `app.js` und den Komponenten-Ordner ersetzen (im Release `components/`, lokal laut `path:`), flashen.
+- **⚠️ Handlungsbedarf für eigene Hauptdateien** (beide Blöcke stehen in `eqiva-smart-lock-1.yaml`):
+  - unter `text_sensor:` beim Platform `eqiva_key_ble`:
+    ```yaml
+        last_status:
+          name: "Letzte Statusmeldung"
+          id: last_status_txt
+          web_server:
+            sorting_group_id: sg_diag
+    ```
+  - unter `button:`:
+    ```yaml
+      - platform: template
+        name: "Status abfragen"
+        id: status_btn
+        icon: "mdi:refresh"
+        web_server:
+          sorting_group_id: sg_lock
+        on_press:
+          - eqiva_key_ble.status:
+    ```
+  Ohne die Blöcke fehlt nur die Anzeige „Stand: vor … min“. Dazu `config_version: "3.5.6"`.
+
 ## 3.5.5 – 2026-11-10
 
 ### Neu

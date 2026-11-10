@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.5.5 (2026-11-10) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.5.6 (2026-11-10) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.5.5';
+  const APP_VERSION = '3.5.6';
   const GUIDE_URL = 'https://github.com/2nice4u/esphome-components-eqiva/blob/main/docs/ANLEITUNG.md';
 
   // ---------------------------------------------------------------- Zustand
@@ -270,9 +270,20 @@
     const sub = unpaired ? 'Bitte zuerst das Schloss koppeln' : st === 'MOVING' ? 'Befehl wird ausgeführt' :
       has('text_sensor/Bluetooth') ? '' :   // Verbindung zeigt die Kachel "Bluetooth"
       (ble === 'ESTABLISHED' ? 'Verbunden' : (eco ? 'Sparsam – verbindet bei Bedarf' : 'Keine Verbindung (' + (ble || '–') + ')'));
+    // Wie aktuell ist der Zustand? Ohne Verbindung und ab 5 min: "Stand: vor … min" mit Knopf zum Abfragen
+    let stale = '';
+    const lsT = Date.parse(txt('text_sensor/Letzte Statusmeldung'));
+    if (!unpaired && ble !== 'ESTABLISHED' && isFinite(lsT) && has('button/Status abfragen')) {
+      const m = Math.floor((Date.now() - lsT) / 60000);
+      if (m >= 5) {
+        const age = m < 60 ? 'vor ' + m + ' min' : m < 1440 ? 'vor ' + Math.floor(m / 60) + ' h ' + (m % 60) + ' min' :
+          'seit ' + new Date(lsT).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+        stale = '<div class="stale">' + icon('clock', 15) + '<span>Stand: ' + age + '</span>' + btn('press', icon('spin', 15) + 'Aktualisieren', 'b sm', 'button/Status abfragen') + '</div>';
+      }
+    }
     const hero = card(
       '<div class="hero ' + L.cls + '"><div class="ring">' + icon(L.icon, 56, L.label) + '</div>' +
-      '<div class="hl">' + esc(L.label) + '</div>' + (sub ? '<div class="muted">' + esc(sub) + '</div>' : '') + '</div>' +
+      '<div class="hl">' + esc(L.label) + '</div>' + (sub ? '<div class="muted">' + esc(sub) + '</div>' : '') + stale + '</div>' +
       (unpaired ? '' : '<div class="acts">' +
       btn('lock', icon('lock', 20) + 'Zu', 'big g') +
       btn('unlock', icon('unlock', 20) + 'Auf', 'big r') +
@@ -628,6 +639,8 @@
       num('number/Ausgewogen: Verbindungsabstand', 'Ausgewogen: Abstand'), num('number/Sparsam: Trennen nach Leerlauf', 'Sparsam: trennen nach'),
       num('number/Sparsam: Status-Abfrage alle', 'Sparsam: Status alle')]);
     h += grp('Fingerprint', [choice('select/Standard-Aktion (Finger ohne Zuordnung)', 'Standard-Aktion'), toggle('switch/Klingel bei unbekanntem Finger', 'Klingel bei unbekanntem Finger'),
+      toggle('switch/Bei Berührung vorab verbinden', 'Bei Berührung vorab verbinden (Sparmodus)'),
+      has('switch/Bei Berührung vorab verbinden') ? '<p class="muted small">Baut schon beim Auflegen die Verbindung zum Schloss auf – der Befehl geht dann schneller raus. Höchstens einmal pro Minute.</p>' : '',
       choice('select/Klingel-Anzeige', 'Klingel-Anzeige'), num('number/Klingel-Verzögerung', 'Klingel-Verzögerung'), num('number/Klingel-Pause', 'Klingel-Pause'),
       toggle('switch/Ring-Anzeige bei Bedienung ohne Finger', 'Ring bei Bedienung ohne Finger'), num('number/Max. Fehlversuche', 'Max. Fehlversuche'),
       num('number/Sperrzeit nach Fehlversuchen', 'Sperrzeit'), num('number/Min. Übereinstimmung', 'Min. Übereinstimmung'),
@@ -880,6 +893,7 @@ html.eqa-expert #eqa-back{display:block}
 #eqa *{box-sizing:border-box}#eqa h1{margin:0;font-size:20px;font-weight:700}#eqa h2{margin:0 0 8px;font-size:17px;font-weight:700}#eqa h3{margin:0 0 10px;padding-bottom:8px;border-bottom:2px solid var(--accs);font-size:16px;font-weight:700;color:var(--acci)}
 #eqa p{margin:6px 0}#eqa .muted{color:var(--muted)}#eqa .small{font-size:12px}#eqa .note{font-size:13px;color:var(--wr)}#eqa .knauf{display:flex;gap:10px;align-items:flex-start;margin-top:14px;padding:12px 14px;border-radius:12px;background:var(--wrb);color:var(--wr);border:1.5px solid var(--wr)}#eqa .knauf b{display:block;font-size:15px;margin-bottom:2px}#eqa .knauf span{font-size:14px;line-height:1.35}#eqa .knauf svg{flex:none;margin-top:1px}#eqa .knauf.sm{margin-top:8px;padding:10px 12px}#eqa .knauf.sm span{font-size:13px}
 #eqa header{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:14px 16px;background:var(--card);border-bottom:1px solid var(--line)}
+#eqa .stale{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:13px;color:var(--wr)}#eqa .stale svg{flex:none}#eqa .stale .b{min-height:34px;padding:0 12px;font-size:13px}
 #eqa .hlock{width:46px;height:46px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none}#eqa .hlock.klk{background:var(--lkb);color:var(--lk)}#eqa .hlock.kul{background:var(--ulb);color:var(--ul)}#eqa .hlock.kop{background:var(--opb);color:var(--op)}#eqa .hlock.kmv{background:var(--mvb);color:var(--mv)}#eqa .hlock.kwr{background:var(--wrb);color:var(--wr)}#eqa .hstate{font:700 13px system-ui,sans-serif}#eqa .hstate.tlk{color:var(--lk)}#eqa .hstate.tul{color:var(--ul)}#eqa .hstate.top{color:var(--op)}#eqa .hstate.tmv{color:var(--mv)}#eqa .hstate.twr{color:var(--wr)}#eqa .hright{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none}#eqa .hseg{display:flex;border:1px solid var(--line);border-radius:999px;padding:3px;gap:2px;background:var(--soft)}#eqa .hseg button{width:34px;height:32px;border:0;border-radius:999px;background:transparent;color:var(--muted);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}#eqa .hseg button.sel{background:var(--card);color:var(--acci);box-shadow:0 1px 3px rgba(0,0,0,.15)}#eqa .hclock{display:inline-flex;align-items:center;gap:5px;font:700 13px system-ui,sans-serif;font-variant-numeric:tabular-nums;color:var(--muted)}#eqa .hclock.bad{color:var(--wr)}#eqa .tile.bt{min-width:0}#eqa .tile.bt span{display:flex;align-items:center;gap:5px}#eqa .tile.bt span svg{flex:none}#eqa .tile.bt b{white-space:normal;font-size:13px;line-height:1.25;overflow-wrap:break-word}#eqa .tile.bt small{font-size:11px;color:var(--muted)}#eqa .tile.bt.g b,#eqa .tile.bt.g span svg{color:var(--lk)}#eqa .tile.bt.bl b{color:var(--op)}#eqa .tile.bt.bl span svg{color:var(--op);animation:eqpulse 1.2s ease-in-out infinite}@keyframes eqpulse{50%{opacity:.25}}#eqa .tile.bt.n b{color:var(--muted)}#eqa .tile.bt.y{background:var(--wrb);border-color:var(--wr)}#eqa .tile.bt.y b,#eqa .tile.bt.y span{color:var(--wr)}#eqa .tile.bt.r{background:var(--ulb);border-color:var(--ul)}#eqa .tile.bt.r b,#eqa .tile.bt.r span{color:var(--ul)}
 #eqa .brand{display:flex;flex-direction:column;flex:1;min-width:0}#eqa .brand h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #eqa main{max-width:1100px;margin:0 auto;padding:16px 16px 96px}
