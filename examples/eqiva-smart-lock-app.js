@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.5.4 (2026-11-09) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.5.5 (2026-11-10) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.5.4';
+  const APP_VERSION = '3.5.5';
   const GUIDE_URL = 'https://github.com/2nice4u/esphome-components-eqiva/blob/main/docs/ANLEITUNG.md';
 
   // ---------------------------------------------------------------- Zustand
@@ -198,6 +198,8 @@
     x: '<path d="M6 6l12 12M18 6L6 18"/>',
     edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+    auto: '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>',
+    bt: '<path d="M7 7l10 10-5 5V2l5 5L7 17"/>',
     moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
     auto: '<circle cx="12" cy="12" r="9"/><path d="M12 3v18"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>',
     book: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/>',
@@ -266,10 +268,11 @@
     const ble = txt('text_sensor/Lock BLE State');
     const eco = /Sparsam/.test(txt('select/Energiemodus'));
     const sub = unpaired ? 'Bitte zuerst das Schloss koppeln' : st === 'MOVING' ? 'Befehl wird ausgeführt' :
+      has('text_sensor/Bluetooth') ? '' :   // Verbindung zeigt die Kachel "Bluetooth"
       (ble === 'ESTABLISHED' ? 'Verbunden' : (eco ? 'Sparsam – verbindet bei Bedarf' : 'Keine Verbindung (' + (ble || '–') + ')'));
     const hero = card(
       '<div class="hero ' + L.cls + '"><div class="ring">' + icon(L.icon, 56, L.label) + '</div>' +
-      '<div class="hl">' + esc(L.label) + '</div><div class="muted">' + esc(sub) + '</div></div>' +
+      '<div class="hl">' + esc(L.label) + '</div>' + (sub ? '<div class="muted">' + esc(sub) + '</div>' : '') + '</div>' +
       (unpaired ? '' : '<div class="acts">' +
       btn('lock', icon('lock', 20) + 'Zu', 'big g') +
       btn('unlock', icon('unlock', 20) + 'Auf', 'big r') +
@@ -281,7 +284,13 @@
     if (has('binary_sensor/Batterie schwach')) tiles.push(['Batterie', on('binary_sensor/Batterie schwach') ? 'Schwach' : 'OK', on('binary_sensor/Batterie schwach') ? 'warn' : '']);
     if (has('sensor/Schloss Signal')) { const v = Number(val('sensor/Schloss Signal', NaN)); tiles.push(['Signal', isFinite(v) ? Math.round(v) + ' dBm' : '–', '']); }
     if (has('select/Energiemodus')) tiles.push(['Energie', txt('select/Energiemodus'), '']);
-    const tilesHtml = tiles.length ? '<div class="tiles">' + tiles.map((t) => '<div class="tile ' + t[2] + '"><span>' + esc(t[0]) + '</span><b>' + esc(t[1]) + '</b></div>').join('') + '</div>' : '';
+    if (has('text_sensor/Bluetooth')) {   // immer Bluetooth-Symbol, Zustand über Farbe und Text
+      const b = txt('text_sensor/Bluetooth');
+      const c = { 'Verbunden': 'g', 'Verbindungsaufbau': 'bl', 'Idle': 'n', 'Schloss nicht gefunden': 'y', 'Verbindungsfehler': 'r' }[b] || 'n';
+      tiles.push(['Bluetooth', b || '–', 'bt ' + c, 'bt', b === 'Idle' && eco ? 'verbindet bei Bedarf' : '']);
+    }
+    const tilesHtml = tiles.length ? '<div class="tiles">' + tiles.map((t) => '<div class="tile ' + t[2] + '"><span>' + (t[3] ? icon(t[3], 14) : '') + esc(t[0]) + '</span><b>' + esc(t[1]) + '</b>' +
+      (t[4] ? '<small>' + esc(t[4]) + '</small>' : '') + '</div>').join('') + '</div>' : '';
     const ev = events(), rtHead = reactionHead();
     const f1 = (v) => v.toFixed(1).replace('.', ',') + ' s';
     const withRt = has('text_sensor/Reaktionszeiten');   // Titel bleibt gleich, auch ohne Messung (z. B. nach Neustart)
@@ -605,14 +614,15 @@
   function viewMore() {
     if (S.pair) return viewPair();
     const grp = (title, items) => { const inner = items.filter(Boolean).join(''); return inner ? card('<h3>' + title + '</h3>' + inner) : ''; };
-    const theme = '<div class="fld"><span class="lbl">Darstellung</span><div class="seg">' + [['auto', 'Automatisch'], ['light', 'Hell'], ['dark', 'Dunkel']].map((t) =>
-      '<button type="button" class="' + (S.theme === t[0] ? 'sel' : '') + '" data-a="theme" data-x="' + t[0] + '">' + t[1] + '</button>').join('') + '</div></div>';
     let h = '<h2>Einstellungen</h2><div class="cards">';
-    h += card(theme);
     h += viewSetup();
     if (has('switch/Simulation: Schloss erreichbar')) h += grp('Testmodus (Simulation)', [toggle('switch/Simulation: Schloss erreichbar', 'Schloss erreichbar'),
       num('number/Simulation: Fahrzeit', 'Fahrzeit'), has('button/Simulation: von Hand drehen') ? '<div class="foot">' + btn('press', 'Von Hand drehen', 'b', 'button/Simulation: von Hand drehen') + '</div>' : '']);
-    h += grp('Schloss', [choice('select/Energiemodus', 'Energiemodus'), choice('select/Türgriff außen', 'Türgriff außen'),
+    const EM = { 'Schnell': 'Dauerverbindung – das Schloss reagiert sofort. Höchster Batterieverbrauch im Schloss.',
+      'Ausgewogen': 'Dauerverbindung mit längerem Abstand – etwas langsamer, spart Batterie.',
+      'Sparsam': 'Verbindet nur bei Bedarf – der erste Befehl dauert ca. 3–5 s, weil erst die Verbindung aufgebaut wird. Handbedienung sieht der ESP erst bei der nächsten Statusabfrage.' };
+    const emHint = EM[txt('select/Energiemodus')] ? '<p class="muted small">' + EM[txt('select/Energiemodus')] + '</p>' : '';
+    h += grp('Schloss', [choice('select/Energiemodus', 'Energiemodus'), emHint, choice('select/Türgriff außen', 'Türgriff außen'),
       (!has('select/Türgriff außen') ? '' : knauf() ? '<div class="knauf sm">' + icon('alert', 18) + '<span>„Öffnen“ und „Umschalten“ per Finger ziehen die Falle. Der Motor dreht über „auf“ hinaus, bis die Tür frei ist – ohne eingebautes Schloss läuft er dabei lange.</span></div>' :
         '<p class="muted small">„Öffnen“ und „Umschalten“ schließen nur auf, die Klinke drückt man selbst.</p>'),
       num('number/Ausgewogen: Verbindungsabstand', 'Ausgewogen: Abstand'), num('number/Sparsam: Trennen nach Leerlauf', 'Sparsam: trennen nach'),
@@ -666,8 +676,22 @@
     const ver = fw && fw !== APP_VERSION ? '<div class="ban warn">Firmware v' + esc(fw) + ' – App v' + APP_VERSION + ': Dateien passen nicht zusammen.</div>' : '';
     const sim = has('switch/Simulation: Schloss erreichbar') ? '<span class="pill sim">Testmodus</span>' : '';
     const views = { start: viewStart, finger: viewFinger, plan: viewPlan, more: viewMore };
-    return '<header><div class="brand"><span class="muted small">Eqiva Smart Lock</span><h1>' + esc(S.title || 'Schloss') + '</h1></div>' + sim +
-      '<nav class="top" aria-label="Bereiche">' + nav + '</nav></header>' + conn + sab + ver +
+    // Kopfzeile: Schloss-Symbol und Zustand links, Darstellung und Uhrzeit des ESP rechts
+    const lst = txt('text_sensor/Lock Status', ''), unp = /^[①②]/.test(txt('text_sensor/Einrichtungsstatus'));
+    const LS = unp ? { label: 'Nicht gekoppelt', icon: 'unlock' } : (LOCK[lst] || (lst ? LOCK.UNKNOWN : { label: 'Lade …', icon: 'spin' }));
+    const sk = unp ? 'wr' : ({ LOCKED: 'lk', UNLOCKED: 'ul', OPENED: 'op', MOVING: 'mv' }[lst] || (lst ? 'wr' : 'mv'));
+    const TH = [['auto', 'auto', 'Darstellung automatisch'], ['light', 'sun', 'Hell'], ['dark', 'moon', 'Dunkel']];
+    const seg = '<div class="hseg" role="group" aria-label="Darstellung">' + TH.map((t) => '<button type="button" class="' + (S.theme === t[0] ? 'sel' : '') +
+      '" data-a="theme" data-x="' + t[0] + '" aria-label="' + t[2] + '" aria-pressed="' + (S.theme === t[0]) + '">' + icon(t[1], 17) + '</button>').join('') + '</div>';
+    let clock = '';
+    if (has('text_sensor/ESP Uhrzeit')) {
+      const tm = txt('text_sensor/ESP Uhrzeit'), ok = /^\d\d:\d\d$/.test(tm);
+      clock = '<span class="hclock' + (ok ? '' : ' bad') + '" title="' + (ok ? 'Uhrzeit des ESP' : 'ESP kennt keine Uhrzeit – Zeitplan pausiert') + '">' +
+        icon(ok ? 'clock' : 'alert', 14) + (ok ? tm : '--:--') + '</span>';
+    }
+    return '<header><span class="hlock k' + sk + '" title="' + esc(LS.label) + '">' + icon(LS.icon, 25) + '</span>' +
+      '<div class="brand"><h1>' + esc(S.title || 'Schloss') + '</h1><span class="hstate t' + sk + '">' + esc(LS.label) + '</span></div>' + sim +
+      '<nav class="top" aria-label="Bereiche">' + nav + '</nav><div class="hright">' + seg + clock + '</div></header>' + conn + sab + ver +
       '<main>' + views[S.tab]() + '</main><nav class="bottom" aria-label="Bereiche">' + nav + '</nav>' +
       viewSheet() + (S.toast ? '<div class="toast" role="status">' + esc(S.toast) + '</div>' : '');
   }
@@ -856,12 +880,13 @@ html.eqa-expert #eqa-back{display:block}
 #eqa *{box-sizing:border-box}#eqa h1{margin:0;font-size:20px;font-weight:700}#eqa h2{margin:0 0 8px;font-size:17px;font-weight:700}#eqa h3{margin:0 0 10px;padding-bottom:8px;border-bottom:2px solid var(--accs);font-size:16px;font-weight:700;color:var(--acci)}
 #eqa p{margin:6px 0}#eqa .muted{color:var(--muted)}#eqa .small{font-size:12px}#eqa .note{font-size:13px;color:var(--wr)}#eqa .knauf{display:flex;gap:10px;align-items:flex-start;margin-top:14px;padding:12px 14px;border-radius:12px;background:var(--wrb);color:var(--wr);border:1.5px solid var(--wr)}#eqa .knauf b{display:block;font-size:15px;margin-bottom:2px}#eqa .knauf span{font-size:14px;line-height:1.35}#eqa .knauf svg{flex:none;margin-top:1px}#eqa .knauf.sm{margin-top:8px;padding:10px 12px}#eqa .knauf.sm span{font-size:13px}
 #eqa header{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:14px 16px;background:var(--card);border-bottom:1px solid var(--line)}
+#eqa .hlock{width:46px;height:46px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none}#eqa .hlock.klk{background:var(--lkb);color:var(--lk)}#eqa .hlock.kul{background:var(--ulb);color:var(--ul)}#eqa .hlock.kop{background:var(--opb);color:var(--op)}#eqa .hlock.kmv{background:var(--mvb);color:var(--mv)}#eqa .hlock.kwr{background:var(--wrb);color:var(--wr)}#eqa .hstate{font:700 13px system-ui,sans-serif}#eqa .hstate.tlk{color:var(--lk)}#eqa .hstate.tul{color:var(--ul)}#eqa .hstate.top{color:var(--op)}#eqa .hstate.tmv{color:var(--mv)}#eqa .hstate.twr{color:var(--wr)}#eqa .hright{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none}#eqa .hseg{display:flex;border:1px solid var(--line);border-radius:999px;padding:3px;gap:2px;background:var(--soft)}#eqa .hseg button{width:34px;height:32px;border:0;border-radius:999px;background:transparent;color:var(--muted);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}#eqa .hseg button.sel{background:var(--card);color:var(--acci);box-shadow:0 1px 3px rgba(0,0,0,.15)}#eqa .hclock{display:inline-flex;align-items:center;gap:5px;font:700 13px system-ui,sans-serif;font-variant-numeric:tabular-nums;color:var(--muted)}#eqa .hclock.bad{color:var(--wr)}#eqa .tile.bt{min-width:0}#eqa .tile.bt span{display:flex;align-items:center;gap:5px}#eqa .tile.bt span svg{flex:none}#eqa .tile.bt b{white-space:normal;font-size:13px;line-height:1.25;overflow-wrap:break-word}#eqa .tile.bt small{font-size:11px;color:var(--muted)}#eqa .tile.bt.g b,#eqa .tile.bt.g span svg{color:var(--lk)}#eqa .tile.bt.bl b{color:var(--op)}#eqa .tile.bt.bl span svg{color:var(--op);animation:eqpulse 1.2s ease-in-out infinite}@keyframes eqpulse{50%{opacity:.25}}#eqa .tile.bt.n b{color:var(--muted)}#eqa .tile.bt.y{background:var(--wrb);border-color:var(--wr)}#eqa .tile.bt.y b,#eqa .tile.bt.y span{color:var(--wr)}#eqa .tile.bt.r{background:var(--ulb);border-color:var(--ul)}#eqa .tile.bt.r b,#eqa .tile.bt.r span{color:var(--ul)}
 #eqa .brand{display:flex;flex-direction:column;flex:1;min-width:0}#eqa .brand h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #eqa main{max-width:1100px;margin:0 auto;padding:16px 16px 96px}
 #eqa nav.top{display:none;gap:4px}#eqa nav.bottom{position:fixed;left:0;right:0;bottom:0;z-index:5;display:flex;background:var(--card);border-top:1px solid var(--line);padding:4px 6px calc(6px + env(safe-area-inset-bottom))}
 #eqa nav button{flex:1;min-height:54px;border:0;background:transparent;color:var(--muted);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font:600 11px system-ui,sans-serif;cursor:pointer;border-radius:10px}
 #eqa nav button.act{color:var(--acc)}
-@media (min-width:900px){#eqa nav.bottom{display:none}#eqa nav.top{display:flex}#eqa nav.top button{flex-direction:row;gap:8px;font-size:14px;padding:0 14px;min-height:44px}
+@media (min-width:900px){#eqa nav.bottom{display:none}#eqa nav.top{display:flex;margin:0 8px 0 auto}#eqa .brand{flex:0 1 auto;min-width:200px}#eqa nav.top button{flex-direction:row;gap:8px;font-size:14px;padding:0 14px;min-height:44px}
 #eqa nav.top button.act{background:var(--accs);color:var(--acci)}#eqa main{padding-bottom:32px}#eqa .grid2{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}#eqa .cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
 #eqa .grid2{display:grid;gap:16px}#eqa .col{display:flex;flex-direction:column;gap:16px;min-width:0}#eqa .cards{display:grid;gap:14px;margin-bottom:14px}
 #eqa .card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;min-width:0;overflow:hidden}

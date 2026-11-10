@@ -1,6 +1,6 @@
 # Eqiva Smart Lock – Anleitung & Hilfe
 
-Gilt für Version 3.5.4 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
+Gilt für Version 3.5.5 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
 Änderungen: [CHANGELOG.md](../CHANGELOG.md)
 
 ## Die Web-App
@@ -10,11 +10,13 @@ Sie läuft direkt auf dem ESP, auch ohne Internet, am Handy und am PC.
 
 | Bereich | Inhalt |
 |---|---|
-| **Schloss** | Zustand, Buttons Zu · Auf · Öffnen, Batterie, Empfang, Energiemodus, „Ereignisse und Reaktionszeit“ |
+| **Schloss** | Zustand, Buttons Zu · Auf · Öffnen, Batterie, Empfang, Energiemodus, Bluetooth, „Ereignisse und Reaktionszeit“ |
 | **Fingerprint** | Personen mit ihren Fingern; Finger antippen = Aktion ändern, neu anlernen, löschen; Stift = Person umbenennen; „+ Anlernen“ = Assistent |
 | **Zeitplan** | bis zu 6 Zeitpläne als Liste: antippen = bearbeiten, Schalter Ein/Aus, + Zeitplan |
-| **Einstellungen** | Einrichtung (Pairing, Schlossantrieb, Neustart), Energiemodus, Türgriff, Fingerprint, Sabotage-Erkennung, Darstellung (Automatisch · Hell · Dunkel), Diagnose |
+| **Einstellungen** | Einrichtung (Pairing, Schlossantrieb, Neustart), Energiemodus, Türgriff, Fingerprint, Sabotage-Erkennung, Diagnose |
 
+- **Kopfzeile** (auf allen Seiten): links das Schloss-Symbol in der Farbe des Zustands (grün zu, rot auf, blau geöffnet, grau Motor läuft) und der Zustand als Wort; rechts der Umschalter **Automatisch · Hell · Dunkel** und darunter die **Uhrzeit des ESP**. Steht dort ein gelbes „⚠ --:--“, kennt der ESP keine Uhrzeit – der Zeitplan pausiert dann.
+- **Kachel „Bluetooth“** (Startseite): **Verbunden** (grün) · **Verbindungsaufbau** (blau, Symbol pulsiert) · **Idle** (grau; im Sparmodus mit „verbindet bei Bedarf“ – das ist dort der Normalzustand) · **Schloss nicht gefunden** (gelb: ein Befehl kam bis zum Zeitlimit nicht zum Schloss durch) · **Verbindungsfehler** (rot: der Verbindungsaufbau ist gescheitert). Ein Fehler bleibt stehen, bis eine Verbindung klappt oder ein neuer Befehl kommt. In Home Assistant heißt der Sensor „Bluetooth“.
 - **Auf dem Handy wie eine App:** in Chrome die Seite öffnen, Menü ⋮ → „Zum Startbildschirm hinzufügen“.
 - **Einrichtung** (Einstellungen): Schloss koppeln (Pairing-Assistent), Kopplung entfernen, Schlossantrieb einstellen, ESP neu starten.
 - **Expertenansicht** (Einstellungen, ganz unten): die bisherige ESPHome-Tabelle mit allen Entitäten –
@@ -89,7 +91,7 @@ Das Schloss erlaubt nur **eine** Bluetooth-Verbindung gleichzeitig. Vor der App 
 - **Ausgewogen**: Dauerverbindung mit längerem Verbindungsabstand (Standard 100 ms). Spart Batterie, Befehle brauchen etwas länger.
 - **Sparsam**: Verbindet nur bei Bedarf und trennt nach Leerlauf (Standard 30 s). Der erste Befehl dauert ca. 3–5 s. Der Status wird periodisch abgefragt (Standard alle 30 min). Wird das Schloss von Hand bedient, sieht Home Assistant das erst bei der nächsten Abfrage.
 
-> Umschalten wirkt sofort, ohne neu zu flashen.
+> Umschalten wirkt sofort, ohne neu zu flashen. In der Web-App steht unter der Auswahl eine kurze Erklärung zum gewählten Modus.
 
 ## 7. Bluetooth-Empfang („Schloss Signal“)
 

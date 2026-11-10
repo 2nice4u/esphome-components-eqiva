@@ -28,7 +28,7 @@ namespace eqiva_key_ble {
 using namespace esp32_ble_client;
 
 // Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
-#define EQIVA_PATCH_VERSION "3.5.4"
+#define EQIVA_PATCH_VERSION "3.5.5"
 
 // Patch-Konstanten
 static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
@@ -147,7 +147,14 @@ class EqivaKeyBle : public BLEClientBase {
     uint8_t conn_fails_{0};
     time_t unreachable_since_{0};
     bool unreachable_logged_{false};
-    void conn_fail_();
+    void conn_fail_(bool not_found = false);
+    // Bluetooth-Status in Worten (App/HA): Verbunden, Verbindungsaufbau, Idle, Schloss nicht gefunden,
+    // Verbindungsfehler. Ein Fehler bleibt stehen, bis eine Verbindung klappt oder ein neuer Befehl kommt.
+    std::string ble_raw_{"IDLE"};
+    std::string ble_fail_;
+    bool attempt_open_error_{false};       // seit dem letzten Befehl ist ein Verbindungsaufbau gescheitert
+    void publish_ble_state_(const std::string &s);
+    void update_ble_status_();
     void conn_ok_();
     void ev_fail_(const char *why);
     void publish_events_();
@@ -231,6 +238,7 @@ class EqivaKeyBle : public BLEClientBase {
 
 
         void set_lock_ble_state_sensor(text_sensor::TextSensor *lock_ble_state_sensor) { this->lock_ble_state_sensor_ = lock_ble_state_sensor; }
+        void set_ble_status_sensor(text_sensor::TextSensor *s) { this->ble_status_sensor_ = s; }
         void set_low_battery_sensor(text_sensor::TextSensor *low_battery_sensor) { this->low_battery_sensor_ = low_battery_sensor; }
         void set_lock_status_sensor(text_sensor::TextSensor *lock_status_sensor) { this->lock_status_sensor_ = lock_status_sensor; }
         void set_user_key_sensor(text_sensor::TextSensor *user_key_sensor) { this->user_key_sensor_ = user_key_sensor; }
@@ -264,7 +272,7 @@ class EqivaKeyBle : public BLEClientBase {
 
         void set_state(esphome::esp32_ble_tracker::ClientState st) override {
             BLEClientBase::set_state(st);
-            this->publish_(this->lock_ble_state_sensor_, getClientState());
+            this->publish_ble_state_(getClientState());
         };
         void dump_config() override;
         bool gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
@@ -273,6 +281,7 @@ class EqivaKeyBle : public BLEClientBase {
 
     protected:
         text_sensor::TextSensor *lock_ble_state_sensor_{nullptr};
+        text_sensor::TextSensor *ble_status_sensor_{nullptr};
         text_sensor::TextSensor *low_battery_sensor_{nullptr};
         text_sensor::TextSensor *lock_status_sensor_{nullptr};
         text_sensor::TextSensor *user_key_sensor_{nullptr};
