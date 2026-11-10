@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # R503 Fingerprint – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 3.5.5 (2026-11-10) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.5.6 (2026-11-10) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Einbinden: packages: fingerprint: !include eqiva-smart-lock-fingerprint.yaml
 # Nutzt ${name}, lock_status, ble_state, door_handle und ha_time aus der Hauptdatei.
 #
@@ -110,6 +110,9 @@ uart:
 #            ohne Finger bedient: grün atmen = zu, rot atmen = auf, blau atmen = geöffnet
 #            Klingel = auswählbar (Standard Regenbogen) · Anlernen: lila atmen = auflegen, 2× grün = Bild ok (abheben), 2× gelb = schief
 globals:
+  - id: fp_pre_ms              # letztes Vorab-Verbinden beim Auflegen (Sparmodus, höchstens 1× pro Minute)
+    type: uint32_t
+    initial_value: '0'
   - id: fp_ok_ms               # Zeitpunkt "Finger erkannt" (grünes Blinken, danach erst die nächste Ringanzeige)
     type: uint32_t
     initial_value: '0'
@@ -492,8 +495,8 @@ script:
   - id: ver_check_fingerprint
     then:
       - lambda: |-
-          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.5") == 0,
-                        "Versionskonflikt: eqiva-smart-lock-fingerprint.yaml ist 3.5.5, Hauptdatei ist ${config_version} "
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.6") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-fingerprint.yaml ist 3.5.6, Hauptdatei ist ${config_version} "
                         "(alle Dateien gleicher Version verwenden oder version_check: false)");
   # Meldung in "Fingerprint: Letzte Aktion" (mit Uhrzeit, wenn bekannt)
   - id: fp_msg
@@ -1455,6 +1458,16 @@ switch:
       sorting_group_id: sg_fp_cfg
 
   - platform: template
+    name: "Bei Berührung vorab verbinden"
+    id: fp_preconnect
+    icon: "mdi:bluetooth-connect"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_fp_cfg
+
+  - platform: template
     name: "Klingel bei unbekanntem Finger"
     id: fp_bell_unknown
     icon: "mdi:doorbell-video"
@@ -2268,6 +2281,21 @@ binary_sensor:
       number: ${fp_sensing_pin}
       inverted: true
       allow_other_uses: true
+    # Sparmodus: schon beim Auflegen die Verbindung zum Schloss aufbauen (Statusabfrage, kein Schließbefehl).
+    # Finger lesen und Verbinden laufen dann gleichzeitig. Höchstens einmal pro Minute (schont die Schloss-Batterie),
+    # nicht bei Sabotage-Alarm, Fehlversuch-Sperre, beim Anlernen oder wenn abgeschaltet.
+    on_press:
+      - if:
+          condition:
+            lambda: |-
+              return id(fp_preconnect).state && id(fp_enabled).state && id(power_mode).current_option() == "Sparsam" &&
+                     id(ble_state).state == "IDLE" && !id(fp_sab) && !id(fp_locked) && !id(fp_enrolling).state &&
+                     (id(fp_pre_ms) == 0 || (millis() - id(fp_pre_ms)) >= 60000UL);
+          then:
+            - lambda: |-
+                id(fp_pre_ms) = millis() | 1;
+                ESP_LOGD("fp", "Finger aufgelegt – verbinde vorab mit dem Schloss");
+            - eqiva_key_ble.status:
   - platform: template
     name: "Fingerprint gesperrt"
     icon: "mdi:fingerprint-off"

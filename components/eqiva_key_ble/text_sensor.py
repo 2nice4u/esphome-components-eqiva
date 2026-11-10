@@ -20,6 +20,7 @@ CONF_MAC_ADDRESS = "mac_address"
 CONF_EVENTS = "events"
 CONF_REACTION_LIST = "reaction_list"
 CONF_BLE_STATUS = "ble_status"
+CONF_LAST_STATUS = "last_status"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -53,6 +54,11 @@ CONFIG_SCHEMA = cv.Schema(
             icon="mdi:bluetooth",
             entity_category=ENTITY_CATEGORY_NONE,
         ),
+        # Zeitpunkt der letzten Statusmeldung (ISO 8601) – wie aktuell ist der angezeigte Zustand
+        cv.Optional(CONF_LAST_STATUS): text_sensor.text_sensor_schema(
+            icon="mdi:clock-check-outline",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
         # Reaktionszeiten der letzten 10 Bedienungen (Aktion|Sekunden|Quelle, mit "; " getrennt)
         cv.Optional(CONF_REACTION_LIST): text_sensor.text_sensor_schema(
             icon="mdi:timer-outline",
@@ -75,6 +81,7 @@ async def to_code(config):
         CONF_EVENTS,
         CONF_REACTION_LIST,
         CONF_BLE_STATUS,
+        CONF_LAST_STATUS,
     ]:
         if key not in config:
             continue
