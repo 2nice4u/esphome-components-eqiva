@@ -33,7 +33,7 @@ void EqivaKeyBle::setup() {
     this->set_timeout("eqiva_sim_start", 1500, [this]() {
       this->sim_publish_state_(this->sim_state_);
       if (this->power_mode_ != POWER_ECO) this->sim_connect();
-      else this->publish_(this->lock_ble_state_sensor_, "IDLE");
+      else this->publish_ble_state_("IDLE");
     });
     return;
   }
@@ -61,6 +61,9 @@ void EqivaKeyBle::watchdog_() {
              (uint8_t) currentMsg->id, (unsigned) command_timeout_);
     clear_pending_();
     this->ev_fail_("Schloss nicht erreichbar");
+    // Bluetooth-Status: kam der Verbindungsaufbau gar nicht zustande -> nicht gefunden, sonst Fehler
+    ble_fail_ = attempt_open_error_ ? "Verbindungsfehler" : "Schloss nicht gefunden";
+    this->update_ble_status_();
   }
 
   // Pairing nach 60 s ohne Bestätigung abbrechen, bisherige Kopplung wiederherstellen
@@ -299,7 +302,7 @@ bool EqivaKeyBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t 
   if (!BLEClientBase::gattc_event_handler(event, esp_gattc_if, param))
     return false;
 
-  this->publish_(this->lock_ble_state_sensor_, getClientState());
+  this->publish_ble_state_(getClientState());
 
   switch (event) {
     case ESP_GATTC_OPEN_EVT: {
@@ -575,6 +578,8 @@ void EqivaKeyBle::init() {
 }
 
 void EqivaKeyBle::sendCommand(CommandType command) {
+  // Neuer Befehl = neuer Versuch: angezeigten Bluetooth-Fehler zurücksetzen
+  if (!ble_fail_.empty() || attempt_open_error_) { ble_fail_.clear(); attempt_open_error_ = false; this->update_ble_status_(); }
   if (command == LOCK || command == UNLOCK || command == OPEN) {
     // Ereignisprotokoll: Auslöser merken, Bestätigung kommt über den Status
     const uint32_t now = millis();
@@ -801,7 +806,7 @@ void EqivaKeyBle::sim_set_connected_(bool c) {
   if (c) this->conn_ok_();
   sim_connected_ = c;
   sim_connecting_ = false;
-  this->publish_(this->lock_ble_state_sensor_, c ? "ESTABLISHED" : "IDLE");
+  this->publish_ble_state_(c ? "ESTABLISHED" : "IDLE");
   if (rssi_sensor_ != nullptr)
     rssi_sensor_->publish_state(c ? -60.0f : NAN);
 }
@@ -812,7 +817,7 @@ void EqivaKeyBle::sim_connect() {
   sim_connecting_ = true;
   sim_conn_ready_ = millis() + 2000;   // simulierter Verbindungsaufbau
   touch_();
-  this->publish_(this->lock_ble_state_sensor_, "CONNECTING");
+  this->publish_ble_state_("CONNECTING");
   ESP_LOGI(SIM_TAG, "Simulation: verbinde ...");
 }
 
@@ -864,11 +869,11 @@ void EqivaKeyBle::sim_tick_() {
     } else if ((now - sim_pending_since_) > command_timeout_) {
       ESP_LOGW(SIM_TAG, "Simulation: Befehl verworfen (Schloss nicht erreichbar)");
       sim_pending_ = -1;
-      this->conn_fail_();
+      this->conn_fail_(true);
       this->ev_fail_("Schloss nicht erreichbar");
       if (sim_connecting_) {
         sim_connecting_ = false;
-        this->publish_(this->lock_ble_state_sensor_, "IDLE");
+        this->publish_ble_state_("IDLE");
       }
     }
   }
@@ -1072,12 +1077,33 @@ void EqivaKeyBle::forget_pairing() {
   this->log_event("🔗 Kopplung entfernt");
 }
 
+// Rohzustand veröffentlichen (Lock BLE State) und daraus den Bluetooth-Status in Worten ableiten
+void EqivaKeyBle::publish_ble_state_(const std::string &s) {
+  ble_raw_ = s;
+  this->publish_(this->lock_ble_state_sensor_, s);
+  if (s == "ESTABLISHED") { ble_fail_.clear(); attempt_open_error_ = false; }
+  this->update_ble_status_();
+}
+
+void EqivaKeyBle::update_ble_status_() {
+  if (this->ble_status_sensor_ == nullptr) return;
+  const char *st;
+  if (ble_raw_ == "ESTABLISHED") st = "Verbunden";
+  else if (!ble_fail_.empty()) st = ble_fail_.c_str();
+  else if (ble_raw_ == "IDLE" || ble_raw_ == "DISCONNECTING" || ble_raw_ == "INIT") st = "Idle";
+  else st = "Verbindungsaufbau";                      // CONNECTING, DISCOVERED, READY_TO_CONNECT, CONNECTED …
+  this->publish_(this->ble_status_sensor_, st);
+}
+
 void EqivaKeyBle::cancel_pair() {
   if (pair_pending_ || requestPair) this->pair_restore_("vom Nutzer abgebrochen", true);
   else ESP_LOGI(TAG, "Kein Pairing aktiv");
 }
 
-void EqivaKeyBle::conn_fail_() {
+void EqivaKeyBle::conn_fail_(bool not_found) {
+  if (!not_found) attempt_open_error_ = true;
+  ble_fail_ = not_found ? "Schloss nicht gefunden" : "Verbindungsfehler";
+  this->update_ble_status_();
   if (conn_fails_ == 0) {
     const time_t now = ::time(nullptr);
     unreachable_since_ = now > 1600000000 ? now : 0;

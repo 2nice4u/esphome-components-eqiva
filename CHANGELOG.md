@@ -23,6 +23,35 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.5.5 – 2026-11-10
+
+### Neu
+- **Neue Kopfzeile in der Web-App** (auf allen Seiten): links das Schloss-Symbol in der Farbe des Zustands und der Zustand als Wort,
+  rechts der Umschalter Automatisch · Hell · Dunkel und darunter die Uhrzeit des ESP. Ohne gültige Uhrzeit steht dort „⚠ --:--“
+  (Zeitplan pausiert). Die Auswahl „Darstellung“ unter Einstellungen entfällt.
+- **Kachel „Bluetooth“ auf der Startseite** neben „Energie“: Verbunden, Verbindungsaufbau, Idle, Schloss nicht gefunden, Verbindungsfehler –
+  immer mit Bluetooth-Symbol, der Zustand über Farbe und Text. Im Sparmodus steht unter „Idle“ „verbindet bei Bedarf“.
+  Dazu der neue Sensor **„Bluetooth“** in der Komponente (`ble_status`), auch in Home Assistant nutzbar.
+- **Neuer Sensor „ESP Uhrzeit“** im Zeitplan-Paket (HH:MM, leer ohne gültige Uhrzeit).
+- **Energiemodus erklärt:** unter der Auswahl in den Einstellungen eine kurze Erklärung zum gewählten Modus
+  (bei Sparsam: der erste Befehl dauert ca. 3–5 s).
+
+### Geändert
+- In der großen Schloss-Kachel entfällt die Zeile „Verbunden“ bzw. „Sparsam – verbindet bei Bedarf“ (steht jetzt in der Bluetooth-Kachel).
+
+### Update
+- Pakete, `app.js` und den Komponenten-Ordner ersetzen (im Release `components/`, lokal laut `path:`, meist `eqiva_components/`), flashen.
+- **⚠️ Handlungsbedarf für eigene Hauptdateien:** neuer Block unter `text_sensor:` beim Platform `eqiva_key_ble` übernehmen:
+  ```yaml
+      ble_status:
+        name: "Bluetooth"
+        id: ble_status_txt
+        icon: "mdi:bluetooth"
+        web_server:
+          sorting_group_id: sg_lock
+  ```
+  Ohne den Block fehlt die Bluetooth-Kachel, sonst funktioniert alles. Dazu `config_version: "3.5.5"`.
+
 ## 3.5.4 – 2026-11-09
 
 ### Behoben

@@ -43,7 +43,7 @@ Die Bilder zeigen Testdaten, keine echten Personen oder Bedienungen.
 
    ```yaml
    external_components:
-     - source: github://2nice4u/esphome-components-eqiva@v3.5.4
+     - source: github://2nice4u/esphome-components-eqiva@v3.5.5
    ```
 
    YAMLs und Komponente gehören zusammen. Für ein Update die Dateien des neuen

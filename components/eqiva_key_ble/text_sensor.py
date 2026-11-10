@@ -19,6 +19,7 @@ CONF_USER_ID = "user_id"
 CONF_MAC_ADDRESS = "mac_address"
 CONF_EVENTS = "events"
 CONF_REACTION_LIST = "reaction_list"
+CONF_BLE_STATUS = "ble_status"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -47,7 +48,12 @@ CONFIG_SCHEMA = cv.Schema(
             icon="mdi:history",
             entity_category=ENTITY_CATEGORY_NONE,
         ),
-        # Reaktionszeiten der letzten 10 Bedienungen (Sekunden, kommagetrennt)
+        # Bluetooth-Status in Worten: Verbunden, Verbindungsaufbau, Idle, Schloss nicht gefunden, Verbindungsfehler
+        cv.Optional(CONF_BLE_STATUS): text_sensor.text_sensor_schema(
+            icon="mdi:bluetooth",
+            entity_category=ENTITY_CATEGORY_NONE,
+        ),
+        # Reaktionszeiten der letzten 10 Bedienungen (Aktion|Sekunden|Quelle, mit "; " getrennt)
         cv.Optional(CONF_REACTION_LIST): text_sensor.text_sensor_schema(
             icon="mdi:timer-outline",
             entity_category=ENTITY_CATEGORY_NONE,
@@ -68,6 +74,7 @@ async def to_code(config):
         CONF_MAC_ADDRESS,
         CONF_EVENTS,
         CONF_REACTION_LIST,
+        CONF_BLE_STATUS,
     ]:
         if key not in config:
             continue

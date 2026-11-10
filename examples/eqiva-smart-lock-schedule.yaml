@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # Zeitplan – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 3.5.4 (2026-11-09) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.5.5 (2026-11-10) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Einbinden:   packages:
 #                schedule: !include eqiva-smart-lock-schedule.yaml
 #
@@ -65,8 +65,8 @@ script:
   - id: ver_check_schedule
     then:
       - lambda: |-
-          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.4") == 0,
-                        "Versionskonflikt: eqiva-smart-lock-schedule.yaml ist 3.5.4, Hauptdatei ist ${config_version} "
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.5") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-schedule.yaml ist 3.5.5, Hauptdatei ist ${config_version} "
                         "(alle Dateien gleicher Version verwenden oder version_check: false)");
   # Befehl ans Schloss (lokal, ohne HA)
   - id: sched_send
@@ -293,10 +293,24 @@ interval:
               status = "Kein Zeitplan aktiv";
             }
           }
+          // Uhrzeit des ESP für die Kopfzeile der Web-App (leer = keine Uhrzeit bekannt, Zeitplan pausiert)
+          {
+            char hm[8] = "";
+            if (t.is_valid()) snprintf(hm, sizeof(hm), "%02d:%02d", t.hour, t.minute);
+            if (id(esp_time_txt).state != hm) id(esp_time_txt).publish_state(hm);
+          }
           if (!id(sched_last).empty()) status += " · Zuletzt: " + id(sched_last);
           if (status != id(sched_status).state) id(sched_status).publish_state(status);   // nur bei Änderung
 
 text_sensor:
+  - platform: template
+    name: "ESP Uhrzeit"
+    id: esp_time_txt
+    icon: "mdi:clock-outline"
+    update_interval: never
+    entity_category: diagnostic
+    web_server:
+      sorting_group_id: sg_sched
   - platform: template
     name: "Zeitplan"
     id: sched_status
