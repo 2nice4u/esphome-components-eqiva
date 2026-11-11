@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # R503 Fingerprint – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 3.5.6 (2026-11-10) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.5.7 (2026-11-11) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Einbinden: packages: fingerprint: !include eqiva-smart-lock-fingerprint.yaml
 # Nutzt ${name}, lock_status, ble_state, door_handle und ha_time aus der Hauptdatei.
 #
@@ -495,8 +495,8 @@ script:
   - id: ver_check_fingerprint
     then:
       - lambda: |-
-          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.6") == 0,
-                        "Versionskonflikt: eqiva-smart-lock-fingerprint.yaml ist 3.5.6, Hauptdatei ist ${config_version} "
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.7") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-fingerprint.yaml ist 3.5.7, Hauptdatei ist ${config_version} "
                         "(alle Dateien gleicher Version verwenden oder version_check: false)");
   # Meldung in "Fingerprint: Letzte Aktion" (mit Uhrzeit, wenn bekannt)
   - id: fp_msg
@@ -592,14 +592,15 @@ script:
             - eqiva_key_ble.status:
             - delay: 600ms   # grünes Blinken zu Ende zeigen, die Verbindung läuft schon
             - lambda: 'id(fp)->aura_led_control(1, 60, 6, 0);'   # türkis atmen = verbinde mit Schloss
-            # fertig, sobald der Status da ist – oder sobald der Verbindungsversuch gescheitert ist
-            # (CONNECTING -> IDLE), statt die volle Zeit zu warten
+            # fertig, sobald der Status da ist. Ein einzelner gescheiterter Verbindungsversuch (z. B. Fehler 133)
+            # beendet das Warten nicht – die Komponente versucht es selbst erneut. Aufgegeben wird erst, wenn sie
+            # das Schloss als nicht erreichbar meldet (2 Fehlversuche in Folge) oder nach 20 s.
             - wait_until:
                 condition:
                   lambda: |-
                     if (id(ble_state).state != "IDLE") id(fp_seen_conn) = true;
                     if (id(fp_status_seq) != id(fp_seq_mark) && id(lock_status).state != "MOVING") return true;
-                    return id(fp_seen_conn) && id(ble_state).state == "IDLE";
+                    return id(fp_seen_conn) && id(ble_state).state == "IDLE" && id(key_ble)->unreachable_since() != 0;
                 timeout: 20s
       - lambda: |-
           const std::string &st = id(lock_status).state;

@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.5.6 (2026-11-10) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.5.7 (2026-11-11) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.5.6';
+  const APP_VERSION = '3.5.7';
   const GUIDE_URL = 'https://github.com/2nice4u/esphome-components-eqiva/blob/main/docs/ANLEITUNG.md';
 
   // ---------------------------------------------------------------- Zustand
@@ -118,7 +118,7 @@
         [/^🖐\s*🔒/, 'locked', 'Zu · von Hand'], [/^🖐\s*🔓/, 'unlocked', 'Auf · von Hand'], [/^🖐\s*🚪/, 'opened', 'Geöffnet · von Hand'],
         [/^🔒\s*/, 'locked', 'Zu · '], [/^🔓\s*/, 'unlocked', 'Auf · '], [/^🚪\s*/, 'opened', 'Geöffnet · '],
         [/^🔔\s*/, 'bell', 'Klingel · '], [/^⛔\s*/, 'deny', 'Abgewiesen · '], [/^❓\s*/, 'deny', 'Unbekannter Finger'],
-        [/^⚠️?\s*/, 'alert', ''], [/^✗\s*/, 'alert', 'Nicht ausgeführt · '], [/^✓\s*/, 'ok', ''], [/^🔗\s*/, 'info', '']
+        [/^⚠️?\s*/, 'alert', ''], [/^✗\s*/, 'alert', 'Nicht ausgeführt · '], [/^✓\s*/, 'ok', ''], [/^⚙️?\s*/, 'info', ''], [/^🔗\s*/, 'info', '']
       ];
       for (const [re, k, pre] of rules) {
         if (re.test(t)) {
@@ -204,6 +204,7 @@
     auto: '<circle cx="12" cy="12" r="9"/><path d="M12 3v18"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>',
     book: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/>',
     table: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/>',
+    hand: '<path d="M18 11V6a2 2 0 0 0-4 0v5"/><path d="M14 10V4a2 2 0 0 0-4 0v6"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-6-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
     bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>'
   };
   const icon = (n, size, label) => '<svg width="' + (size || 22) + '" height="' + (size || 22) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"' +
@@ -246,19 +247,16 @@
   const rtClass = (v) => v <= 4 ? 'g' : v <= 8 ? 'y' : 'r';
   // Reaktionszeit-Kopf der Startseiten-Karte: zuletzt/Ø/max und Balken mit Piktogrammen.
   // "Reaktionszeiten" je Eintrag: Aktion|Sekunden|Quelle, durch ";" getrennt (z = zu, a = auf, o = öffnen)
+  // Kennzahlen der letzten Messungen als drei Karten (Farbe nach Ampel: grün ≤ 4 s, gelb ≤ 8 s, rot darüber).
+  // "Reaktionszeiten" je Eintrag: Aktion|Sekunden|Quelle, durch ";" getrennt (z = zu, a = auf, o = öffnen)
   function reactionHead() {
     if (!has('text_sensor/Reaktionszeiten')) return '';
-    const RA = { z: ['lockF', 'zu'], a: ['unlock', 'auf'], o: ['door', 'öffnen'] };
-    const r = txt('text_sensor/Reaktionszeiten').split(/;\s*/).map((s) => { const p = s.split('|'); return { act: p[0], v: Number(p[1]), src: p[2] || '' }; })
-      .filter((e) => RA[e.act] && isFinite(e.v));
-    if (!r.length) return '';
-    const f = (v) => v.toFixed(1).replace('.', ',') + ' s', vals = r.map((e) => e.v), last = r[r.length - 1];
-    const avg = vals.reduce((a, b) => a + b, 0) / vals.length, mx = Math.max(...vals), top = Math.max(mx, 5);
-    return '<p class="muted small">Reaktionszeit: Befehl abgeschickt → Motor dreht · letzte ' + r.length + ' Bedienungen</p>' +
-      '<div class="rtnum"><b class="' + rtClass(last.v) + '">' + f(last.v) + '</b><span>zuletzt</span><b class="' + rtClass(avg) + '">' + f(avg) + '</b><span>Ø</span><b class="' + rtClass(mx) + '">' + f(mx) + '</b><span>max</span></div>' +
-      '<div class="rtbars" role="img" aria-label="Reaktionszeiten">' + r.map((e) => '<div class="' + rtClass(e.v) + '" style="height:' + Math.max(6, e.v / top * 100) + '%" title="' + RA[e.act][1] + ' · ' + f(e.v) + (e.src ? ' · ' + esc(e.src) : '') + '"><i>' + e.v.toFixed(1).replace('.', ',') + '</i></div>').join('') + '</div>' +
-      '<div class="rtic-row">' + r.map((e) => '<span>' + icon(RA[e.act][0], 15) + '</span>').join('') + '</div>' +
-      '<div class="rtax"><span>älter</span><span>neu</span></div>';
+    const vals = txt('text_sensor/Reaktionszeiten').split(/;\s*/).map((s) => s.split('|')).filter((p) => /^[zao]$/.test(p[0]) && isFinite(Number(p[1]))).map((p) => Number(p[1]));
+    if (!vals.length) return '';
+    const f = (v) => v.toFixed(1).replace('.', ',') + ' s';
+    const st = [['zuletzt', vals[vals.length - 1]], ['Ø Mittel', vals.reduce((a, b) => a + b, 0) / vals.length], ['Maximum', Math.max(...vals)]];
+    return '<p class="muted small">Reaktionszeit: Befehl abgeschickt → Motor dreht · letzte ' + vals.length + ' Messungen</p>' +
+      '<div class="rtst">' + st.map((x) => '<div class="' + rtClass(x[1]) + '"><span>' + x[0] + '</span><b>' + f(x[1]) + '</b></div>').join('') + '</div>';
   }
   function viewStart() {
     const st = txt('text_sensor/Lock Status', '');
@@ -268,6 +266,7 @@
     const ble = txt('text_sensor/Lock BLE State');
     const eco = /Sparsam/.test(txt('select/Energiemodus'));
     const sub = unpaired ? 'Bitte zuerst das Schloss koppeln' : st === 'MOVING' ? 'Befehl wird ausgeführt' :
+      st === 'UNKNOWN' ? 'Position unbekannt (z. B. nach Pairing oder halber Drehung) – einmal Zu oder Auf drücken' :
       has('text_sensor/Bluetooth') ? '' :   // Verbindung zeigt die Kachel "Bluetooth"
       (ble === 'ESTABLISHED' ? 'Verbunden' : (eco ? 'Sparsam – verbindet bei Bedarf' : 'Keine Verbindung (' + (ble || '–') + ')'));
     // Wie aktuell ist der Zustand? Ohne Verbindung und ab 5 min: "Stand: vor … min" mit Knopf zum Abfragen
@@ -304,12 +303,20 @@
       (t[4] ? '<small>' + esc(t[4]) + '</small>' : '') + '</div>').join('') + '</div>' : '';
     const ev = events(), rtHead = reactionHead();
     const f1 = (v) => v.toFixed(1).replace('.', ',') + ' s';
+    const evTop = Math.max(5, ...ev.filter((e) => isFinite(e.rt)).map((e) => e.rt));   // Balkenlänge relativ, mind. 5 s Skala
     const withRt = has('text_sensor/Reaktionszeiten');   // Titel bleibt gleich, auch ohne Messung (z. B. nach Neustart)
     const evHtml = has('text_sensor/Ereignisse') || withRt ? card('<h2>' + (withRt ? 'Ereignisse und Reaktionszeit' : 'Ereignisse') + '</h2>' + rtHead +
       (withRt && !rtHead && ev.length ? '<p class="muted small">Reaktionszeit: noch keine Messung seit dem Start.</p>' : '') +
-      (ev.length ? '<ul class="ev evrt">' + ev.map((e) =>
-        '<li><span class="dot k-' + e.kind + '"></span><span class="et">' + esc(e.label) + '<small>' + esc((e.day ? e.day + ' ' : '') + e.time) + '</small></span>' +
-        '<span class="rtv ' + (isFinite(e.rt) ? rtClass(e.rt) : '') + '">' + (isFinite(e.rt) ? f1(e.rt) : '') + '</span></li>').join('') + '</ul>'
+      (ev.length ? '<ul class="ev evrt">' + ev.map((e) => {
+        // Liste = Diagramm: jede Bedienung mit Messung bekommt einen Balken, Handbedienung ✋, sonst nur der Eintrag
+        const hand = /von Hand/.test(e.label);
+        const pic = /^Zu/.test(e.label) ? 'lockF' : /^Auf/.test(e.label) ? 'unlock' : /^Geöffnet/.test(e.label) ? 'door' :
+          e.kind === 'bell' ? 'bell' : e.kind === 'deny' ? 'x' : e.kind === 'ok' ? 'check' : e.kind === 'info' ? 'sliders' : 'alert';
+        const bar = isFinite(e.rt) ? '<span class="evbar"><b class="' + rtClass(e.rt) + '" style="width:' + Math.max(8, e.rt / evTop * 100) + '%"></b></span>' :
+          hand ? '<span class="evhand">' + icon('hand', 15) + 'von Hand</span>' : '';
+        return '<li' + (bar ? '' : ' class="nobar"') + '><span class="evpic k-' + e.kind + '">' + icon(pic, 16) + '</span><span class="et">' + esc(e.label.replace(/ · von Hand$/, '')) +
+          '<small>' + esc((e.day ? e.day + ' ' : '') + e.time) + '</small></span>' + bar +
+          '<span class="rtv ' + (isFinite(e.rt) ? rtClass(e.rt) : '') + '">' + (isFinite(e.rt) ? f1(e.rt) : '') + '</span></li>'; }).join('') + '</ul>'
         : '<p class="muted">' + (withRt && !rtHead ? 'Noch keine Ereignisse und Messungen seit dem Start.' : 'Noch keine Ereignisse seit dem Start.') + '</p>')) : '';
     const setup = txt('text_sensor/Einrichtungsstatus');
     const setupHtml = setup && !/^✅/.test(setup) && !/TESTMODUS/.test(setup) ? card('<span class="lbl">Einrichtung</span><p>' + esc(setup) + '</p>' +
@@ -603,7 +610,8 @@
       if (w.result === 'ok') {
         const uid = (st.match(/gekoppelt wurde User (\d+)/) || [])[1];
         body = '<div class="live"><div class="ring2 rs-ok">' + icon('check', 48) + '</div><p class="hl2">Gekoppelt</p><p>' + esc(info) + '</p>' +
-          '<p class="muted">' + esc(st) + '</p></div>' +
+          '<p class="muted">' + esc(st) + '</p>' +
+          '<p class="muted small">Ein neu gekoppeltes Schloss meldet „unbekannt“, bis es sich einmal bewegt hat – dann einmal Zu oder Auf drücken.</p></div>' +
           (uid !== undefined ? '<p class="note">Die eingestellte User-ID passt nicht – bitte übernehmen.</p>' + '<div class="foot">' + btn('fixuid', 'User ' + uid + ' übernehmen', 'b pri', uid) + '</div>' : '');
         foot = btn('p-close', 'Fertig', 'b pri');
       } else if (w.result === 'timeout') {
@@ -894,7 +902,7 @@ html.eqa-expert #eqa-back{display:block}
 #eqa p{margin:6px 0}#eqa .muted{color:var(--muted)}#eqa .small{font-size:12px}#eqa .note{font-size:13px;color:var(--wr)}#eqa .knauf{display:flex;gap:10px;align-items:flex-start;margin-top:14px;padding:12px 14px;border-radius:12px;background:var(--wrb);color:var(--wr);border:1.5px solid var(--wr)}#eqa .knauf b{display:block;font-size:15px;margin-bottom:2px}#eqa .knauf span{font-size:14px;line-height:1.35}#eqa .knauf svg{flex:none;margin-top:1px}#eqa .knauf.sm{margin-top:8px;padding:10px 12px}#eqa .knauf.sm span{font-size:13px}
 #eqa header{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:14px 16px;background:var(--card);border-bottom:1px solid var(--line)}
 #eqa .stale{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:13px;color:var(--wr)}#eqa .stale svg{flex:none}#eqa .stale .b{min-height:34px;padding:0 12px;font-size:13px}
-#eqa .hlock{width:46px;height:46px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none}#eqa .hlock.klk{background:var(--lkb);color:var(--lk)}#eqa .hlock.kul{background:var(--ulb);color:var(--ul)}#eqa .hlock.kop{background:var(--opb);color:var(--op)}#eqa .hlock.kmv{background:var(--mvb);color:var(--mv)}#eqa .hlock.kwr{background:var(--wrb);color:var(--wr)}#eqa .hstate{font:700 13px system-ui,sans-serif}#eqa .hstate.tlk{color:var(--lk)}#eqa .hstate.tul{color:var(--ul)}#eqa .hstate.top{color:var(--op)}#eqa .hstate.tmv{color:var(--mv)}#eqa .hstate.twr{color:var(--wr)}#eqa .hright{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none}#eqa .hseg{display:flex;border:1px solid var(--line);border-radius:999px;padding:3px;gap:2px;background:var(--soft)}#eqa .hseg button{width:34px;height:32px;border:0;border-radius:999px;background:transparent;color:var(--muted);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}#eqa .hseg button.sel{background:var(--card);color:var(--acci);box-shadow:0 1px 3px rgba(0,0,0,.15)}#eqa .hclock{display:inline-flex;align-items:center;gap:5px;font:700 13px system-ui,sans-serif;font-variant-numeric:tabular-nums;color:var(--muted)}#eqa .hclock.bad{color:var(--wr)}#eqa .tile.bt{min-width:0}#eqa .tile.bt span{display:flex;align-items:center;gap:5px}#eqa .tile.bt span svg{flex:none}#eqa .tile.bt b{white-space:normal;font-size:13px;line-height:1.25;overflow-wrap:break-word}#eqa .tile.bt small{font-size:11px;color:var(--muted)}#eqa .tile.bt.g b,#eqa .tile.bt.g span svg{color:var(--lk)}#eqa .tile.bt.bl b{color:var(--op)}#eqa .tile.bt.bl span svg{color:var(--op);animation:eqpulse 1.2s ease-in-out infinite}@keyframes eqpulse{50%{opacity:.25}}#eqa .tile.bt.n b{color:var(--muted)}#eqa .tile.bt.y{background:var(--wrb);border-color:var(--wr)}#eqa .tile.bt.y b,#eqa .tile.bt.y span{color:var(--wr)}#eqa .tile.bt.r{background:var(--ulb);border-color:var(--ul)}#eqa .tile.bt.r b,#eqa .tile.bt.r span{color:var(--ul)}
+#eqa .hlock{width:46px;height:46px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none}#eqa .hlock.klk{background:var(--lkb);color:var(--lk)}#eqa .hlock.kul{background:var(--ulb);color:var(--ul)}#eqa .hlock.kop{background:var(--opb);color:var(--op)}#eqa .hlock.kmv{background:var(--mvb);color:var(--mv)}#eqa .hlock.kwr{background:var(--wrb);color:var(--wr)}#eqa .hstate{font:700 13px system-ui,sans-serif}#eqa .hstate.tlk{color:var(--lk)}#eqa .hstate.tul{color:var(--ul)}#eqa .hstate.top{color:var(--op)}#eqa .hstate.tmv{color:var(--mv)}#eqa .hstate.twr{color:var(--wr)}#eqa .hright{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none}#eqa .hseg{display:flex;gap:6px}#eqa .hseg button{width:36px;height:36px;border-radius:50%;border:1.5px solid var(--line);background:var(--card);color:var(--muted);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}#eqa .hseg button.sel{border:2px solid var(--acc);background:var(--accs);color:var(--acci);box-shadow:0 0 0 3px var(--accs)}#eqa .hclock{display:inline-flex;align-items:center;gap:5px;font:700 13px system-ui,sans-serif;font-variant-numeric:tabular-nums;color:var(--muted)}#eqa .hclock.bad{color:var(--wr)}#eqa .tile.bt{min-width:0}#eqa .tile.bt span{display:flex;align-items:center;gap:5px}#eqa .tile.bt span svg{flex:none}#eqa .tile.bt b{white-space:normal;font-size:13px;line-height:1.25;overflow-wrap:break-word}#eqa .tile.bt small{font-size:11px;color:var(--muted)}#eqa .tile.bt.g b,#eqa .tile.bt.g span svg{color:var(--lk)}#eqa .tile.bt.bl b{color:var(--op)}#eqa .tile.bt.bl span svg{color:var(--op);animation:eqpulse 1.2s ease-in-out infinite}@keyframes eqpulse{50%{opacity:.25}}#eqa .tile.bt.n b{color:var(--muted)}#eqa .tile.bt.y{background:var(--wrb);border-color:var(--wr)}#eqa .tile.bt.y b,#eqa .tile.bt.y span{color:var(--wr)}#eqa .tile.bt.r{background:var(--ulb);border-color:var(--ul)}#eqa .tile.bt.r b,#eqa .tile.bt.r span{color:var(--ul)}
 #eqa .brand{display:flex;flex-direction:column;flex:1;min-width:0}#eqa .brand h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #eqa main{max-width:1100px;margin:0 auto;padding:16px 16px 96px}
 #eqa nav.top{display:none;gap:4px}#eqa nav.bottom{position:fixed;left:0;right:0;bottom:0;z-index:5;display:flex;background:var(--card);border-top:1px solid var(--line);padding:4px 6px calc(6px + env(safe-area-inset-bottom))}
@@ -920,13 +928,14 @@ html.eqa-expert #eqa-back{display:block}
 #eqa .big.g{background:#15803D}#eqa .big.r{background:#B91C1C}#eqa .big.bl{background:#1D4ED8}#eqa .big:active{transform:scale(.97)}
 #eqa button:disabled{opacity:.55;cursor:default}
 #eqa .tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-#eqa .rtnum{display:grid;grid-template-columns:repeat(3,auto);justify-content:start;column-gap:22px;margin:10px 0 12px}#eqa .rtnum b{font-size:22px;font-variant-numeric:tabular-nums;grid-row:1}#eqa .rtnum b.g{color:var(--lk)}#eqa .rtnum b.y{color:#B7791F}#eqa .rtnum b.r{color:var(--ul)}#eqa .rtnum span{grid-row:2;font-size:12px;color:var(--muted)}
-#eqa .rtbars{display:flex;align-items:flex-end;gap:6px;height:96px;padding-top:16px;border-bottom:1px solid var(--line)}
-#eqa .rtbars div{flex:1;border-radius:5px 5px 0 0;position:relative}#eqa .rtbars div.g{background:var(--lk)}#eqa .rtbars div.y{background:#D69E2E}#eqa .rtbars div.r{background:var(--ul)}
-#eqa .rtbars i{position:absolute;top:-16px;left:50%;transform:translateX(-50%);font:600 10px system-ui,sans-serif;font-style:normal;color:var(--muted)}
-#eqa .rtax{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px}
+#eqa .rtst{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0 6px}#eqa .rtst div{border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}#eqa .rtst span{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#eqa .rtst b{font-size:22px;font-variant-numeric:tabular-nums}
+#eqa .rtst .g{background:var(--lkb);color:var(--lk)}#eqa .rtst .y{background:var(--wrb);color:var(--wr)}#eqa .rtst .r{background:var(--ulb);color:var(--ul)}
+#eqa ul.ev.evrt li{display:grid;grid-template-columns:28px minmax(0,1.3fr) minmax(0,1fr) 48px;gap:8px;align-items:center}
+#eqa ul.ev.evrt li.nobar .et{grid-column:2/4}#eqa .k-info{background:var(--muted)}
+#eqa .evpic{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff}
+#eqa .evbar{display:block;height:12px;border-radius:6px;background:var(--soft);overflow:hidden}#eqa .evbar b{display:block;height:100%;border-radius:6px}#eqa .evbar b.g{background:var(--lk)}#eqa .evbar b.y{background:#D69E2E}#eqa .evbar b.r{background:var(--ul)}
+#eqa .evhand{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)}#eqa .evhand svg{flex:none}
 #eqa .evrt{margin-top:12px}#eqa .evrt li{align-items:center}#eqa .evrt .et small{display:block;font-size:12px;color:var(--muted)}#eqa .evrt .rtv{font-weight:600;font-variant-numeric:tabular-nums;min-width:48px;text-align:right}#eqa .evrt .rtv.g{color:var(--lk)}#eqa .evrt .rtv.y{color:#B7791F}#eqa .evrt .rtv.r{color:var(--ul)}
-#eqa .rtic-row{display:flex;gap:6px;margin-top:6px}#eqa .rtic-row span{flex:1;display:flex;justify-content:center;color:var(--muted)}
 #eqa .tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;min-width:0}
 #eqa .tile span{font-size:12px;color:var(--muted)}#eqa .tile b{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#eqa .tile.g b{color:var(--lk)}#eqa .tile.y b{color:#B7791F}#eqa .tile.r b{color:var(--ul)}#eqa .tile.warn{background:var(--wrb);color:var(--wr)}#eqa .tile.warn span{color:inherit}
 #eqa .ev{list-style:none;margin:0;padding:0}#eqa .ev li{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line)}

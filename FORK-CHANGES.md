@@ -1,6 +1,6 @@
 # Änderungen in diesem Fork
 
-**Version 3.5.6** (2026-11-10) – Komponente, Beispiel-YAMLs und Anleitung tragen dieselbe Versionsnummer.
+**Version 3.5.7** (2026-11-11) – Komponente, Beispiel-YAMLs und Anleitung tragen dieselbe Versionsnummer.
 1.1.0: Fingerprint-Paket mit Zuordnung Person/Hand/Finger, Aktion pro Finger (inkl. Umschalten), Ring-Rückmeldung und Scan-Pause.
 1.1.1: Pinbelegung als Substitutions, R503-Stromabschaltung per PNP-Transistor (sensor_power_pin), mehrere Status-LEDs.
 1.2.0: Paket Zeitplan (2 Zeitpläne mit Uhrzeit, Wochentagen und Aktion, SNTP).
@@ -43,6 +43,7 @@
 3.5.4: Öffnen ohne OPENED-Meldung korrekt protokolliert, Sabotage-Prüfung blockiert nicht mehr während Schlossaktionen, grünes Blinken nach Fingererkennung, Knauf-Hinweise.
 3.5.5: Neue Kopfzeile (Schloss-Symbol, Darstellung, ESP-Uhrzeit), Sensor und Kachel „Bluetooth“, Sensor „ESP Uhrzeit“, Erklärung Energiemodus.
 3.5.6: „Stand: vor … min“ mit Aktualisieren-Knopf, Sensor „Letzte Statusmeldung“, Fingerprint verbindet im Sparmodus schon beim Auflegen, Einrichtungsstatus ohne Fehlwarnung beim Verbindungsaufbau.
+3.5.7: Ereignisliste mit Reaktionszeit-Balken und Handbedienung, Kacheln zuletzt/Ø/max, runde Darstellungs-Knöpfe, „unbekannt“ entprellt, Statusabfrage nach Pairing, 0x85 als Bestätigung von „Schlossantrieb einstellen“, Fingerprint wartet auf zweiten Verbindungsversuch, „Letzte Statusmeldung“ in UTC.
 
 Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (Fix für ESPHome 2026.8).
 
@@ -50,7 +51,7 @@ Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (
 
 ```yaml
 external_components:
-  - source: github://DEIN-GITHUB-NAME/esphome-components-eqiva@v3.5.6
+  - source: github://DEIN-GITHUB-NAME/esphome-components-eqiva@v3.5.7
 ```
 
 Vollständiges Beispiel mit Web-GUI, Energiemodi, Pairing-Info, optionalem R503-Fingerprint und Status-LED:
