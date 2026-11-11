@@ -23,6 +23,35 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.5.7 – 2026-11-11
+
+### Neu
+- **Ereignisliste als Diagramm:** Jede Bedienung mit Messung zeigt ihre Reaktionszeit als Balken direkt in der Zeile
+  (grün bis 4 s, gelb bis 8 s, rot darüber), Bedienungen von Hand stehen mit ✋ „von Hand“ dazwischen. Jede Zeile beginnt mit einem
+  Piktogramm. So gibt die Liste lückenlos wieder, was am Schloss passiert ist. Das Balkendiagramm darüber entfällt.
+- **zuletzt / Ø Mittel / Maximum als drei farbige Kacheln.** Die Farbe richtet sich nach dem jeweiligen Wert (gleiche Ampel wie die Balken).
+- **Darstellung in der Kopfzeile** (Auto / Hell / Dunkel) als drei runde Knöpfe, der gewählte mit blauem Ring.
+- **„⚙️ Schlossantrieb übernommen“** im Ereignisprotokoll: Das Schloss bestätigt „Schlossantrieb einstellen“ (Antwort 0x85),
+  das wird jetzt erkannt und protokolliert.
+
+### Geändert
+- **Zustand „unbekannt“ wird entprellt:** Meldet das Schloss kurz „unbekannt“ (z. B. zwischen zwei Statusmeldungen), wird das erst nach
+  3 Sekunden übernommen und der Zustand danach einmal neu abgefragt. In Home Assistant erscheint dadurch kein kurzes „Blockiert“ mehr.
+- **Nach dem Pairing** fragt die Komponente den Zustand nach dem erneuten Verbinden selbst noch einmal ab (nach 8 und 16 s, falls noch keine
+  Meldung kam). Der Einrichtungsstatus lautet „✅ Gekoppelt – Zustand wird abgefragt …“. Die Web-App weist darauf hin, dass ein neu
+  gekoppeltes Schloss „unbekannt“ meldet, bis es sich einmal bewegt hat. „Fertig“ bleibt wie bisher sofort klickbar.
+- **Fingerprint wartet auf den zweiten Verbindungsversuch:** Nach einem Verbindungsfehler (z. B. GATT-Fehler 133 bei schwachem Empfang)
+  gibt der Fingerprint nicht mehr sofort auf, sondern wartet, bis die Komponente das Schloss als nicht erreichbar meldet (höchstens 20 s).
+
+### Behoben
+- **„Letzte Statusmeldung“** wurde mit Ortszeit, aber als UTC (`+00:00`) gesendet – in Home Assistant war die Zeit um 1–2 Stunden
+  verschoben. Jetzt in UTC (`…Z`).
+
+### Update
+- Pakete, `app.js` und den Komponenten-Ordner ersetzen (im Release `components/`, lokal laut `path:`), flashen.
+- Eigene Hauptdateien: nur `config_version: "3.5.7"`. Keine neuen Pflichtblöcke. Wer mag, übernimmt aus `eqiva-smart-lock-1.yaml`
+  den neuen Text „✅ Gekoppelt – Zustand wird abgefragt …“ (bisher „⏳ Verbunden, warte auf Antwort vom Schloss …“).
+
 ## 3.5.6 – 2026-11-10
 
 ### Neu

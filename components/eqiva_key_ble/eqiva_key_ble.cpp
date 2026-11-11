@@ -438,6 +438,14 @@ bool EqivaKeyBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t 
             this->log_event("🔗 Gekoppelt (User " + std::to_string(uid) + ")");
             // Schlosszustand gleich abfragen, damit Einrichtungsstatus/App sofort stimmen
             this->set_timeout("eqiva_post_pair", 1500, [this]() { this->sendCommand(REQUEST_STATUS); });
+            // Das Schloss trennt nach dem Pairing oft kurz die Verbindung: ohne Antwort noch zweimal nachfragen
+            pair_status_seen_ = false;
+            this->set_timeout("eqiva_post_pair2", 8000, [this]() {
+              if (!pair_status_seen_) { ESP_LOGI(TAG, "Nach dem Pairing noch kein Zustand – frage erneut"); this->sendCommand(REQUEST_STATUS); }
+            });
+            this->set_timeout("eqiva_post_pair3", 16000, [this]() {
+              if (!pair_status_seen_) { ESP_LOGI(TAG, "Nach dem Pairing noch kein Zustand – frage erneut"); this->sendCommand(REQUEST_STATUS); }
+            });
           }
           msgdata = decrypted;
           ESP_LOGV(TAG, "Decrypted: %s", string_to_hex(msgdata).c_str());
@@ -532,22 +540,22 @@ bool EqivaKeyBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t 
               // status info
               eQ3Message::Status_Info_Message message;
               message.data = msgdata;
-              std::string lockStatus;
-              switch(message.getLockStatus()) {
-                case 0: lockStatus = "UNKNOWN"; break;
-                case 1: lockStatus = "MOVING"; break;
-                case 2: lockStatus = "UNLOCKED"; break;
-                case 3: lockStatus = "LOCKED"; break;
-                case 4: lockStatus = "OPENED"; break;
-                default: lockStatus = "UNKNOWN"; break;
-              }
-              // Lock-Status bewusst immer veröffentlichen (on_value-Automationen)
-              if (this->lock_status_sensor_ != nullptr)
-                this->lock_status_sensor_->publish_state(lockStatus);
               this->publish_(this->low_battery_sensor_, message.isBatteryLow() ? "true" : "false");
-              this->on_lock_state_(message.getLockStatus());
+              this->publish_lock_status_(message.getLockStatus());
 
               ESP_LOGD(TAG, "# Lock state: %d, battery low: %s", message.getLockStatus(), message.isBatteryLow() ? "true" : "false");
+              break;
+          }
+
+          case 0x85: {
+              // Antwort auf "Schlossantrieb einstellen" (0x86) – nur kurz danach als Bestätigung werten
+              if (settings_pending_ && (millis() - settings_sent_ms_) < 10000) {
+                settings_pending_ = false;
+                ESP_LOGI(TAG, "Schlossantrieb übernommen");
+                this->log_event("⚙️ Schlossantrieb übernommen");
+              } else {
+                ESP_LOGD(TAG, "Case 0x85");
+              }
               break;
           }
 
@@ -616,7 +624,9 @@ void EqivaKeyBle::sendCommand(CommandType command) {
 }
 
 void EqivaKeyBle::applySettings() {
-    if (this->simulate_) { ESP_LOGI(TAG, "Simulation: Einstellungen übernommen"); return; }
+    if (this->simulate_) { ESP_LOGI(TAG, "Simulation: Einstellungen übernommen"); this->log_event("⚙️ Schlossantrieb übernommen"); return; }
+    settings_sent_ms_ = millis();
+    settings_pending_ = true;
     auto * msg = new eQ3Message::Mount_Options_Set_Message;
     sendMessage(msg, false);
 }
@@ -795,11 +805,35 @@ namespace eqiva_key_ble {
 static const char *const SIM_TAG = "eqiva_sim";
 
 void EqivaKeyBle::sim_publish_state_(uint8_t st) {
-  static const char *const names[] = {"UNKNOWN", "MOVING", "UNLOCKED", "LOCKED", "OPENED"};
-  if (this->lock_status_sensor_ != nullptr)
-    this->lock_status_sensor_->publish_state(names[st <= 4 ? st : 0]);
   this->publish_(this->low_battery_sensor_, "false");
-  this->on_lock_state_(st <= 4 ? st : 0);
+  this->publish_lock_status_(st);
+}
+
+void EqivaKeyBle::publish_lock_status_(uint8_t st) {
+  static const char *const names[] = {"UNKNOWN", "MOVING", "UNLOCKED", "LOCKED", "OPENED"};
+  if (st > 4) st = 0;
+  pair_status_seen_ = true;
+  if (st == 0 && !unknown_confirmed_) {
+    if (!unknown_pending_) {
+      unknown_pending_ = true;
+      this->set_timeout("eqiva_unknown", 3000, [this]() {
+        unknown_pending_ = false;
+        unknown_confirmed_ = true;   // weitere 0-Meldungen sofort durchreichen, nur einmal nachfragen
+        ESP_LOGI(TAG, "Schloss meldet länger als 3 s 'unbekannt' – frage nach");
+        if (this->lock_status_sensor_ != nullptr) this->lock_status_sensor_->publish_state("UNKNOWN");
+        this->on_lock_state_(0);
+        this->sendCommand(REQUEST_STATUS);
+      });
+    }
+    return;
+  }
+  if (st != 0) {
+    if (unknown_pending_) { this->cancel_timeout("eqiva_unknown"); unknown_pending_ = false; }
+    unknown_confirmed_ = false;
+  }
+  // Lock-Status bewusst immer veröffentlichen (on_value-Automationen)
+  if (this->lock_status_sensor_ != nullptr) this->lock_status_sensor_->publish_state(names[st]);
+  this->on_lock_state_(st);
 }
 
 void EqivaKeyBle::sim_set_connected_(bool c) {
@@ -958,16 +992,11 @@ void EqivaKeyBle::publish_events_() {
 
 void EqivaKeyBle::on_lock_state_(uint8_t st) {
   const uint32_t now = millis();
-  if (this->last_status_sensor_ != nullptr) {   // jede Statusmeldung: Zeitpunkt merken, z. B. 2026-11-10T12:02:05+01:00
+  if (this->last_status_sensor_ != nullptr) {   // jede Statusmeldung: Zeitpunkt in UTC, z. B. 2026-11-10T13:02:05Z
     const time_t t = ::time(nullptr);
-    struct tm lt;
-    char iso[32] = "";
-    if (t > 1600000000 && localtime_r(&t, &lt) != nullptr) {
-      char tz[8];
-      strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%S", &lt);
-      strftime(tz, sizeof(tz), "%z", &lt);   // +0100 -> +01:00
-      if (strlen(tz) == 5) snprintf(iso + strlen(iso), sizeof(iso) - strlen(iso), "%.3s:%.2s", tz, tz + 3);
-    }
+    struct tm ut;
+    char iso[24] = "";
+    if (t > 1600000000 && gmtime_r(&t, &ut) != nullptr) strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%SZ", &ut);
     this->publish_(this->last_status_sensor_, iso);
   }
   if (st == 1 && reaction_pending_) {    // erster Motorstart nach dem Befehl = Reaktionszeit

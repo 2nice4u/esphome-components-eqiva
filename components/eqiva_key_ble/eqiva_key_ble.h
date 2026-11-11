@@ -28,7 +28,7 @@ namespace eqiva_key_ble {
 using namespace esp32_ble_client;
 
 // Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
-#define EQIVA_PATCH_VERSION "3.5.6"
+#define EQIVA_PATCH_VERSION "3.5.7"
 
 // Patch-Konstanten
 static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
@@ -136,6 +136,14 @@ class EqivaKeyBle : public BLEClientBase {
     static const uint32_t HAND_QUIET_MS = 10000;
     uint8_t ev_last_state_{255};         // letzter Endzustand (2/3/4), 255 = unbekannt
     void on_lock_state_(uint8_t st);
+    // Zustand veröffentlichen; "unbekannt" (0) erst, wenn er länger als 3 s anhält (kurze Zwischenmeldungen
+    // beim Drehen würden sonst in HA als "blockiert" erscheinen), dann einmal nachfragen
+    void publish_lock_status_(uint8_t st);
+    bool unknown_pending_{false};
+    bool unknown_confirmed_{false};
+    bool pair_status_seen_{true};          // nach dem Pairing: ist schon ein Zustand gekommen?
+    uint32_t settings_sent_ms_{0};         // Schlossantrieb eingestellt (0x86) -> Antwort 0x85 als Bestätigung
+    bool settings_pending_{false};
     void ev_tick_();
     // Pairing-Absicherung: bisherige Kopplung bis zur Bestätigung durch das Schloss merken
     bool pair_pending_{false};

@@ -1,6 +1,6 @@
 # Eqiva Smart Lock – Anleitung & Hilfe
 
-Gilt für Version 3.5.6 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
+Gilt für Version 3.5.7 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
 Änderungen: [CHANGELOG.md](../CHANGELOG.md)
 
 ## Die Web-App
@@ -15,7 +15,7 @@ Sie läuft direkt auf dem ESP, auch ohne Internet, am Handy und am PC.
 | **Zeitplan** | bis zu 6 Zeitpläne als Liste: antippen = bearbeiten, Schalter Ein/Aus, + Zeitplan |
 | **Einstellungen** | Einrichtung (Pairing, Schlossantrieb, Neustart), Energiemodus, Türgriff, Fingerprint, Sabotage-Erkennung, Diagnose |
 
-- **Kopfzeile** (auf allen Seiten): links das Schloss-Symbol in der Farbe des Zustands (grün zu, rot auf, blau geöffnet, grau Motor läuft) und der Zustand als Wort; rechts der Umschalter **Automatisch · Hell · Dunkel** und darunter die **Uhrzeit des ESP**. Steht dort ein gelbes „⚠ --:--“, kennt der ESP keine Uhrzeit – der Zeitplan pausiert dann.
+- **Kopfzeile** (auf allen Seiten): links das Schloss-Symbol in der Farbe des Zustands (grün zu, rot auf, blau geöffnet, grau Motor läuft) und der Zustand als Wort; rechts der Umschalter **Automatisch · Hell · Dunkel** (drei runde Knöpfe, der gewählte mit blauem Ring) und darunter die **Uhrzeit des ESP**. Steht dort ein gelbes „⚠ --:--“, kennt der ESP keine Uhrzeit – der Zeitplan pausiert dann.
 - **Kachel „Bluetooth“** (Startseite): **Verbunden** (grün) · **Verbindungsaufbau** (blau, Symbol pulsiert) · **Idle** (grau; im Sparmodus mit „verbindet bei Bedarf“ – das ist dort der Normalzustand) · **Schloss nicht gefunden** (gelb: ein Befehl kam bis zum Zeitlimit nicht zum Schloss durch) · **Verbindungsfehler** (rot: der Verbindungsaufbau ist gescheitert). Ein Fehler bleibt stehen, bis eine Verbindung klappt oder ein neuer Befehl kommt. In Home Assistant heißt der Sensor „Bluetooth“.
 - **„Stand: vor … min“** (Startseite, unter dem Zustand): erscheint, wenn keine Verbindung besteht und die letzte Statusmeldung des Schlosses älter als 5 Minuten ist – der angezeigte Zustand könnte dann veraltet sein (z. B. von Hand aufgeschlossen). **Aktualisieren** fragt den Zustand sofort ab (Sensor „Letzte Statusmeldung“, Knopf „Status abfragen“).
 - **Auf dem Handy wie eine App:** in Chrome die Seite öffnen, Menü ⋮ → „Zum Startbildschirm hinzufügen“.
@@ -46,7 +46,9 @@ oder Google Lens scannen, den Text kopieren und einfügen; der Assistent führt 
 2. Den **kompletten Text** (beginnt mit `M001A…`) bei **BLE Pair Card Key** (Expertenansicht) einfügen und mit Enter bestätigen. Die MAC-Adresse wird daraus automatisch übernommen.
 3. Am Schloss die Taste **Öffnen** ca. 5 s halten, bis die LED **schnell orange blinkt**.
 4. Sofort **BLE Pair _Start_** drücken.
-5. Fertig, wenn der **Einrichtungsstatus** ✅ zeigt und **Lock Status** einen Zustand anzeigt.
+5. Fertig, wenn der **Einrichtungsstatus** ✅ zeigt („✅ Gekoppelt – Zustand wird abgefragt …“). Das Schloss trennt nach dem Pairing kurz die Verbindung; danach fragt der ESP den Zustand selbst ab.
+
+> Ein neu gekoppeltes (oder zurückgesetztes) Schloss meldet **„unbekannt“**, bis es sich einmal bewegt hat. Dann einmal **Zu** oder **Auf** drücken.
 
 **Pairing abbrechen:** Im Assistenten „Pairing abbrechen“ (Expertenansicht: Button „Pairing abbrechen“). Ein abgebrochenes
 oder nicht bestätigtes Pairing ändert nichts: MAC-Adresse, Schlüssel und User-ID bleiben, auch nach einem Neustart.
@@ -60,6 +62,8 @@ Der ESP bleibt im alten Schloss als Benutzer angelernt – dort per Eqiva-App (B
 In der Web-App: Einstellungen → **„Schlossantrieb einstellen“**, dann „Am Schloss übernehmen“. In der Expertenansicht:
 
 Unter **Schloss Einstellungen** Schließrichtung, Schlüsselposition und Umdrehungen wählen, dann **Lock Settings _Apply_** drücken.
+
+Bestätigt das Schloss die Einstellung, steht in den Ereignissen **„⚙️ Schlossantrieb übernommen“**.
 
 ## 4. Bedienung: Zuschließen, Aufschließen, Öffnen
 
@@ -108,8 +112,8 @@ Das Schloss erlaubt nur **eine** Bluetooth-Verbindung gleichzeitig. Vor der App 
 
 Gemessen wird die Zeit vom Absetzen des Befehls (App, HA, Fingerprint, Zeitplan) bis das Schloss meldet, dass der Motor läuft. Im Sparmodus ist der Verbindungsaufbau mit dabei, bei bestehender Verbindung nicht.
 
-- **Startseite → Ereignisse und Reaktionszeit:** zuletzt, Ø und max der letzten 10 Bedienungen und ein Balkendiagramm mit Piktogrammen (zu = ausgefülltes Schloss, auf = offenes Schloss, öffnen = Tür).
-- Darunter alle Ereignisse mit Uhrzeit (auch Handbedienung, Klingel, Abweisungen, Fehler). Bei Bedienungen mit Messung steht rechts die Reaktionszeit.
+- **Startseite → Ereignisse und Reaktionszeit:** oben drei Kacheln **zuletzt · Ø Mittel · Maximum** der letzten 10 Bedienungen, jede in der Ampelfarbe ihres Werts.
+- Darunter alle Ereignisse mit Uhrzeit und Piktogramm (zu = ausgefülltes Schloss, auf = offenes Schloss, öffnen = Tür; auch Klingel, Abweisungen, Fehler). Bedienungen mit Messung haben einen Balken mit der Reaktionszeit, Handbedienung steht als ✋ „von Hand“ dazwischen – die Liste ist zugleich das Diagramm.
 - Farben: **grün** bis 4 s · **gelb** bis 8 s · **rot** darüber.
 - Der Sensor „Reaktionszeit“ (Sekunden) ist in Home Assistant mit Verlauf verfügbar. Die Liste „Reaktionszeiten“ enthält die letzten 10 Bedienungen mit Aktion, Dauer und Quelle. Die Ereignisse enthalten die Reaktionszeit im Text, z. B. „18:05 🔒 Zeitplan 1 (2,4 s)“. Nach einem Neustart sind beide Listen leer.
 
@@ -254,6 +258,9 @@ Bei einem Alarm: **„Fingerprint Sabotage“** wird „an“ (in Home Assistant
 - **„⚠️ Schloss nicht erreichbar seit …“** (Einrichtungsstatus, App, „Ereignisse“): zwei Verbindungsversuche hintereinander
   gescheitert. Batterien des Schlosses und Abstand zum ESP prüfen. Sobald eine Verbindung wieder klappt, steht dort
   „✓ Schloss wieder erreichbar“. Ein Verbindungsversuch dauert höchstens `ble_connect_timeout` (Standard 12 s).
+  Der Fingerprint wartet nach einem gescheiterten Versuch (z. B. GATT-Fehler 133 bei schwachem Empfang) den zweiten Versuch ab und gibt erst auf, wenn das Schloss als nicht erreichbar gilt (höchstens 20 s).
+
+- **Zustand „unbekannt“:** Kurze „unbekannt“-Meldungen übernimmt der ESP erst nach 3 s und fragt dann einmal nach. Bleibt es dabei, steht das Schloss wirklich zwischen zwei Positionen (halbe Drehung, Riegel klemmt) oder ist frisch gekoppelt – einmal **Zu** oder **Auf** drücken.
 
 - **„Versionskonflikt …“ beim Kompilieren** oder **„Firmware v… – App v…: Dateien passen nicht zusammen“** in der Web-App: Dateien unterschiedlicher Versionen gemischt. Alle Pakete, `eqiva-smart-lock-app.js` und den Ordner `eqiva_components` aus derselben Version verwenden (in eigenen Kopien der Hauptdatei `config_version` anpassen). Für Tests: `version_check: "false"`.
 - **Sabotage-Alarm ohne Grund** (z. B. „Sensor antwortet nicht“ bei Wackelkontakt): Kabel prüfen, quittieren. Tritt er wiederholt auf, die betreffende Erkennung in „Sabotage-Erkennung“ abschalten und im Log (`[fp]`) nachsehen.
