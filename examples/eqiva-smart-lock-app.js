@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.5.11 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.5.12 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.5.11';
+  const APP_VERSION = '3.5.12';
   const REPO = '2nice4u/esphome-components-eqiva';   // eigener Fork: nur diese Zeile ändern
   const GUIDE_URL = 'https://github.com/' + REPO + '/blob/main/docs/ANLEITUNG.md';
   const RELEASES_URL = 'https://github.com/' + REPO + '/releases';
@@ -299,11 +299,21 @@
   function reactionHead(rows) {
     if (!rows.length) return '';
     const f = (v) => v.toFixed(1).replace('.', ',') + ' s';
-    const avg = (k) => rows.reduce((a, r) => a + r[k], 0) / rows.length;
+    const avg = rows.reduce((a, r) => a + r.total, 0) / rows.length;
     const mx = Math.max(...rows.map((r) => r.total));
-    const st = [['Ø gesamt', avg('total'), rtClass(avg('total'))], ['Ø Verbindung', avg('conn'), 'cn'], ['Max gesamt', mx, rtClass(mx)]];
+    // Ø Verbindung nur über Messungen mit echtem Verbindungsaufbau (sonst drücken die 0-Werte den Schnitt)
+    const cn = connStats(rows);
+    const st = [['Ø gesamt', f(avg), rtClass(avg), ''],
+      ['Ø Verbindung', cn.n ? f(cn.avg) : '–', 'cn', cn.n ? 'aus ' + cn.n + ' von ' + rows.length : 'immer verbunden'],
+      ['Max gesamt', f(mx), rtClass(mx), '']];
     return '<p class="muted small">Reaktionszeit: Auslöser → Motor dreht · letzte ' + rows.length + ' Messungen</p>' +
-      '<div class="rtst">' + st.map((x) => '<div class="' + x[2] + '"><span>' + x[0] + '</span><b>' + f(x[1]) + '</b></div>').join('') + '</div>';
+      '<div class="rtst">' + st.map((x) => '<div class="' + x[2] + '"><span>' + x[0] + '</span><b>' + x[1] + '</b>' +
+        (x[3] ? '<small>' + x[3] + '</small>' : '') + '</div>').join('') + '</div>';
+  }
+  const SLOW_CONN_S = 6;   // ab diesem Ø Verbindungsaufbau: Hinweis in der Bluetooth-Kachel
+  function connStats(rows) {
+    const c = rows.filter((r) => r.conn >= 0.05);
+    return { n: c.length, avg: c.length ? c.reduce((a, r) => a + r.conn, 0) / c.length : 0 };
   }
   // Ereignis mit Reaktionszeit der passenden Messung zuordnen (gleiche Aktion, Gesamtzeit und Quelle; neueste zuerst)
   function matchReactions(ev, rows) {
@@ -383,7 +393,9 @@
       const b = txt('text_sensor/Bluetooth');
       const retry = / – neuer Versuch …$/.test(b), b0 = b.replace(/ – neuer Versuch …$/, '');   // Fehler, nächster Versuch läuft
       const c = ({ 'Verbunden': 'g', 'Verbindungsaufbau': 'bl', 'Idle': 'n', 'Schloss nicht gefunden': 'y', 'Verbindungsfehler': 'r' }[b0] || 'n') + (retry ? ' rt' : '');
-      tiles.push(['Bluetooth', b0 || '–', 'bt ' + c, 'bt', retry ? 'neuer Versuch …' : b === 'Idle' && eco ? 'verbindet bei Bedarf' : '']);
+      const cn = connStats(reactionRows()), slow = cn.n >= 2 && cn.avg > SLOW_CONN_S;   // Ø Verbindung über 6 s (mind. 2 Messungen)
+      tiles.push(['Bluetooth', b0 || '–', 'bt ' + c + (slow && !retry ? ' slow' : ''), 'bt',
+        retry ? 'neuer Versuch …' : slow ? 'Verbindung langsam – Batterie oder Empfang prüfen' : b === 'Idle' && eco ? 'verbindet bei Bedarf' : '']);
     }
     const tilesHtml = tiles.length ? '<div class="tiles">' + tiles.map((t) => '<div class="tile ' + t[2] + '"><span>' + (t[3] ? icon(t[3], 14) : '') + esc(t[0]) + '</span><b>' + esc(t[1]) + '</b>' +
       (t[4] ? '<small>' + esc(t[4]) + '</small>' : '') + '</div>').join('') + '</div>' : '';
@@ -1071,7 +1083,8 @@ box-shadow:0 0 0 3px var(--s),0 0 0 6px var(--card),0 4px 12px rgba(0,0,0,.25)}
 #eqa .tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 #eqa .rtst{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0 6px}#eqa .rtst div{border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}#eqa .rtst span{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#eqa .rtst b{font-size:22px;font-variant-numeric:tabular-nums}
 #eqa .rtst .g{background:var(--lkb);color:var(--lk)}#eqa .rtst .y{background:var(--wrb);color:var(--wr)}#eqa .rtst .r{background:var(--ulb);color:var(--ul)}
-#eqa .rtst .cn{background:var(--pub);color:var(--pu)}#eqa .rtst span{white-space:normal;line-height:1.2}
+#eqa .rtst .cn{background:var(--pub);color:var(--pu)}#eqa .rtst span{white-space:normal;line-height:1.2}#eqa .rtst small{font-size:11px;opacity:.85}
+#eqa .tile.bt.slow small{color:var(--wr);font-weight:600}
 /* Reaktionszeit je Ereignis (Variante B): Kapseln mit Lücke, jede an beiden Enden rund; Anteile darunter */
 #eqa{--fpc:#9CA3AF}
 #eqa ul.ev.evrt li.w{grid-template-columns:28px minmax(0,1fr) 52px}#eqa ul.ev.evrt li.w .wb{grid-column:2/4;display:flex;flex-direction:column;gap:4px;min-width:0;margin-top:-2px}

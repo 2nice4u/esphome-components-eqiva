@@ -1,6 +1,6 @@
 # Änderungen in diesem Fork
 
-**Version 3.5.11** (2026-11-12) – Komponente, Beispiel-YAMLs und Anleitung tragen dieselbe Versionsnummer.
+**Version 3.5.12** (2026-11-12) – Komponente, Beispiel-YAMLs und Anleitung tragen dieselbe Versionsnummer.
 1.1.0: Fingerprint-Paket mit Zuordnung Person/Hand/Finger, Aktion pro Finger (inkl. Umschalten), Ring-Rückmeldung und Scan-Pause.
 1.1.1: Pinbelegung als Substitutions, R503-Stromabschaltung per PNP-Transistor (sensor_power_pin), mehrere Status-LEDs.
 1.2.0: Paket Zeitplan (2 Zeitpläne mit Uhrzeit, Wochentagen und Aktion, SNTP).
@@ -48,6 +48,7 @@
 3.5.9: Smarthome-Haus mit Leiterbahnen, Doppelring-Knöpfe, „Stand: vor … min“ immer sichtbar, Antriebs-Dialog mit Kalibrier-Hinweis, Warnung bei langem Motorlauf, falsche Reaktionszeiten verworfen.
 3.5.10: Reaktionszeit ab Berührung (Fingerprint) und mit korrekt mitgerechnetem Verbindungsaufbau, Aufschlüsselung Verbindung/Finger-Status/Schloss in der Web-App, animierte Leiterbahnen (Knoten-Welle) während Verbindungsaufbau/Motorlauf, Update-Prüfung ohne Zwischenspeicher.
 3.5.11: Reaktionszeit je Ereignis als Kapseln mit Lücke (Verbindung/Fingerprint/Motor) mit Anteilen darunter, Kacheln Ø gesamt · Ø Verbindung · Max gesamt.
+3.5.12: Ereignisse und Reaktionszeiten überleben Neustarts, Hinweis bei langsamem Verbindungsaufbau, Ø Verbindung nur über echte Verbindungsaufbauten, Fingerprint-Anteil nur bei Berührung, Berührung bei erkanntem Finger bis 35 s gültig.
 
 Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (Fix für ESPHome 2026.8).
 
@@ -55,7 +56,7 @@ Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (
 
 ```yaml
 external_components:
-  - source: github://DEIN-GITHUB-NAME/esphome-components-eqiva@v3.5.11
+  - source: github://DEIN-GITHUB-NAME/esphome-components-eqiva@v3.5.12
 ```
 
 Vollständiges Beispiel mit Web-GUI, Energiemodi, Pairing-Info, optionalem R503-Fingerprint und Status-LED:

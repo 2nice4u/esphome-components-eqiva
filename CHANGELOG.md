@@ -23,6 +23,30 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.5.12 – 2026-11-12
+
+### Neu
+- **Ereignisse und Reaktionszeiten überleben einen Neustart:** Die letzten 10 Einträge werden im Flash gespeichert
+  (nur bei einem neuen Eintrag; ESPHome bündelt die Schreibvorgänge). Nach Flashen oder Neustart sind beide Listen wieder da.
+- **Hinweis bei langsamem Verbindungsaufbau:** Liegt „Ø Verbindung“ über 6 s (mind. 2 Messungen mit Verbindungsaufbau),
+  zeigt die Bluetooth-Kachel „Verbindung langsam – Batterie oder Empfang prüfen“.
+
+### Geändert
+- **„Ø Verbindung“** wird nur noch über Messungen mit echtem Verbindungsaufbau gemittelt, darunter „aus X von Y“;
+  ohne Verbindungsaufbau steht „–“ / „immer verbunden“. Ø gesamt und Max gesamt bleiben über alle Messungen.
+- **Fingerprint-Anteil nur bei Berührung:** Bei HA/Web und Zeitplan gibt es keinen Rest mehr – die kurze Vorlaufzeit bis der
+  Verbindungsaufbau startet zählt zur Verbindung (ohne Verbindungsaufbau zum Motor). Die Anteile werden so gerundet,
+  dass sie genau die Gesamtzeit ergeben.
+
+### Behoben
+- **Fingerprint mit langem Verbindungsaufbau ohne Verbindungszeit gemessen:** Die Berührung galt nur 5 s als Auslöser; dauerte
+  der Verbindungsaufbau länger (z. B. 5,3 s), begann die Messung erst beim Senden des Befehls („0,2 s, Verbindung 0,0 s“).
+  Bei erkanntem Finger bleibt die Berührung jetzt bis 35 s gültig; unbekannte Finger verfallen weiter nach 5 s.
+
+### Update
+- Pakete, `app.js` und den Komponenten-Ordner ersetzen (im Release `components/`, lokal laut `path:`), flashen.
+- Eigene Hauptdateien: nur `config_version: "3.5.12"`.
+
 ## 3.5.11 – 2026-11-12
 
 ### Geändert

@@ -120,18 +120,19 @@ Das Schloss erlaubt nur **eine** Bluetooth-Verbindung gleichzeitig. Vor der App 
 
 ## 7a. Reaktionszeit
 
-Gemessen wird die Zeit vom **Auslöser** bis das Schloss meldet, dass der Motor läuft: bei App/HA der Klick, beim Zeitplan die Auslösezeit, beim Fingerprint „Umschalten“ schon die **Berührung** (Finger aufgelegt) – unabhängig davon, ob der Finger erkannt wird. Bleibt ein Finger unbekannt oder führt er zu keinem Schließbefehl, gibt es dafür keine Messung.
+Gemessen wird die Zeit vom **Auslöser** bis das Schloss meldet, dass der Motor läuft: bei App/HA der Klick, beim Zeitplan die Auslösezeit, beim Fingerprint „Umschalten“ schon die **Berührung** (Finger aufgelegt) – unabhängig davon, ob der Finger erkannt wird. Bei erkanntem Finger bleibt die Berührung bis 35 s der Startpunkt, auch wenn der Verbindungsaufbau lange dauert. Bleibt ein Finger unbekannt oder führt er zu keinem Schließbefehl, gibt es dafür keine Messung.
 
 Die Zeit teilt sich in drei Anteile, die auch mitgezählt werden, wenn der Verbindungsaufbau schon vor dem eigentlichen Schließbefehl läuft (z. B. während der Statusabfrage bei Fingerprint „Umschalten“):
 
 - **Verbindung** (violett): echter BLE-Verbindungsaufbau, bis die gesicherte Session steht. Bei bestehender Verbindung praktisch 0.
-- **Fingerprint** (grau): Finger lesen und Statusabfrage, nur ab 0,1 s angezeigt.
+- **Fingerprint** (grau): Finger lesen und Statusabfrage, nur ab 0,1 s angezeigt. Gibt es nur, wenn die Messung mit einer Berührung begann; bei App/HA und Zeitplan zählt die kurze Vorlaufzeit bis zum Verbindungsaufbau zur Verbindung. Die Anteile ergeben zusammen genau die Gesamtzeit.
 - **Motor** (grün): Befehl gesendet, bis der Motor dreht.
 
-- **Startseite → Ereignisse und Reaktionszeit:** oben drei Kacheln **Ø gesamt · Ø Verbindung · Max gesamt** der letzten 10 Bedienungen (Ø gesamt und Max in Ampelfarbe).
+- **Startseite → Ereignisse und Reaktionszeit:** oben drei Kacheln **Ø gesamt · Ø Verbindung · Max gesamt** der letzten 10 Bedienungen (Ø gesamt und Max in Ampelfarbe). „Ø Verbindung“ mittelt nur Bedienungen mit echtem Verbindungsaufbau („aus 2 von 4“), ohne Verbindungsaufbau steht „–“ / „immer verbunden“.
+- Liegt „Ø Verbindung“ über 6 s (mind. 2 Messungen), zeigt die Kachel **Bluetooth** „Verbindung langsam – Batterie oder Empfang prüfen“.
 - Darunter alle Ereignisse mit Uhrzeit und Piktogramm (zu = ausgefülltes Schloss, auf = offenes Schloss, öffnen = Tür; auch Klingel, Abweisungen, Fehler). Jede Bedienung mit Messung hat Kapseln mit Lücke für Verbindung, Fingerprint und Motor, darunter die Anteile in Sekunden („· war verbunden“, wenn keine Verbindung aufgebaut werden musste), rechts die Gesamtzeit. Handbedienung steht als ✋ „von Hand“ dazwischen – die Liste ist zugleich das Diagramm.
 - Während eines echten Verbindungsaufbaus oder solange der Motor läuft, leuchten die Leiterbahnen am Haus nacheinander als Welle auf (bei „Bewegung reduzieren“ nur hervorgehoben, ohne Animation).
-- Der Sensor „Reaktionszeit“ (Sekunden, Gesamtwert) ist in Home Assistant mit Verlauf verfügbar. Die Liste „Reaktionszeiten“ enthält die letzten 10 Bedienungen mit Aktion, Gesamt-, Verbindungs- und Motoranteil sowie Quelle (Fingerprint = Rest). Die Ereignisse enthalten weiterhin die Gesamt-Reaktionszeit im Text, z. B. „18:05 🔒 Zeitplan 1 (2,4 s)“. Nach einem Neustart sind beide Listen leer.
+- Der Sensor „Reaktionszeit“ (Sekunden, Gesamtwert) ist in Home Assistant mit Verlauf verfügbar. Die Liste „Reaktionszeiten“ enthält die letzten 10 Bedienungen mit Aktion, Gesamt-, Verbindungs- und Motoranteil sowie Quelle (Fingerprint = Rest). Die Ereignisse enthalten weiterhin die Gesamt-Reaktionszeit im Text, z. B. „18:05 🔒 Zeitplan 1 (2,4 s)“. Beide Listen werden im Flash gespeichert und sind nach einem Neustart oder Flashen wieder da (der allerletzte Eintrag kann bei Stromausfall innerhalb einer Minute fehlen).
 - Keine Messung gibt es, wenn das Schloss den Befehl ohne Motorlauf beantwortet (z. B. schon im Zielzustand), innerhalb von 15 s nach dem Senden kein Motorlauf kommt oder zwischendurch eine Handbedienung erkannt wird – so landen keine falschen Werte (z. B. 65 s) in der Statistik.
 
 Der Motorlauf bis zum Endzustand (ca. 3–4 s) ist Mechanik und nicht enthalten.

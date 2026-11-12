@@ -24,7 +24,9 @@ static const char *const TAG = "eqiva_key_ble";
 void EqivaKeyBle::setup() {
   BLEClientBase::setup();
   this->set_interval("eqiva_events", 1000, [this]() { this->ev_tick_(); });
+  this->persist_load_();                 // Ereignisse/Reaktionszeiten vom letzten Start
   this->publish_events_();
+  this->publish_reaction_list_();
   if (this->simulate_) {
     // Simulation: kein BLE-Verbindungsaufbau, nur nachgebildetes Schloss
     this->set_auto_connect(false);
@@ -599,8 +601,10 @@ void EqivaKeyBle::sendCommand(CommandType command) {
     ev_pending_at_ = now;
     ev_moved_ = false;
     // Reaktionszeit: Auslöser ist bei Fingerprint die Berührung (note_touch, gilt 5 s), sonst dieser Klick/Zeitpunkt
-    reaction_started_ = (touch_pending_ && (now - touch_ms_) < 5000) ? touch_ms_ : now;
+    reaction_touch_ = touch_pending_ && (now - touch_ms_) < touch_window_();
+    reaction_started_ = reaction_touch_ ? touch_ms_ : now;
     touch_pending_ = false;
+    touch_hold_ = false;
     reaction_pending_ = true;
     reaction_cmd_sent_ = false;
     reaction_act_ = command == LOCK ? 'z' : (command == UNLOCK ? 'a' : 'o');
@@ -964,6 +968,7 @@ void EqivaKeyBle::log_event_at_(const std::string &text, time_t t) {
   events_.push_front({t, text});
   while (events_.size() > 10) events_.pop_back();
   this->publish_events_();
+  this->persist_save_();
 }
 
 void EqivaKeyBle::publish_events_() {
@@ -1028,7 +1033,7 @@ void EqivaKeyBle::on_lock_state_(uint8_t st) {
     uint32_t ms = now - reaction_started_;
     if (ms > 65535) ms = 65535;
     // Aufteilung: "Verbindung" = Überlappung des letzten echten Verbindungsaufbaus mit [Auslöser, Befehl
-    // gesendet]; "Schloss" = Befehl gesendet -> Motor; Rest = "Finger/Status" (Finger lesen + Statusabfrage,
+    // gesendet]; "Motor" = Befehl gesendet -> Motor dreht; Rest = "Fingerprint" (Finger lesen + Statusabfrage,
     // in der App nur ab 0,1 s gezeigt). So fällt bei Fingerprint "Umschalten" der Verbindungsaufbau, der schon
     // vor dem eigentlichen Schließbefehl (während der Statusabfrage) lief, noch korrekt in die Messung.
     uint32_t conn_ms = 0;
@@ -1038,25 +1043,27 @@ void EqivaKeyBle::on_lock_state_(uint8_t st) {
       if (b > a) conn_ms = b - a;
     }
     uint32_t lock_ms = reaction_cmd_sent_ && now >= reaction_sent_ms_ ? now - reaction_sent_ms_ : 0;
-    if (conn_ms + lock_ms > ms) conn_ms = ms > lock_ms ? ms - lock_ms : 0;
-    if (conn_ms > 65535) conn_ms = 65535;
-    if (lock_ms > 65535) lock_ms = 65535;
-    reaction_hist_.push_back({reaction_act_, (uint16_t) ms, (uint16_t) conn_ms, (uint16_t) lock_ms, reaction_src_});
-    if (reaction_hist_.size() > 10) reaction_hist_.erase(reaction_hist_.begin());
-    if (this->reaction_sensor_ != nullptr) this->reaction_sensor_->publish_state(ms / 1000.0f);
-    // Format je Eintrag: Aktion|Gesamt-s|Verbindung-s|Schloss-s|Quelle, Einträge mit "; " getrennt
-    // (z|4.1|3.2|0.4|Zeitplan 1; a|3.0|0.0|2.9|HA/Web). Finger/Status ergibt sich in der App als Rest.
-    // Das Leerzeichen erlaubt den Zeilenumbruch in der ESPHome-Expertenansicht.
-    std::string list;
-    for (size_t i = 0; i < reaction_hist_.size(); i++) {
-      char buf[48];
-      snprintf(buf, sizeof(buf), "%s%c|%.1f|%.1f|%.1f|", i ? "; " : "", reaction_hist_[i].act,
-                reaction_hist_[i].ms / 1000.0f, reaction_hist_[i].conn_ms / 1000.0f, reaction_hist_[i].lock_ms / 1000.0f);
-      list += buf + reaction_hist_[i].src;
+    // Auf Zehntel runden, so dass die Anteile genau die Gesamtzeit ergeben. Ohne Berührung (HA/Web, Zeitplan)
+    // gibt es keinen Fingerprint-Anteil: der Rest (Vorlauf bis der Verbindungsaufbau startet) zählt zur
+    // Verbindung, wenn eine aufgebaut wurde, sonst zum Motor.
+    auto r10 = [](uint32_t v) { return (v + 50) / 100 * 100; };
+    const uint32_t ms_r = std::min<uint32_t>(r10(ms), 65500);
+    uint32_t lock_r = std::min(r10(lock_ms), ms_r);
+    uint32_t conn_r = r10(conn_ms);
+    if (!reaction_touch_) {
+      if (conn_ms > 0) conn_r = ms_r - lock_r;
+      else { conn_r = 0; lock_r = ms_r; }
+    } else if (conn_r + lock_r > ms_r) {
+      conn_r = ms_r - lock_r;
     }
-    this->publish_(this->reaction_list_sensor_, list);
-    ev_reaction_ms_ = ms ? ms : 1;       // fürs Ereignis "🔒 Quelle (2,4 s)"
-    ESP_LOGI(TAG, "Reaktionszeit: %.1f s (Verbindung %.1f s, Schloss %.1f s)", ms / 1000.0f, conn_ms / 1000.0f, lock_ms / 1000.0f);
+    reaction_hist_.push_back({reaction_act_, (uint16_t) ms_r, (uint16_t) conn_r, (uint16_t) lock_r, reaction_src_});
+    if (reaction_hist_.size() > 10) reaction_hist_.erase(reaction_hist_.begin());
+    if (this->reaction_sensor_ != nullptr) this->reaction_sensor_->publish_state(ms_r / 1000.0f);
+    this->publish_reaction_list_();
+    this->persist_save_();
+    ev_reaction_ms_ = ms_r ? ms_r : 1;   // fürs Ereignis "🔒 Quelle (2,4 s)", gleicher Wert wie in der Liste
+    ESP_LOGI(TAG, "Reaktionszeit: %.1f s (Verbindung %.1f s, Fingerprint %.1f s, Motor %.1f s)", ms_r / 1000.0f,
+             conn_r / 1000.0f, (ms_r - conn_r - lock_r) / 1000.0f, lock_r / 1000.0f);
   }
   if (st == 1) {                         // MOVING
     if (ev_pending_ >= 0) ev_moved_ = true;
@@ -1135,17 +1142,81 @@ void EqivaKeyBle::ev_tick_() {
     reaction_pending_ = false;
   }
   // Berührung ohne Folge (unbekannter Finger, falsche Erkennung, Fehlversuch-Sperre …): verfällt ungenutzt
-  if (touch_pending_ && (millis() - touch_ms_) >= 5000) touch_pending_ = false;
+  if (touch_pending_ && (millis() - touch_ms_) >= touch_window_()) { touch_pending_ = false; touch_hold_ = false; }
   // Tageswechsel: gestrige Einträge bekommen ihr Datum
   static int last_yday = -1;
   time_t now = ::time(nullptr);
   struct tm lt;
   if (now > 1600000000 && localtime_r(&now, &lt) != nullptr && lt.tm_yday != last_yday) {
-    if (last_yday >= 0) this->publish_events_();
+    if (last_yday >= 0 || !events_.empty()) this->publish_events_();   // auch beim ersten Uhrzeit-Empfang (gerettete Einträge)
     last_yday = lt.tm_yday;
   }
 }
 
+
+// Liste "Reaktionszeiten": Aktion|Gesamt-s|Verbindung-s|Motor-s|Quelle, Einträge mit "; " getrennt
+// (z|4.1|3.2|0.4|Zeitplan 1; a|3.0|0.0|2.9|HA/Web). Fingerprint ergibt sich in der App als Rest.
+// Das Leerzeichen erlaubt den Zeilenumbruch in der ESPHome-Expertenansicht.
+void EqivaKeyBle::publish_reaction_list_() {
+  if (this->reaction_list_sensor_ == nullptr || reaction_hist_.empty()) return;
+  std::string list;
+  for (size_t i = 0; i < reaction_hist_.size(); i++) {
+    char buf[48];
+    snprintf(buf, sizeof(buf), "%s%c|%.1f|%.1f|%.1f|", i ? "; " : "", reaction_hist_[i].act,
+             reaction_hist_[i].ms / 1000.0f, reaction_hist_[i].conn_ms / 1000.0f, reaction_hist_[i].lock_ms / 1000.0f);
+    list += buf + reaction_hist_[i].src;
+  }
+  this->publish_(this->reaction_list_sensor_, list);
+}
+
+// Text auf n-1 Bytes kürzen, ohne ein UTF-8-Zeichen zu zerschneiden
+static void copy_utf8_(char *dst, size_t n, const std::string &src) {
+  size_t len = std::min(src.size(), n - 1);
+  while (len > 0 && len < src.size() && (((unsigned char) src[len]) & 0xC0) == 0x80) len--;
+  memcpy(dst, src.data(), len);
+  dst[len] = 0;
+}
+
+static const uint32_t PERSIST_KEY = 0xE91A3512;   // Ereignisse + Reaktionszeiten (Version 1)
+
+void EqivaKeyBle::persist_load_() {
+  persist_pref_ = global_preferences->make_preference<Persist>(PERSIST_KEY);
+  persist_ok_ = true;
+  Persist p{};
+  if (!persist_pref_.load(&p) || p.ver != 1 || p.n_ev > 10 || p.n_rt > 10) return;
+  events_.clear();
+  for (uint8_t i = 0; i < p.n_ev; i++) {
+    p.ev[i].text[sizeof(p.ev[i].text) - 1] = 0;
+    events_.push_back({(time_t) p.ev[i].t, std::string(p.ev[i].text)});
+  }
+  reaction_hist_.clear();
+  for (uint8_t i = 0; i < p.n_rt; i++) {
+    p.rt[i].src[sizeof(p.rt[i].src) - 1] = 0;
+    reaction_hist_.push_back({p.rt[i].act, p.rt[i].ms, p.rt[i].conn_ms, p.rt[i].lock_ms, std::string(p.rt[i].src)});
+  }
+  ESP_LOGI(TAG, "Vom letzten Start übernommen: %u Ereignisse, %u Reaktionszeiten", p.n_ev, p.n_rt);
+}
+
+void EqivaKeyBle::persist_save_() {
+  if (!persist_ok_) return;
+  Persist p{};
+  p.ver = 1;
+  p.n_ev = (uint8_t) std::min<size_t>(events_.size(), 10);
+  for (uint8_t i = 0; i < p.n_ev; i++) {
+    p.ev[i].t = (uint32_t) events_[i].t;
+    copy_utf8_(p.ev[i].text, sizeof(p.ev[i].text), events_[i].text);
+  }
+  p.n_rt = (uint8_t) std::min<size_t>(reaction_hist_.size(), 10);
+  for (uint8_t i = 0; i < p.n_rt; i++) {
+    const auto &r = reaction_hist_[i];
+    p.rt[i].act = r.act;
+    p.rt[i].ms = r.ms;
+    p.rt[i].conn_ms = r.conn_ms;
+    p.rt[i].lock_ms = r.lock_ms;
+    copy_utf8_(p.rt[i].src, sizeof(p.rt[i].src), r.src);
+  }
+  persist_pref_.save(&p);
+}
 
 void EqivaKeyBle::forget_pairing() {
   ESP_LOGW(TAG, "Kopplung entfernt - Benutzer im Schloss bleibt angelernt (Eqiva-App oder Werksreset)");

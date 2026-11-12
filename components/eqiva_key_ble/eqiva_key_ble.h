@@ -7,6 +7,7 @@
 #include "esphome/core/component.h"
 #include "esphome/core/automation.h"
 #include "esphome/core/hal.h"
+#include "esphome/core/preferences.h"
 
 #include <queue>
 #include <vector>
@@ -28,7 +29,7 @@ namespace eqiva_key_ble {
 using namespace esp32_ble_client;
 
 // Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
-#define EQIVA_PATCH_VERSION "3.5.11"
+#define EQIVA_PATCH_VERSION "3.5.12"
 
 // Patch-Konstanten
 static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
@@ -102,6 +103,18 @@ class EqivaKeyBle : public BLEClientBase {
     // wird nur verwendet, wenn kurz danach wirklich ein Schließbefehl gesendet wird, sonst verfällt sie.
     uint32_t touch_ms_{0};
     bool touch_pending_{false};
+    bool touch_hold_{false};             // erkannter Finger: Berührung bleibt bis 35 s gültig (langer Verbindungsaufbau)
+    uint32_t touch_window_() const { return touch_hold_ ? 35000 : 5000; }
+    // Ereignisse und Reaktionszeiten über Neustart/Flashen retten (NVS, geschrieben nur bei neuem Eintrag;
+    // ESPHome bündelt die Schreibvorgänge, Sync spätestens nach flash_write_interval bzw. beim Neustart)
+    struct PersistEv { uint32_t t; char text[72]; };
+    struct PersistRt { char act; uint8_t pad; uint16_t ms; uint16_t conn_ms; uint16_t lock_ms; char src[18]; };
+    struct Persist { uint8_t ver; uint8_t n_ev; uint8_t n_rt; uint8_t pad; PersistEv ev[10]; PersistRt rt[10]; };
+    ESPPreferenceObject persist_pref_;
+    bool persist_ok_{false};
+    void persist_load_();
+    void persist_save_();
+    void publish_reaction_list_();
     std::vector<PairedTrigger *> paired_triggers_;
     // --- Simulation (ohne Schloss, zum Testen von Fingerprint/Zeitplan/LED) ---
     bool simulate_{false};
@@ -276,7 +289,10 @@ class EqivaKeyBle : public BLEClientBase {
         void set_cmd_source(const std::string &src) { this->cmd_source_ = src; this->cmd_source_at_ = millis(); }
         // Reaktionszeit, Auslöser Fingerprint: beim Auflegen aufrufen (vor Statusabfrage/Erkennung).
         // Gilt 5 s für den nächsten Schließbefehl, sonst verfällt die Berührung ungenutzt.
-        void note_touch() { this->touch_ms_ = millis(); this->touch_pending_ = true; }
+        void note_touch() { this->touch_ms_ = millis(); this->touch_pending_ = true; this->touch_hold_ = false; }
+        // Fingerprint: Finger erkannt, Aktion läuft -> Berührung bis zu 35 s als Auslöser festhalten
+        // (Verbindungsaufbau im Sparmodus kann über 5 s dauern; unbekannte Finger verfallen weiter nach 5 s)
+        void hold_touch() { if (this->touch_pending_ && (millis() - this->touch_ms_) < 5000) this->touch_hold_ = true; }
         // Simulation: kein BLE, Schloss wird nachgebildet (Zustände, Fahrzeit, Sparmodus-Verbindung)
         void set_simulate(bool s) { this->simulate_ = s; }
         bool is_simulated() const { return this->simulate_; }
@@ -335,6 +351,7 @@ class EqivaKeyBle : public BLEClientBase {
         // Befehl gesendet -> Motor; Rest (ms - conn_ms - lock_ms) = Finger/Status, nur ab 0,1 s gezeigt.
         struct ReactionEntry { char act; uint16_t ms; uint16_t conn_ms; uint16_t lock_ms; std::string src; };
         std::vector<ReactionEntry> reaction_hist_;   // älteste zuerst, max. 10
+        bool reaction_touch_{false};         // Messung begann mit einer Berührung (nur dann gibt es einen Fingerprint-Anteil)
         char reaction_act_{'z'};             // Aktion des laufenden Befehls: z zu, a auf, o öffnen
         std::string reaction_src_;           // Quelle des laufenden Befehls
 
