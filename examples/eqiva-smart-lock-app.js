@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.5.10 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.5.11 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.5.10';
+  const APP_VERSION = '3.5.11';
   const REPO = '2nice4u/esphome-components-eqiva';   // eigener Fork: nur diese Zeile ändern
   const GUIDE_URL = 'https://github.com/' + REPO + '/blob/main/docs/ANLEITUNG.md';
   const RELEASES_URL = 'https://github.com/' + REPO + '/releases';
@@ -285,34 +285,50 @@
 
   // ---------------------------------------------------------------- Ansichten
   const rtClass = (v) => v <= 4 ? 'g' : v <= 8 ? 'y' : 'r';
-  // Reaktionszeit-Kopf der Startseiten-Karte, Variante B: breiter Balken mit zwei rund abgeschlossenen
-  // Kapseln (violett Verbindung, grün Schloss) mit Lücke dazwischen, Anteile darunter ausgeschrieben
-  // (Finger/Status = Rest, nur ab 0,1 s gezeigt), darunter Kacheln Ø gesamt (mit Maximum) · Ø Verbindung ·
-  // Ø Schloss. "Reaktionszeiten" je Eintrag: Aktion|Gesamt-s|Verbindung-s|Schloss-s|Quelle, durch ";" getrennt.
-  function reactionHead() {
-    if (!has('text_sensor/Reaktionszeiten')) return '';
-    const rows = txt('text_sensor/Reaktionszeiten').split(/;\s*/).map((s) => s.split('|'))
-      .filter((p) => /^[zao]$/.test(p[0]) && isFinite(Number(p[1])) && isFinite(Number(p[2])) && isFinite(Number(p[3])))
-      .map((p) => ({ total: Number(p[1]), conn: Number(p[2]), lock: Number(p[3]) }));
+  // Reaktionszeit, Variante B: jede Bedienung in der Ereignisliste bekommt Kapseln mit Lücke – Verbindung (violett),
+  // Fingerprint (grau: Finger lesen + Statusabfrage, nur ab 0,1 s) und Motor (grün: Befehl gesendet → Motor dreht),
+  // darunter die Anteile ausgeschrieben. Oben drei Kacheln: Ø gesamt · Ø Verbindung · Max gesamt.
+  // "Reaktionszeiten" je Eintrag: Aktion|Gesamt-s|Verbindung-s|Motor-s|Quelle, durch ";" getrennt (älteste zuerst).
+  function reactionRows() {
+    if (!has('text_sensor/Reaktionszeiten')) return [];
+    return txt('text_sensor/Reaktionszeiten').split(/;\s*/).map((s) => s.split('|'))
+      .filter((p) => p.length >= 5 && /^[zao]$/.test(p[0]) && [1, 2, 3].every((i) => isFinite(Number(p[i]))))
+      .map((p) => { const total = Number(p[1]), conn = Number(p[2]), lock = Number(p[3]);
+        return { act: p[0], total, conn, lock, fp: Math.max(0, +(total - conn - lock).toFixed(1)), src: p.slice(4).join('|') }; });
+  }
+  function reactionHead(rows) {
     if (!rows.length) return '';
     const f = (v) => v.toFixed(1).replace('.', ',') + ' s';
-    const last = rows[rows.length - 1];
-    const status = Math.max(0, last.total - last.conn - last.lock);
-    const w = (v) => last.total > 0 ? Math.max(6, v / last.total * 100) : 0;
-    const bar = last.total > 0.05 ? '<div class="rtbar">' +
-      (last.conn > 0.05 ? '<b class="cn" style="width:' + w(last.conn) + '%"></b>' : '') +
-      (last.lock > 0.05 ? '<b class="lo" style="width:' + w(last.lock) + '%"></b>' : '') + '</div>' : '';
-    const parts = [];
-    if (last.conn > 0.05) parts.push('Verbindung ' + f(last.conn));
-    if (status > 0.05) parts.push('Finger/Status ' + f(status));
-    if (last.lock > 0.05) parts.push('Schloss ' + f(last.lock));
     const avg = (k) => rows.reduce((a, r) => a + r[k], 0) / rows.length;
-    const maxTotal = Math.max(...rows.map((r) => r.total));
-    const st = [['Ø gesamt', avg('total'), ' (max ' + f(maxTotal) + ')', rtClass(avg('total'))],
-      ['Ø Verbindung', avg('conn'), '', 'cn'], ['Ø Schloss', avg('lock'), '', 'lo']];
+    const mx = Math.max(...rows.map((r) => r.total));
+    const st = [['Ø gesamt', avg('total'), rtClass(avg('total'))], ['Ø Verbindung', avg('conn'), 'cn'], ['Max gesamt', mx, rtClass(mx)]];
     return '<p class="muted small">Reaktionszeit: Auslöser → Motor dreht · letzte ' + rows.length + ' Messungen</p>' +
-      bar + (parts.length ? '<p class="rtparts">' + parts.join(' · ') + '</p>' : '') +
-      '<div class="rtst">' + st.map((x) => '<div class="' + x[3] + '"><span>' + x[0] + '</span><b>' + f(x[1]) + x[2] + '</b></div>').join('') + '</div>';
+      '<div class="rtst">' + st.map((x) => '<div class="' + x[2] + '"><span>' + x[0] + '</span><b>' + f(x[1]) + '</b></div>').join('') + '</div>';
+  }
+  // Ereignis mit Reaktionszeit der passenden Messung zuordnen (gleiche Aktion, Gesamtzeit und Quelle; neueste zuerst)
+  function matchReactions(ev, rows) {
+    const used = new Set();
+    const act = { locked: 'z', unlocked: 'a', opened: 'o' };
+    return ev.map((e) => {
+      if (!isFinite(e.rt) || !act[e.kind]) return null;
+      const src = e.label.replace(/^(Zu|Auf|Geöffnet) · /, '');
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const r = rows[i];
+        if (used.has(i) || Math.abs(r.total - e.rt) > 0.05 || !src.startsWith(r.src)) continue;
+        if (r.act !== act[e.kind] && !(r.act === 'o' && e.kind === 'unlocked')) continue;
+        used.add(i); return r;
+      }
+      return null;
+    });
+  }
+  function reactionBar(r, rt, top) {
+    const f = (v) => v.toFixed(1).replace('.', ',') + ' s';
+    const parts = r ? [['cn', 'Verbindung', r.conn, 0.05], ['fp', 'Fingerprint', r.fp, 0.1], ['mo', 'Motor', r.lock, 0.05]].filter((p) => p[2] >= p[3]) : [];
+    if (!parts.length) parts.push(['mo', 'Motor', rt, 0]);   // ohne Aufschlüsselung (z. B. Messung vor einem Neustart): eine Kapsel
+    const w = Math.max(10, rt / top * 100);
+    return '<span class="evcap" style="width:' + w + '%">' + parts.map((p) => '<i class="' + p[0] + '" style="flex:' + Math.max(p[2], 0.01) + '"></i>').join('') + '</span>' +
+      (r ? '<span class="evparts">' + parts.map((p) => '<span class="' + p[0] + '"><i></i>' + p[1] + ' <b>' + f(p[2]) + '</b></span>').join('') +
+        (r.conn < 0.05 ? '<span class="was">· war verbunden</span>' : '') + '</span>' : '');
   }
   function viewStart() {
     const st = txt('text_sensor/Lock Status', '');
@@ -371,22 +387,22 @@
     }
     const tilesHtml = tiles.length ? '<div class="tiles">' + tiles.map((t) => '<div class="tile ' + t[2] + '"><span>' + (t[3] ? icon(t[3], 14) : '') + esc(t[0]) + '</span><b>' + esc(t[1]) + '</b>' +
       (t[4] ? '<small>' + esc(t[4]) + '</small>' : '') + '</div>').join('') + '</div>' : '';
-    const ev = events(), rtHead = reactionHead();
+    const ev = events(), rtRows = reactionRows(), rtHead = reactionHead(rtRows), rtMatch = matchReactions(ev, rtRows);
     const f1 = (v) => v.toFixed(1).replace('.', ',') + ' s';
     const evTop = Math.max(5, ...ev.filter((e) => isFinite(e.rt)).map((e) => e.rt));   // Balkenlänge relativ, mind. 5 s Skala
     const withRt = has('text_sensor/Reaktionszeiten');   // Titel bleibt gleich, auch ohne Messung (z. B. nach Neustart)
     const evHtml = has('text_sensor/Ereignisse') || withRt ? card('<h2>' + (withRt ? 'Ereignisse und Reaktionszeit' : 'Ereignisse') + '</h2>' + rtHead +
       (withRt && !rtHead && ev.length ? '<p class="muted small">Reaktionszeit: noch keine Messung seit dem Start.</p>' : '') +
-      (ev.length ? '<ul class="ev evrt">' + ev.map((e) => {
-        // Liste = Diagramm: jede Bedienung mit Messung bekommt einen Balken, Handbedienung ✋, sonst nur der Eintrag
+      (ev.length ? '<ul class="ev evrt">' + ev.map((e, i) => {
+        // Liste = Diagramm: jede Bedienung mit Messung bekommt Kapseln mit Anteilen, Handbedienung ✋, sonst nur der Eintrag
         const hand = /von Hand/.test(e.label);
         const pic = /^Zu/.test(e.label) ? 'lockF' : /^Auf/.test(e.label) ? 'unlock' : /^Geöffnet/.test(e.label) ? 'door' :
           e.kind === 'bell' ? 'bell' : e.kind === 'deny' ? 'x' : e.kind === 'ok' ? 'check' : e.kind === 'info' ? 'sliders' : 'alert';
-        const bar = isFinite(e.rt) ? '<span class="evbar"><b class="' + rtClass(e.rt) + '" style="width:' + Math.max(8, e.rt / evTop * 100) + '%"></b></span>' :
-          hand ? '<span class="evhand">' + icon('hand', 15) + 'von Hand</span>' : '';
-        return '<li' + (bar ? '' : ' class="nobar"') + '><span class="evpic k-' + e.kind + '">' + icon(pic, 16) + '</span><span class="et">' + esc(e.label.replace(/ · von Hand$/, '')) +
-          '<small>' + esc((e.day ? e.day + ' ' : '') + e.time) + '</small></span>' + bar +
-          '<span class="rtv ' + (isFinite(e.rt) ? rtClass(e.rt) : '') + '">' + (isFinite(e.rt) ? f1(e.rt) : '') + '</span></li>'; }).join('') + '</ul>'
+        const head = '<span class="evpic k-' + e.kind + '">' + icon(pic, 16) + '</span><span class="et">' + esc(e.label.replace(/ · von Hand$/, '')) +
+          '<small>' + esc((e.day ? e.day + ' ' : '') + e.time) + '</small></span>';
+        if (isFinite(e.rt)) return '<li class="w">' + head + '<span class="rtv ' + rtClass(e.rt) + '">' + f1(e.rt) + '</span><span class="wb">' + reactionBar(rtMatch[i], e.rt, evTop) + '</span></li>';
+        const side = hand ? '<span class="evhand">' + icon('hand', 15) + 'von Hand</span>' : '';
+        return '<li' + (side ? '' : ' class="nobar"') + '>' + head + side + '<span class="rtv"></span></li>'; }).join('') + '</ul>'
         : '<p class="muted">' + (withRt && !rtHead ? 'Noch keine Ereignisse und Messungen seit dem Start.' : 'Noch keine Ereignisse seit dem Start.') + '</p>')) : '';
     const setup = txt('text_sensor/Einrichtungsstatus');
     const setupHtml = setup && !/^✅/.test(setup) && !/TESTMODUS/.test(setup) ? card('<span class="lbl">Einrichtung</span><p>' + esc(setup) + '</p>' +
@@ -1055,16 +1071,18 @@ box-shadow:0 0 0 3px var(--s),0 0 0 6px var(--card),0 4px 12px rgba(0,0,0,.25)}
 #eqa .tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 #eqa .rtst{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0 6px}#eqa .rtst div{border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}#eqa .rtst span{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#eqa .rtst b{font-size:22px;font-variant-numeric:tabular-nums}
 #eqa .rtst .g{background:var(--lkb);color:var(--lk)}#eqa .rtst .y{background:var(--wrb);color:var(--wr)}#eqa .rtst .r{background:var(--ulb);color:var(--ul)}
-#eqa .rtst .cn{background:var(--pub);color:var(--pu)}#eqa .rtst .lo{background:var(--soft);color:var(--fg)}
-/* Reaktionszeit-Balken (Variante B): zwei rund abgeschlossene Kapseln mit Lücke, violett Verbindung, grau/Textfarbe Schloss */
-#eqa .rtbar{display:flex;gap:5px;height:14px;margin:10px 0 2px}
-#eqa .rtbar b{display:block;height:100%;border-radius:999px;min-width:14px}
-#eqa .rtbar .cn{background:var(--pu)}#eqa .rtbar .lo{background:var(--mv)}
-#eqa .rtparts{font-size:12px;color:var(--muted);margin:0 0 8px}
+#eqa .rtst .cn{background:var(--pub);color:var(--pu)}#eqa .rtst span{white-space:normal;line-height:1.2}
+/* Reaktionszeit je Ereignis (Variante B): Kapseln mit Lücke, jede an beiden Enden rund; Anteile darunter */
+#eqa{--fpc:#9CA3AF}
+#eqa ul.ev.evrt li.w{grid-template-columns:28px minmax(0,1fr) 52px}#eqa ul.ev.evrt li.w .wb{grid-column:2/4;display:flex;flex-direction:column;gap:4px;min-width:0;margin-top:-2px}
+#eqa .evcap{display:flex;gap:4px;height:12px;max-width:100%}#eqa .evcap i{display:block;height:100%;border-radius:999px;min-width:12px}
+#eqa .evcap .cn,#eqa .evparts .cn i{background:var(--pu)}#eqa .evcap .fp,#eqa .evparts .fp i{background:var(--fpc)}#eqa .evcap .mo,#eqa .evparts .mo i{background:var(--lk)}
+#eqa .evparts{display:flex;flex-wrap:wrap;gap:2px 12px;font-size:12px;color:var(--muted)}#eqa .evparts>span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+#eqa .evparts i{display:inline-block;width:10px;height:7px;border-radius:999px}#eqa .evparts b{font-weight:600}
+#eqa .evparts .cn{color:var(--pu)}#eqa .evparts .mo{color:var(--lk)}#eqa .evparts .fp{color:var(--muted)}
 #eqa ul.ev.evrt li{display:grid;grid-template-columns:28px minmax(0,1.3fr) minmax(0,1fr) 48px;gap:8px;align-items:center}
 #eqa ul.ev.evrt li.nobar .et{grid-column:2/4}#eqa .k-info{background:var(--muted)}
 #eqa .evpic{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff}
-#eqa .evbar{display:block;height:12px;border-radius:6px;background:var(--soft);overflow:hidden}#eqa .evbar b{display:block;height:100%;border-radius:6px}#eqa .evbar b.g{background:var(--lk)}#eqa .evbar b.y{background:#D69E2E}#eqa .evbar b.r{background:var(--ul)}
 #eqa .evhand{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted)}#eqa .evhand svg{flex:none}
 #eqa .evrt{margin-top:12px}#eqa .evrt li{align-items:center}#eqa .evrt .et small{display:block;font-size:12px;color:var(--muted)}#eqa .evrt .rtv{font-weight:600;font-variant-numeric:tabular-nums;min-width:48px;text-align:right}#eqa .evrt .rtv.g{color:var(--lk)}#eqa .evrt .rtv.y{color:#B7791F}#eqa .evrt .rtv.r{color:var(--ul)}
 #eqa .tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;min-width:0}
