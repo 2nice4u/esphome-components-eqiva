@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.5.7 (2026-11-11) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.5.8 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,8 +7,10 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.5.7';
-  const GUIDE_URL = 'https://github.com/2nice4u/esphome-components-eqiva/blob/main/docs/ANLEITUNG.md';
+  const APP_VERSION = '3.5.8';
+  const REPO = '2nice4u/esphome-components-eqiva';   // eigener Fork: nur diese Zeile ändern
+  const GUIDE_URL = 'https://github.com/' + REPO + '/blob/main/docs/ANLEITUNG.md';
+  const RELEASES_URL = 'https://github.com/' + REPO + '/releases';
 
   // ---------------------------------------------------------------- Zustand
   const E = {};                      // "domain/Name" -> letzter JSON-Stand vom ESP
@@ -19,7 +21,8 @@
     pair: null,                      // Pairing-Assistent (Card Key nur im Speicher der Seite)
     sheet: null,                     // geöffnetes Detailfenster (Finger, Person, Platz)
     confirm: '',                     // Schlüssel einer Aktion, die auf "wirklich?" wartet
-    busy: false, toast: ''
+    busy: false, toast: '',
+    latest: ''                       // neueste Release auf GitHub (Browser fragt höchstens alle 12 h)
   };
   function load(k, d) { try { return localStorage.getItem(k) || d; } catch (e) { return d; } }
   function save(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* privat/gesperrt */ } }
@@ -31,6 +34,27 @@
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const stripTime = (s) => String(s || '').replace(/^\d\d:\d\d /, '');
   const seq = (id) => (has(id) ? E[id]._seq || 0 : 0);
+
+  // ---------------------------------------------------------------- Update-Prüfung
+  // Der Browser (nicht der ESP) fragt GitHub nach der neuesten veröffentlichten Release. Ergebnis 12 h im Browser
+  // merken; ohne Internet bleibt einfach alles, wie es ist.
+  const vcmp = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number);
+    for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0); } return 0; };
+  async function checkUpdate() {
+    let c = null;
+    try { c = JSON.parse(load('eqa-upd', 'null')); } catch (e) { /* kaputt */ }
+    if (c && c.v && c.v !== S.latest) { S.latest = c.v; draw(); }
+    if (c && Date.now() - c.t < 12 * 3600e3) return;
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 10000);
+    try {
+      const r = await fetch('https://api.github.com/repos/' + REPO + '/releases/latest', { credentials: 'omit', signal: ctl.signal });
+      if (!r.ok) return;
+      const v = String((await r.json()).tag_name || '').replace(/^v/, '');
+      if (!/^\d+\.\d+\.\d+$/.test(v)) return;
+      save('eqa-upd', JSON.stringify({ t: Date.now(), v }));
+      if (v !== S.latest) { S.latest = v; draw(); }
+    } catch (e) { /* offline oder GitHub nicht erreichbar */ } finally { clearTimeout(t); }
+  }
 
   // ---------------------------------------------------------------- ESP-Zugriff
   async function post(id, action, params) {
@@ -192,6 +216,8 @@
     spin: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/>',
     alert: '<path d="M12 3l10 18H2z"/><path d="M12 10v4"/><path d="M12 17v.5"/>',
     finger: '<path d="M6.5 6.3A8 8 0 0 1 20 12v1.5"/><path d="M4 12a8 8 0 0 1 1-3.9"/><path d="M4.5 16.5c.3-1 .5-2 .5-3.5"/><path d="M8 12a4 4 0 0 1 8 0v1.5a13 13 0 0 1-1.2 5.5"/><path d="M12 12v1.5a9 9 0 0 1-2.4 6.2"/><path d="M19.5 17a16 16 0 0 0 .4-2"/>',
+    help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.7"/><path d="M12 17.5v.01"/>',
+    ext: '<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
     clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
     sliders: '<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>',
     check: '<path d="M5 12l5 5L20 7"/>',
@@ -280,24 +306,43 @@
         stale = '<div class="stale">' + icon('clock', 15) + '<span>Stand: ' + age + '</span>' + btn('press', icon('spin', 15) + 'Aktualisieren', 'b sm', 'button/Status abfragen') + '</div>';
       }
     }
+    // Bedienfeld als Haus: Farbe = Zustand, Haustür = „Öffnen“, darunter Zu/Auf
+    const hk = unpaired ? 'wr' : ({ LOCKED: 'lk', UNLOCKED: 'ul', OPENED: 'op', MOVING: 'mv' }[st] || (st ? 'wr' : 'mv'));
+    const short = unpaired ? 'Bitte zuerst koppeln' : st === 'MOVING' ? 'Befehl wird ausgeführt' : st === 'UNKNOWN' ? 'Einmal Zu oder Auf drücken' : '';
+    const long = st === 'UNKNOWN' && !unpaired ? 'Position unbekannt – z. B. nach dem Pairing, einer halben Drehung oder wenn der Riegel klemmt.' :
+      (sub && !short ? sub : '');
+    // seit wann und wodurch: letztes Zustands-Ereignis aus der Liste, wenn es zum Zustand passt
+    let since = '';
+    const se = events().find((e) => /^(locked|unlocked|opened)$/.test(e.kind));
+    if (se && ((st === 'LOCKED' && se.kind === 'locked') || ((st === 'UNLOCKED' || st === 'OPENED') && se.kind !== 'locked'))) {
+      const who = /von Hand/.test(se.label) ? 'von Hand' : se.label.replace(/^(Zu|Auf|Geöffnet) · /, '');
+      since = 'seit ' + (se.day ? se.day + ' ' : '') + se.time + (who && who !== se.label ? ' · ' + who : '');
+    }
+    const hicon = { lk: 'lockF', ul: 'unlock', op: 'door', mv: 'spin' }[hk] || (unpaired ? 'unlock' : 'help');
+    const lbl = L.label.replace(/ …$/, '');
     const hero = card(
-      '<div class="hero ' + L.cls + '"><div class="ring">' + icon(L.icon, 56, L.label) + '</div>' +
-      '<div class="hl">' + esc(L.label) + '</div>' + (sub ? '<div class="muted">' + esc(sub) + '</div>' : '') + stale + '</div>' +
-      (unpaired ? '' : '<div class="acts">' +
-      btn('lock', icon('lock', 20) + 'Zu', 'big g') +
-      btn('unlock', icon('unlock', 20) + 'Auf', 'big r') +
-      btn('open', icon('door', 20) + 'Öffnen', 'big bl') +
-      '</div>') +
+      (since ? '<div class="hsince"><span class="hchip c' + hk + '"><i></i>' + esc(since) + '</span></div>' : '') +
+      '<div class="house h' + hk + '"><svg viewBox="0 0 300 270" aria-hidden="true"><defs><linearGradient id="eqhg" gradientUnits="userSpaceOnUse" x1="120" y1="10" x2="200" y2="265">' +
+      '<stop offset="0" class="s0"/><stop offset="1" class="s1"/></linearGradient></defs>' +
+      '<path d="M150 22 L282 128 L258 128 L258 252 L42 252 L42 128 L18 128 Z" fill="url(#eqhg)" stroke="url(#eqhg)" stroke-width="26" stroke-linejoin="round"/></svg>' +
+      '<div class="hmid' + (short ? ' ws' : '') + '">' + icon(hicon, 40) + '<b' + (lbl.length > 14 ? ' class="lg"' : '') + '>' + esc(lbl) + '</b>' +
+      (short ? '<small>' + esc(short) + '</small>' : '') + '</div>' +
+      (unpaired ? '' : btn('open', icon('door', 30) + 'Öffnen', 'hdoor', undefined, ' aria-label="Öffnen"')) + '</div>' +
+      (long ? '<p class="hnote">' + esc(long) + '</p>' : '') + stale +
+      (unpaired ? '' : '<div class="hacts">' +
+        btn('lock', icon('lockF', 20) + 'Zu', 'hp zu' + (st === 'LOCKED' ? ' on' : '')) +
+        btn('unlock', icon('unlock', 20) + 'Auf', 'hp auf' + (st === 'UNLOCKED' || st === 'OPENED' ? ' on' : '')) + '</div>') +
       (txt('select/Türgriff außen') === 'Türklinke' ? '<p class="note">Türgriff außen = Türklinke: „Öffnen“ schließt nur auf.</p>' :
-        txt('select/Türgriff außen') === 'Knauf' ? '<div class="knauf">' + icon('alert', 22) + '<div><b>Türgriff außen = Knauf</b><span>„Öffnen“ und der Finger (Umschalten/Öffnen) ziehen die Falle – die Tür wird komplett geöffnet. „Auf“ schließt nur auf.</span></div></div>' : ''));
+        txt('select/Türgriff außen') === 'Knauf' ? '<div class="knauf">' + icon('alert', 22) + '<div><b>Türgriff außen = Knauf</b><span>„Öffnen“ und der Finger (Umschalten/Öffnen) ziehen die Falle – die Tür wird komplett geöffnet. „Auf“ schließt nur auf.</span></div></div>' : ''), 'hcard');
     const tiles = [];
     if (has('binary_sensor/Batterie schwach')) tiles.push(['Batterie', on('binary_sensor/Batterie schwach') ? 'Schwach' : 'OK', on('binary_sensor/Batterie schwach') ? 'warn' : '']);
     if (has('sensor/Schloss Signal')) { const v = Number(val('sensor/Schloss Signal', NaN)); tiles.push(['Signal', isFinite(v) ? Math.round(v) + ' dBm' : '–', '']); }
     if (has('select/Energiemodus')) tiles.push(['Energie', txt('select/Energiemodus'), '']);
     if (has('text_sensor/Bluetooth')) {   // immer Bluetooth-Symbol, Zustand über Farbe und Text
       const b = txt('text_sensor/Bluetooth');
-      const c = { 'Verbunden': 'g', 'Verbindungsaufbau': 'bl', 'Idle': 'n', 'Schloss nicht gefunden': 'y', 'Verbindungsfehler': 'r' }[b] || 'n';
-      tiles.push(['Bluetooth', b || '–', 'bt ' + c, 'bt', b === 'Idle' && eco ? 'verbindet bei Bedarf' : '']);
+      const retry = / – neuer Versuch …$/.test(b), b0 = b.replace(/ – neuer Versuch …$/, '');   // Fehler, nächster Versuch läuft
+      const c = ({ 'Verbunden': 'g', 'Verbindungsaufbau': 'bl', 'Idle': 'n', 'Schloss nicht gefunden': 'y', 'Verbindungsfehler': 'r' }[b0] || 'n') + (retry ? ' rt' : '');
+      tiles.push(['Bluetooth', b0 || '–', 'bt ' + c, 'bt', retry ? 'neuer Versuch …' : b === 'Idle' && eco ? 'verbindet bei Bedarf' : '']);
     }
     const tilesHtml = tiles.length ? '<div class="tiles">' + tiles.map((t) => '<div class="tile ' + t[2] + '"><span>' + (t[3] ? icon(t[3], 14) : '') + esc(t[0]) + '</span><b>' + esc(t[1]) + '</b>' +
       (t[4] ? '<small>' + esc(t[4]) + '</small>' : '') + '</div>').join('') + '</div>' : '';
@@ -641,7 +686,8 @@
       'Ausgewogen': 'Dauerverbindung mit längerem Abstand – etwas langsamer, spart Batterie.',
       'Sparsam': 'Verbindet nur bei Bedarf – der erste Befehl dauert ca. 3–5 s, weil erst die Verbindung aufgebaut wird. Handbedienung sieht der ESP erst bei der nächsten Statusabfrage.' };
     const emHint = EM[txt('select/Energiemodus')] ? '<p class="muted small">' + EM[txt('select/Energiemodus')] + '</p>' : '';
-    h += grp('Schloss', [choice('select/Energiemodus', 'Energiemodus'), emHint, choice('select/Türgriff außen', 'Türgriff außen'),
+    const scHint = has('select/Zustandsfarben') ? '<p class="muted small">Farben für verriegelt und aufgeschlossen in der App, an der Status-LED und am Fingerprint-Ring. Grün und Rot für gut und schlecht (z. B. Reaktionszeit, Bluetooth) bleiben.</p>' : '';
+    h += grp('Schloss', [choice('select/Energiemodus', 'Energiemodus'), emHint, choice('select/Zustandsfarben', 'Zustandsfarben'), scHint, choice('select/Türgriff außen', 'Türgriff außen'),
       (!has('select/Türgriff außen') ? '' : knauf() ? '<div class="knauf sm">' + icon('alert', 18) + '<span>„Öffnen“ und „Umschalten“ per Finger ziehen die Falle. Der Motor dreht über „auf“ hinaus, bis die Tür frei ist – ohne eingebautes Schloss läuft er dabei lange.</span></div>' :
         '<p class="muted small">„Öffnen“ und „Umschalten“ schließen nur auf, die Klinke drückt man selbst.</p>'),
       num('number/Ausgewogen: Verbindungsabstand', 'Ausgewogen: Abstand'), num('number/Sparsam: Trennen nach Leerlauf', 'Sparsam: trennen nach'),
@@ -701,6 +747,10 @@
     const lst = txt('text_sensor/Lock Status', ''), unp = /^[①②]/.test(txt('text_sensor/Einrichtungsstatus'));
     const LS = unp ? { label: 'Nicht gekoppelt', icon: 'unlock' } : (LOCK[lst] || (lst ? LOCK.UNKNOWN : { label: 'Lade …', icon: 'spin' }));
     const sk = unp ? 'wr' : ({ LOCKED: 'lk', UNLOCKED: 'ul', OPENED: 'op', MOVING: 'mv' }[lst] || (lst ? 'wr' : 'mv'));
+    // Versions-Chip: Firmware-Version, Link zur Release-Übersicht; leuchtet, wenn es eine neuere Release gibt
+    const newer = !!(fw && S.latest && /^\d+\.\d+\.\d+$/.test(fw) && vcmp(S.latest, fw) > 0);
+    const verChip = fw ? '<a class="hver' + (newer ? ' new' : '') + '" href="' + RELEASES_URL + '" target="_blank" rel="noopener" title="' +
+      (newer ? 'Neue Version v' + esc(S.latest) + ' verfügbar' : 'Releases auf GitHub') + '">v' + esc(fw) + (newer ? '<i></i>' : '') + icon('ext', 11) + '</a>' : '';
     const TH = [['auto', 'auto', 'Darstellung automatisch'], ['light', 'sun', 'Hell'], ['dark', 'moon', 'Dunkel']];
     const seg = '<div class="hseg" role="group" aria-label="Darstellung">' + TH.map((t) => '<button type="button" class="' + (S.theme === t[0] ? 'sel' : '') +
       '" data-a="theme" data-x="' + t[0] + '" aria-label="' + t[2] + '" aria-pressed="' + (S.theme === t[0]) + '">' + icon(t[1], 17) + '</button>').join('') + '</div>';
@@ -711,7 +761,7 @@
         icon(ok ? 'clock' : 'alert', 14) + (ok ? tm : '--:--') + '</span>';
     }
     return '<header><span class="hlock k' + sk + '" title="' + esc(LS.label) + '">' + icon(LS.icon, 25) + '</span>' +
-      '<div class="brand"><h1>' + esc(S.title || 'Schloss') + '</h1><span class="hstate t' + sk + '">' + esc(LS.label) + '</span></div>' + sim +
+      '<div class="brand"><h1>' + esc(S.title || 'Schloss') + '</h1><div class="hsub"><span class="hstate t' + sk + '">' + esc(LS.label) + '</span>' + verChip + '</div></div>' + sim +
       '<nav class="top" aria-label="Bereiche">' + nav + '</nav><div class="hright">' + seg + clock + '</div></header>' + conn + sab + ver +
       '<main>' + views[S.tab]() + '</main><nav class="bottom" aria-label="Bereiche">' + nav + '</nav>' +
       viewSheet() + (S.toast ? '<div class="toast" role="status">' + esc(S.toast) + '</div>' : '');
@@ -732,6 +782,7 @@
       const sel = key && a.selectionStart !== undefined ? [a.selectionStart, a.selectionEnd] : null;
       const keepVal = key ? a.value : null;
       const sy = root.scrollTop;
+      root.classList.toggle('swapc', txt('select/Zustandsfarben') === 'Verriegelt rot');
       root.innerHTML = page();
       root.scrollTop = sy;
       if (key) {
@@ -895,6 +946,10 @@ color-scheme:light;position:fixed;inset:0;overflow-y:auto;background:var(--bg);c
 --lk:#4ADE80;--lkb:#12301F;--ul:#F87171;--ulb:#3A1717;--op:#7AA7FF;--opb:#172645;--mv:#CBD5E1;--mvb:#252A33;--wr:#FCD34D;--wrb:#3A2E10;--pu:#C4B5FD;--pub:#2A2142}}
 html[data-eqa-theme=dark] #eqa{color-scheme:dark;--bg:#08090C;--card:#1B1F27;--fg:#E6E9EF;--muted:#9AA3B2;--line:#333A48;--soft:#20242D;--acc:#6EA0FF;--accs:#1E2F57;--acci:#D6E4FF;--bline:#46506A;
 --lk:#4ADE80;--lkb:#12301F;--ul:#F87171;--ulb:#3A1717;--op:#7AA7FF;--opb:#172645;--mv:#CBD5E1;--mvb:#252A33;--wr:#FCD34D;--wrb:#3A2E10;--pu:#C4B5FD;--pub:#2A2142}
+#eqa{--sl:var(--lk);--slb:var(--lkb);--su:var(--ul);--sub:var(--ulb);--hpon:#fff}
+@media (prefers-color-scheme:dark){html:not([data-eqa-theme=light]) #eqa{--hpon:#0B0D12}html:not([data-eqa-theme=light]) #eqa .house{--hon:#0B0D12}html:not([data-eqa-theme=light]) #eqa .house.hmv{--s:#9CA3AF}html:not([data-eqa-theme=light]) #eqa .house.hwr{--s:#FACC15}}
+html[data-eqa-theme=dark] #eqa{--hpon:#0B0D12}html[data-eqa-theme=dark] #eqa .house{--hon:#0B0D12}html[data-eqa-theme=dark] #eqa .house.hmv{--s:#9CA3AF}html[data-eqa-theme=dark] #eqa .house.hwr{--s:#FACC15}
+#eqa.swapc{--sl:var(--ul);--slb:var(--ulb);--su:var(--lk);--sub:var(--lkb)}
 html:not(.eqa-expert) esp-app{display:none}html.eqa-expert #eqa{display:none}
 #eqa-back{position:fixed;right:16px;bottom:16px;z-index:20;display:none;min-height:44px;padding:0 16px;border:0;border-radius:12px;background:#1D4ED8;color:#fff;font:600 14px system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer}
 html.eqa-expert #eqa-back{display:block}
@@ -902,7 +957,7 @@ html.eqa-expert #eqa-back{display:block}
 #eqa p{margin:6px 0}#eqa .muted{color:var(--muted)}#eqa .small{font-size:12px}#eqa .note{font-size:13px;color:var(--wr)}#eqa .knauf{display:flex;gap:10px;align-items:flex-start;margin-top:14px;padding:12px 14px;border-radius:12px;background:var(--wrb);color:var(--wr);border:1.5px solid var(--wr)}#eqa .knauf b{display:block;font-size:15px;margin-bottom:2px}#eqa .knauf span{font-size:14px;line-height:1.35}#eqa .knauf svg{flex:none;margin-top:1px}#eqa .knauf.sm{margin-top:8px;padding:10px 12px}#eqa .knauf.sm span{font-size:13px}
 #eqa header{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:14px 16px;background:var(--card);border-bottom:1px solid var(--line)}
 #eqa .stale{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:13px;color:var(--wr)}#eqa .stale svg{flex:none}#eqa .stale .b{min-height:34px;padding:0 12px;font-size:13px}
-#eqa .hlock{width:46px;height:46px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none}#eqa .hlock.klk{background:var(--lkb);color:var(--lk)}#eqa .hlock.kul{background:var(--ulb);color:var(--ul)}#eqa .hlock.kop{background:var(--opb);color:var(--op)}#eqa .hlock.kmv{background:var(--mvb);color:var(--mv)}#eqa .hlock.kwr{background:var(--wrb);color:var(--wr)}#eqa .hstate{font:700 13px system-ui,sans-serif}#eqa .hstate.tlk{color:var(--lk)}#eqa .hstate.tul{color:var(--ul)}#eqa .hstate.top{color:var(--op)}#eqa .hstate.tmv{color:var(--mv)}#eqa .hstate.twr{color:var(--wr)}#eqa .hright{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none}#eqa .hseg{display:flex;gap:6px}#eqa .hseg button{width:36px;height:36px;border-radius:50%;border:1.5px solid var(--line);background:var(--card);color:var(--muted);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}#eqa .hseg button.sel{border:2px solid var(--acc);background:var(--accs);color:var(--acci);box-shadow:0 0 0 3px var(--accs)}#eqa .hclock{display:inline-flex;align-items:center;gap:5px;font:700 13px system-ui,sans-serif;font-variant-numeric:tabular-nums;color:var(--muted)}#eqa .hclock.bad{color:var(--wr)}#eqa .tile.bt{min-width:0}#eqa .tile.bt span{display:flex;align-items:center;gap:5px}#eqa .tile.bt span svg{flex:none}#eqa .tile.bt b{white-space:normal;font-size:13px;line-height:1.25;overflow-wrap:break-word}#eqa .tile.bt small{font-size:11px;color:var(--muted)}#eqa .tile.bt.g b,#eqa .tile.bt.g span svg{color:var(--lk)}#eqa .tile.bt.bl b{color:var(--op)}#eqa .tile.bt.bl span svg{color:var(--op);animation:eqpulse 1.2s ease-in-out infinite}@keyframes eqpulse{50%{opacity:.25}}#eqa .tile.bt.n b{color:var(--muted)}#eqa .tile.bt.y{background:var(--wrb);border-color:var(--wr)}#eqa .tile.bt.y b,#eqa .tile.bt.y span{color:var(--wr)}#eqa .tile.bt.r{background:var(--ulb);border-color:var(--ul)}#eqa .tile.bt.r b,#eqa .tile.bt.r span{color:var(--ul)}
+#eqa .hlock{width:46px;height:46px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none}#eqa .hlock.klk{background:var(--slb);color:var(--sl)}#eqa .hlock.kul{background:var(--sub);color:var(--su)}#eqa .hlock.kop{background:var(--opb);color:var(--op)}#eqa .hlock.kmv{background:var(--mvb);color:var(--mv)}#eqa .hlock.kwr{background:var(--wrb);color:var(--wr)}#eqa .hstate{font:700 13px system-ui,sans-serif}#eqa .hstate.tlk{color:var(--sl)}#eqa .hstate.tul{color:var(--su)}#eqa .hstate.top{color:var(--op)}#eqa .hstate.tmv{color:var(--mv)}#eqa .hstate.twr{color:var(--wr)}#eqa .hright{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none}#eqa .hseg{display:flex;gap:6px}#eqa .hseg button{width:36px;height:36px;border-radius:50%;border:1.5px solid var(--line);background:var(--card);color:var(--muted);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}#eqa .hseg button.sel{border:2px solid var(--acc);background:var(--accs);color:var(--acci);box-shadow:0 0 0 3px var(--accs)}#eqa .hclock{display:inline-flex;align-items:center;gap:5px;font:700 13px system-ui,sans-serif;font-variant-numeric:tabular-nums;color:var(--muted)}#eqa .hclock.bad{color:var(--wr)}#eqa .tile.bt{min-width:0}#eqa .tile.bt span{display:flex;align-items:center;gap:5px}#eqa .tile.bt span svg{flex:none}#eqa .tile.bt b{white-space:normal;font-size:13px;line-height:1.25;overflow-wrap:break-word}#eqa .tile.bt small{font-size:11px;color:var(--muted)}#eqa .tile.bt.g b,#eqa .tile.bt.g span svg{color:var(--lk)}#eqa .tile.bt.bl b{color:var(--op)}#eqa .tile.bt.bl span svg{color:var(--op);animation:eqpulse 1.2s ease-in-out infinite}@keyframes eqpulse{50%{opacity:.25}}#eqa .tile.bt.rt span svg{animation:eqpulse 1.2s ease-in-out infinite}#eqa .tile.bt.n b{color:var(--muted)}#eqa .tile.bt.y{background:var(--wrb);border-color:var(--wr)}#eqa .tile.bt.y b,#eqa .tile.bt.y span{color:var(--wr)}#eqa .tile.bt.r{background:var(--ulb);border-color:var(--ul)}#eqa .tile.bt.r b,#eqa .tile.bt.r span{color:var(--ul)}
 #eqa .brand{display:flex;flex-direction:column;flex:1;min-width:0}#eqa .brand h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #eqa main{max-width:1100px;margin:0 auto;padding:16px 16px 96px}
 #eqa nav.top{display:none;gap:4px}#eqa nav.bottom{position:fixed;left:0;right:0;bottom:0;z-index:5;display:flex;background:var(--card);border-top:1px solid var(--line);padding:4px 6px calc(6px + env(safe-area-inset-bottom))}
@@ -915,17 +970,42 @@ html.eqa-expert #eqa-back{display:block}
 #eqa .card,#eqa .tile,#eqa .srow{box-shadow:0 1px 2px rgba(16,24,40,.06),0 4px 14px rgba(16,24,40,.07)}
 #eqa .card>h2:first-child,#eqa .card>h3:first-child{margin:-16px -16px 14px;padding:12px 16px;background:var(--accs);color:var(--acci);border-bottom:1px solid var(--line);font-size:16px;font-weight:800}
 #eqa .card.info{border-color:var(--op)}#eqa .card.warnc{background:var(--wrb);border-color:transparent;color:var(--wr);margin-bottom:14px}
-#eqa .hero{display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 0 16px}
-#eqa .ring{width:120px;height:120px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin-bottom:6px}
-#eqa .hl{font-size:26px;font-weight:700}
-#eqa .st-locked .ring{background:var(--lkb);color:var(--lk)}#eqa .st-locked .hl{color:var(--lk)}
-#eqa .st-unlocked .ring{background:var(--ulb);color:var(--ul)}#eqa .st-unlocked .hl{color:var(--ul)}
-#eqa .st-opened .ring{background:var(--opb);color:var(--op)}#eqa .st-opened .hl{color:var(--op)}
-#eqa .st-moving .ring,#eqa .st-unknown .ring{background:var(--mvb);color:var(--mv)}#eqa .st-moving .ring svg{animation:eqspin 1.2s linear infinite}
+#eqa .hcard{padding-top:14px}
+#eqa .hsub{display:flex;align-items:center;gap:8px;min-width:0}#eqa .hsub .hstate{white-space:nowrap}
+#eqa .hver{display:inline-flex;align-items:center;gap:3px;flex:none;padding:1px 8px;border:1px solid var(--line);border-radius:999px;background:var(--card);
+color:var(--muted);font:600 12px system-ui,sans-serif;font-variant-numeric:tabular-nums;text-decoration:none;white-space:nowrap}
+#eqa .hver:hover{color:var(--acc);border-color:var(--acc)}
+#eqa .hver.new{border-color:var(--acc);color:var(--acc);animation:eqglow 2s ease-in-out infinite}
+#eqa .hver i{width:6px;height:6px;border-radius:50%;background:var(--acc);margin-left:2px}
+@keyframes eqglow{0%,100%{box-shadow:0 0 0 2px color-mix(in srgb,var(--acc) 25%,transparent)}50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--acc) 30%,transparent),0 0 12px color-mix(in srgb,var(--acc) 55%,transparent)}}
+@media (prefers-reduced-motion:reduce){#eqa .hver.new{animation:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--acc) 30%,transparent)}}
+#eqa .house{--s:var(--mv);--hon:#fff;position:relative;width:300px;max-width:100%;height:270px;margin:4px auto 0}
+#eqa .house.hlk{--s:var(--sl)}#eqa .house.hul{--s:var(--su)}#eqa .house.hop{--s:var(--op)}#eqa .house.hmv{--s:#6B7280}#eqa .house.hwr{--s:#CA8A04}
+#eqa .house>svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible;filter:drop-shadow(0 10px 12px color-mix(in srgb,var(--s) 35%,transparent))}
+#eqa .house .s0{stop-color:color-mix(in srgb,var(--s) 80%,#fff)}#eqa .house .s1{stop-color:var(--s)}
+#eqa .hmid{position:absolute;left:44px;right:44px;top:74px;text-align:center;color:var(--hon);display:flex;flex-direction:column;align-items:center;gap:2px}
+#eqa .hmid.ws{top:62px}
+#eqa .hmid b{font-size:26px;font-weight:700;line-height:1.15;letter-spacing:-.01em}#eqa .hmid b.lg{font-size:20px}
+#eqa .hmid small{font-size:13px;opacity:.92;line-height:1.3}
+#eqa .house.hmv .hmid svg{animation:eqspin 1.2s linear infinite}
 @keyframes eqspin{to{transform:rotate(360deg)}}
-#eqa .acts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
-#eqa .big{min-height:64px;border:0;border-radius:14px;color:#fff;font:600 15px system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer}
-#eqa .big.g{background:#15803D}#eqa .big.r{background:#B91C1C}#eqa .big.bl{background:#1D4ED8}#eqa .big:active{transform:scale(.97)}
+#eqa .hdoor{position:absolute;left:50%;bottom:-2px;transform:translateX(-50%);width:88px;height:96px;border:0;border-radius:44px 44px 14px 14px;background:var(--card);color:var(--op);
+display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font:600 14px system-ui,sans-serif;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.18),0 4px 10px rgba(0,0,0,.12)}
+#eqa .hdoor:active{transform:translateX(-50%) scale(.96)}
+#eqa .hsince{text-align:center;margin-bottom:2px}
+#eqa .hchip{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:8px;font-size:13px;font-weight:600;background:var(--soft);color:var(--fg)}
+#eqa .hchip i{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+#eqa .hchip.clk{background:var(--slb);color:var(--sl)}#eqa .hchip.clk i{background:var(--sl)}
+#eqa .hchip.cul{background:var(--sub);color:var(--su)}#eqa .hchip.cul i{background:var(--su)}
+#eqa .hchip.cop{background:var(--opb);color:var(--op)}#eqa .hchip.cop i{background:var(--op)}
+#eqa .hnote{font-size:13px;color:var(--muted);text-align:center;margin:12px 8px 0}
+#eqa .hacts{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}
+#eqa .hp{min-height:56px;border:0;border-radius:999px;display:flex;align-items:center;justify-content:center;gap:8px;font:600 16px system-ui,sans-serif;cursor:pointer}
+#eqa .hp.zu{background:var(--slb);color:var(--sl)}#eqa .hp.auf{background:var(--sub);color:var(--su)}
+#eqa .hp.zu.on{background:var(--sl);color:var(--hpon)}#eqa .hp.auf.on{background:var(--su);color:var(--hpon)}
+#eqa .hp.on{box-shadow:0 1px 3px rgba(0,0,0,.18),0 4px 10px rgba(0,0,0,.10)}#eqa .hp:active{transform:scale(.97)}
+#eqa .hcard .note{text-align:center;color:var(--muted);margin:12px 0 0}
+#eqa .hcard .stale{margin-top:12px}
 #eqa button:disabled{opacity:.55;cursor:default}
 #eqa .tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 #eqa .rtst{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0 6px}#eqa .rtst div{border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}#eqa .rtst span{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#eqa .rtst b{font-size:22px;font-variant-numeric:tabular-nums}
@@ -941,7 +1021,7 @@ html.eqa-expert #eqa-back{display:block}
 #eqa .ev{list-style:none;margin:0;padding:0}#eqa .ev li{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line)}
 #eqa .ev .et{flex:1;min-width:0}#eqa .ev .tm{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
 #eqa .dot{width:10px;height:10px;border-radius:50%;flex:none;background:var(--muted)}
-#eqa .k-locked{background:var(--lk)}#eqa .k-unlocked{background:var(--ul)}#eqa .k-opened{background:var(--op)}#eqa .k-bell{background:#D97706}#eqa .k-deny{background:var(--pu)}#eqa .k-alert{background:var(--ul);box-shadow:0 0 0 3px var(--ulb)}#eqa .k-ok{background:var(--lk)}
+#eqa .k-locked{background:var(--sl)}#eqa .k-unlocked{background:var(--su)}#eqa .k-opened{background:var(--op)}#eqa .k-bell{background:#D97706}#eqa .k-deny{background:var(--pu)}#eqa .k-alert{background:var(--ul);box-shadow:0 0 0 3px var(--ulb)}#eqa .k-ok{background:var(--lk)}
 #eqa .ban{display:flex;align-items:center;gap:12px;padding:12px 16px;font-size:14px}#eqa .ban.warn{background:var(--wrb);color:var(--wr)}
 #eqa .ban.sab{background:#B91C1C;color:#fff}#eqa .ban.sab div{flex:1;display:flex;flex-direction:column}#eqa .ban.sab span{font-size:12px}
 #eqa .b{min-height:44px;padding:0 16px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--fg);font:600 14px system-ui,sans-serif;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;text-decoration:none}
@@ -956,7 +1036,7 @@ html.eqa-expert #eqa-back{display:block}
 #eqa .chip{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:4px 10px;border:1px solid var(--line);border-radius:999px;background:var(--soft);color:var(--fg);font:13px system-ui,sans-serif;cursor:pointer}
 #eqa .chip .muted{font-size:11px}
 #eqa .badge{padding:1px 7px;border-radius:999px;font-size:11px;font-weight:600;background:var(--mvb);color:var(--mv)}
-#eqa .a1{background:var(--accs);color:var(--acci)}#eqa .a2{background:var(--ulb);color:var(--ul)}#eqa .a3{background:var(--lkb);color:var(--lk)}#eqa .a4{background:var(--opb);color:var(--op)}#eqa .a5{background:var(--wrb);color:var(--wr)}
+#eqa .a1{background:var(--accs);color:var(--acci)}#eqa .a2{background:var(--sub);color:var(--su)}#eqa .a3{background:var(--slb);color:var(--sl)}#eqa .a4{background:var(--opb);color:var(--op)}#eqa .a5{background:var(--wrb);color:var(--wr)}
 #eqa .lbl{display:block;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--acci);margin-bottom:8px}#eqa .la{font-size:14px;margin:0}
 #eqa .row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:50px;border-top:1px solid var(--line)}#eqa h3+.row,#eqa .sum .row:first-child{border-top:0}
 #eqa .row>span:first-child{font-weight:600}#eqa .row .v{font-weight:400;color:var(--muted);text-align:right;overflow-wrap:anywhere}
@@ -989,7 +1069,7 @@ html.eqa-expert #eqa-back{display:block}
 #eqa .srow.off .smain{opacity:.5}#eqa .srow.bad{border-color:var(--wr)}
 #eqa .smain{flex:1;min-width:0;display:flex;align-items:center;gap:12px;border:0;background:transparent;color:var(--fg);padding:6px;border-radius:12px;cursor:pointer;text-align:left;font:inherit}
 #eqa .sic{width:38px;height:38px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex:none}
-#eqa .sic.lck{background:var(--lkb);color:var(--lk)}#eqa .sic.unl{background:var(--ulb);color:var(--ul)}#eqa .sic.warn{background:var(--wrb);color:var(--wr)}
+#eqa .sic.lck{background:var(--slb);color:var(--sl)}#eqa .sic.unl{background:var(--sub);color:var(--su)}#eqa .sic.warn{background:var(--wrb);color:var(--wr)}
 #eqa .stime{font:700 24px system-ui,sans-serif;font-variant-numeric:tabular-nums;min-width:72px}
 #eqa .sdays{display:flex;gap:2px;flex:1;min-width:0}#eqa .sdays span{width:17px;text-align:center;font:700 12px system-ui,sans-serif;color:var(--bline)}#eqa .sdays span.on{color:var(--acci)}
 #eqa .sbad{display:flex;flex-direction:column;min-width:0}#eqa .sbad small{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1035,6 +1115,7 @@ html.eqa-expert #eqa-back{display:block}
     setExpert(load('eqa-expert', '') === '1');
     draw();
     connect();
+    checkUpdate(); setInterval(checkUpdate, 3600e3);
     setInterval(() => { if (S.pair && S.pair.step === 3 && !S.pair.result) draw(); }, 1000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
