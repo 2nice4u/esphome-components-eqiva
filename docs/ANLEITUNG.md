@@ -18,7 +18,7 @@ Sie läuft direkt auf dem ESP, auch ohne Internet, am Handy und am PC.
 - **Kopfzeile** (auf allen Seiten): links das Schloss-Symbol in der Farbe des Zustands (grün zu, rot auf, blau geöffnet, grau Motor läuft) und der Zustand als Wort, daneben die **Version** (z. B. „v3.5.9 ↗“, öffnet die Release-Übersicht auf GitHub; leuchtet blau und pulsiert, wenn es eine neuere Version gibt); rechts der Umschalter **Automatisch · Hell · Dunkel** (drei runde Knöpfe, der gewählte mit blauem Ring) und darunter die **Uhrzeit des ESP**. Steht dort ein gelbes „⚠ --:--“, kennt der ESP keine Uhrzeit – der Zeitplan pausiert dann.
 - **Bedienfeld (Startseite):** ein Smarthome-Haus mit Leiterbahnen in der Farbe des Zustands – grün verriegelt, rot aufgeschlossen, blau geöffnet, grau Motor läuft (Symbol dreht sich), gelb unbekannt. Die **Haustür ist der Knopf „Öffnen“**, darunter **Zu** und **Auf** mit farbigem Doppelring (der Knopf des aktuellen Zustands ist kräftig gefüllt).
 - **Zustandsfarben** (Einstellungen → Schloss): „Verriegelt grün“ (Standard) oder „Verriegelt rot“. Gilt für Haus, Knöpfe, Kopfzeile, Ereignis-Symbole, Status-LED und die Bestätigung am Fingerprint-Ring. Grün/Rot für gut/schlecht (Reaktionszeit, Bluetooth, ✓/✗, Finger erkannt/abgewiesen) bleibt.
-- **Update-Hinweis:** Die Web-App fragt höchstens alle 12 Stunden bei GitHub nach der neuesten veröffentlichten Release (das macht der Browser, nicht der ESP – der ESP braucht kein Internet). Ohne Internet bleibt der Versions-Chip einfach normal.
+- **Update-Hinweis:** Die Web-App fragt bei jedem Laden der Seite sofort bei GitHub nach der neuesten veröffentlichten Release (das macht der Browser, nicht der ESP – der ESP braucht kein Internet). Ohne Internet bleibt der Versions-Chip einfach beim zuletzt bekannten Stand.
 - **Kachel „Bluetooth“** (Startseite): **Verbunden** (grün) · **Verbindungsaufbau** (blau, Symbol pulsiert) · **Idle** (grau; im Sparmodus mit „verbindet bei Bedarf“ – das ist dort der Normalzustand) · **Schloss nicht gefunden** (gelb: ein Befehl kam bis zum Zeitlimit nicht zum Schloss durch) · **Verbindungsfehler** (rot: der Verbindungsaufbau ist gescheitert). Ein Fehler bleibt stehen, bis eine Verbindung klappt oder ein neuer Befehl kommt; läuft schon der nächste Versuch, steht darunter „neuer Versuch …“ (in Home Assistant: „Verbindungsfehler – neuer Versuch …“). In Home Assistant heißt der Sensor „Bluetooth“.
 - **„Stand: vor … min“** (Startseite, über dem Haus): wie alt die letzte Statusmeldung des Schlosses ist („gerade eben“, „vor 6 min“ …), daneben **Aktualisieren** (fragt den Zustand sofort ab). Gelb, wenn keine Verbindung besteht und der Stand älter als 5 Minuten ist – der Zustand könnte dann veraltet sein (z. B. von Hand aufgeschlossen). Grundlage: Sensor „Letzte Statusmeldung“, Knopf „Status abfragen“.
 - **Auf dem Handy wie eine App:** in Chrome die Seite öffnen, Menü ⋮ → „Zum Startbildschirm hinzufügen“.
@@ -120,12 +120,18 @@ Das Schloss erlaubt nur **eine** Bluetooth-Verbindung gleichzeitig. Vor der App 
 
 ## 7a. Reaktionszeit
 
-Gemessen wird die Zeit vom Absetzen des Befehls (App, HA, Fingerprint, Zeitplan) bis das Schloss meldet, dass der Motor läuft. Im Sparmodus ist der Verbindungsaufbau mit dabei, bei bestehender Verbindung nicht.
+Gemessen wird die Zeit vom **Auslöser** bis das Schloss meldet, dass der Motor läuft: bei App/HA der Klick, beim Zeitplan die Auslösezeit, beim Fingerprint „Umschalten“ schon die **Berührung** (Finger aufgelegt) – unabhängig davon, ob der Finger erkannt wird. Bleibt ein Finger unbekannt oder führt er zu keinem Schließbefehl, gibt es dafür keine Messung.
 
-- **Startseite → Ereignisse und Reaktionszeit:** oben drei Kacheln **zuletzt · Ø Mittel · Maximum** der letzten 10 Bedienungen, jede in der Ampelfarbe ihres Werts.
-- Darunter alle Ereignisse mit Uhrzeit und Piktogramm (zu = ausgefülltes Schloss, auf = offenes Schloss, öffnen = Tür; auch Klingel, Abweisungen, Fehler). Bedienungen mit Messung haben einen Balken mit der Reaktionszeit, Handbedienung steht als ✋ „von Hand“ dazwischen – die Liste ist zugleich das Diagramm.
-- Farben: **grün** bis 4 s · **gelb** bis 8 s · **rot** darüber.
-- Der Sensor „Reaktionszeit“ (Sekunden) ist in Home Assistant mit Verlauf verfügbar. Die Liste „Reaktionszeiten“ enthält die letzten 10 Bedienungen mit Aktion, Dauer und Quelle. Die Ereignisse enthalten die Reaktionszeit im Text, z. B. „18:05 🔒 Zeitplan 1 (2,4 s)“. Nach einem Neustart sind beide Listen leer.
+Die Zeit teilt sich in drei Anteile, die auch mitgezählt werden, wenn der Verbindungsaufbau schon vor dem eigentlichen Schließbefehl läuft (z. B. während der Statusabfrage bei Fingerprint „Umschalten“):
+
+- **Verbindung** (violett): echter BLE-Verbindungsaufbau, bis die gesicherte Session steht. Bei bestehender Verbindung praktisch 0.
+- **Finger/Status**: Finger lesen und Statusabfrage, nur ab 0,1 s angezeigt.
+- **Schloss**: Befehl gesendet, bis der Motor dreht.
+
+- **Startseite → Ereignisse und Reaktionszeit:** Die letzte Messung als breiter Balken mit zwei abgerundeten Kapseln (Verbindung/Schloss) mit Lücke dazwischen, die Anteile darunter ausgeschrieben. Darunter drei Kacheln **Ø gesamt (mit Maximum) · Ø Verbindung · Ø Schloss** der letzten 10 Bedienungen.
+- Darunter alle Ereignisse mit Uhrzeit und Piktogramm (zu = ausgefülltes Schloss, auf = offenes Schloss, öffnen = Tür; auch Klingel, Abweisungen, Fehler). Bedienungen mit Messung haben einen Balken mit der Gesamt-Reaktionszeit, Handbedienung steht als ✋ „von Hand“ dazwischen – die Liste ist zugleich das Diagramm.
+- Während eines echten Verbindungsaufbaus oder solange der Motor läuft, leuchten die Leiterbahnen am Haus nacheinander als Welle auf (bei „Bewegung reduzieren“ nur hervorgehoben, ohne Animation).
+- Der Sensor „Reaktionszeit“ (Sekunden, Gesamtwert) ist in Home Assistant mit Verlauf verfügbar. Die Liste „Reaktionszeiten“ enthält die letzten 10 Bedienungen mit Aktion, Gesamt-, Verbindungs- und Schlossanteil sowie Quelle. Die Ereignisse enthalten weiterhin die Gesamt-Reaktionszeit im Text, z. B. „18:05 🔒 Zeitplan 1 (2,4 s)“. Nach einem Neustart sind beide Listen leer.
 - Keine Messung gibt es, wenn das Schloss den Befehl ohne Motorlauf beantwortet (z. B. schon im Zielzustand), innerhalb von 15 s nach dem Senden kein Motorlauf kommt oder zwischendurch eine Handbedienung erkannt wird – so landen keine falschen Werte (z. B. 65 s) in der Statistik.
 
 Der Motorlauf bis zum Endzustand (ca. 3–4 s) ist Mechanik und nicht enthalten.

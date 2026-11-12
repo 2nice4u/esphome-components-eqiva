@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # R503 Fingerprint – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 3.5.9 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.5.10 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Einbinden: packages: fingerprint: !include eqiva-smart-lock-fingerprint.yaml
 # Nutzt ${name}, lock_status, ble_state, door_handle und ha_time aus der Hauptdatei.
 #
@@ -492,8 +492,8 @@ script:
   - id: ver_check_fingerprint
     then:
       - lambda: |-
-          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.9") == 0,
-                        "Versionskonflikt: eqiva-smart-lock-fingerprint.yaml ist 3.5.9, Hauptdatei ist ${config_version} "
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.10") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-fingerprint.yaml ist 3.5.10, Hauptdatei ist ${config_version} "
                         "(alle Dateien gleicher Version verwenden oder version_check: false)");
   # Meldung in "Fingerprint: Letzte Aktion" (mit Uhrzeit, wenn bekannt)
   - id: fp_msg
@@ -2280,6 +2280,9 @@ binary_sensor:
     # Finger lesen und Verbinden laufen dann gleichzeitig. Höchstens einmal pro Minute (schont die Schloss-Batterie),
     # nicht bei Sabotage-Alarm, Fehlversuch-Sperre, beim Anlernen oder wenn abgeschaltet.
     on_press:
+      # Beginn der Reaktionszeit-Messung (Auslöser = Berührung), unabhängig vom Ergebnis;
+      # wird nur verwendet, wenn daraus wirklich ein Schließbefehl entsteht (sonst verfällt sie von selbst).
+      - lambda: 'id(key_ble)->note_touch();'
       - if:
           condition:
             lambda: |-

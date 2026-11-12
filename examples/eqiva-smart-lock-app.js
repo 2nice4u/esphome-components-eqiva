@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.5.9 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.5.10 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.5.9';
+  const APP_VERSION = '3.5.10';
   const REPO = '2nice4u/esphome-components-eqiva';   // eigener Fork: nur diese Zeile ändern
   const GUIDE_URL = 'https://github.com/' + REPO + '/blob/main/docs/ANLEITUNG.md';
   const RELEASES_URL = 'https://github.com/' + REPO + '/releases';
@@ -36,15 +36,15 @@
   const seq = (id) => (has(id) ? E[id]._seq || 0 : 0);
 
   // ---------------------------------------------------------------- Update-Prüfung
-  // Der Browser (nicht der ESP) fragt GitHub nach der neuesten veröffentlichten Release. Ergebnis 12 h im Browser
-  // merken; ohne Internet bleibt einfach alles, wie es ist.
+  // Der Browser (nicht der ESP) fragt GitHub bei jedem Laden der Seite sofort nach der neuesten veröffentlichten
+  // Release (kein Zwischenspeicher mehr). Der zuletzt bekannte Stand wird nur kurz gezeigt, bis die frische
+  // Antwort da ist; ohne Internet bleibt es einfach bei diesem letzten Stand.
   const vcmp = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number);
     for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0); } return 0; };
   async function checkUpdate() {
     let c = null;
     try { c = JSON.parse(load('eqa-upd', 'null')); } catch (e) { /* kaputt */ }
     if (c && c.v && c.v !== S.latest) { S.latest = c.v; draw(); }
-    if (c && Date.now() - c.t < 12 * 3600e3) return;
     const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 10000);
     try {
       const r = await fetch('https://api.github.com/repos/' + REPO + '/releases/latest', { credentials: 'omit', signal: ctl.signal });
@@ -118,12 +118,17 @@
     UNKNOWN: { label: 'Unbekannt / blockiert', cls: 'st-unknown', icon: 'alert' }
   };
   // Smarthome-Haus: Leiterbahnen links (rechts gespiegelt), letzter Punkt = Knoten (Ring)
+  // Knoten-Welle: jede Bahn/jeder Knoten leuchtet zeitversetzt auf (animation-delay je Index), aktiv nur
+  // während Verbindungsaufbau/Motorlauf (Klasse "wave" am Haus-Container, siehe viewStart). Bei
+  // "Bewegung reduzieren" blendet eine CSS-Regel die Animation aus (nur leicht hervorgehobene Bahnen).
   const HOUSE_TRACES = (() => {
     const L = [[[60, 150], [38, 150], [24, 136]], [[60, 174], [14, 174]], [[60, 198], [34, 198]], [[60, 222], [38, 222], [24, 236]],
       [[96, 98], [74, 76], [74, 52]], [[134, 67], [118, 51], [118, 30]], [[112, 256], [112, 272]]];
     return L.concat(L.map((t) => t.map(([x, y]) => [340 - x, y]))).map((t, i) => {
       const e = t[t.length - 1];
-      return '<path class="htr" d="M' + t.map((q) => q.join(' ')).join(' L') + '"/><circle class="hnd" cx="' + e[0] + '" cy="' + e[1] + '" r="' + (i % 7 === 2 ? 4 : 6.5) + '"/>';
+      const delay = ' style="animation-delay:' + (i * 90) + 'ms"';
+      return '<path class="htr" d="M' + t.map((q) => q.join(' ')).join(' L') + '"' + delay + '/><circle class="hnd" cx="' + e[0] + '" cy="' + e[1] +
+        '" r="' + (i % 7 === 2 ? 4 : 6.5) + '"' + delay + '/>';
     }).join('');
   })();
   const ACTIONS = ['Standard', 'Umschalten', 'Aufschließen', 'Zuschließen', 'Öffnen', 'Nur Klingel', 'Gesperrt'];
@@ -280,18 +285,34 @@
 
   // ---------------------------------------------------------------- Ansichten
   const rtClass = (v) => v <= 4 ? 'g' : v <= 8 ? 'y' : 'r';
-  // Reaktionszeit-Kopf der Startseiten-Karte: zuletzt/Ø/max und Balken mit Piktogrammen.
-  // "Reaktionszeiten" je Eintrag: Aktion|Sekunden|Quelle, durch ";" getrennt (z = zu, a = auf, o = öffnen)
-  // Kennzahlen der letzten Messungen als drei Karten (Farbe nach Ampel: grün ≤ 4 s, gelb ≤ 8 s, rot darüber).
-  // "Reaktionszeiten" je Eintrag: Aktion|Sekunden|Quelle, durch ";" getrennt (z = zu, a = auf, o = öffnen)
+  // Reaktionszeit-Kopf der Startseiten-Karte, Variante B: breiter Balken mit zwei rund abgeschlossenen
+  // Kapseln (violett Verbindung, grün Schloss) mit Lücke dazwischen, Anteile darunter ausgeschrieben
+  // (Finger/Status = Rest, nur ab 0,1 s gezeigt), darunter Kacheln Ø gesamt (mit Maximum) · Ø Verbindung ·
+  // Ø Schloss. "Reaktionszeiten" je Eintrag: Aktion|Gesamt-s|Verbindung-s|Schloss-s|Quelle, durch ";" getrennt.
   function reactionHead() {
     if (!has('text_sensor/Reaktionszeiten')) return '';
-    const vals = txt('text_sensor/Reaktionszeiten').split(/;\s*/).map((s) => s.split('|')).filter((p) => /^[zao]$/.test(p[0]) && isFinite(Number(p[1]))).map((p) => Number(p[1]));
-    if (!vals.length) return '';
+    const rows = txt('text_sensor/Reaktionszeiten').split(/;\s*/).map((s) => s.split('|'))
+      .filter((p) => /^[zao]$/.test(p[0]) && isFinite(Number(p[1])) && isFinite(Number(p[2])) && isFinite(Number(p[3])))
+      .map((p) => ({ total: Number(p[1]), conn: Number(p[2]), lock: Number(p[3]) }));
+    if (!rows.length) return '';
     const f = (v) => v.toFixed(1).replace('.', ',') + ' s';
-    const st = [['zuletzt', vals[vals.length - 1]], ['Ø Mittel', vals.reduce((a, b) => a + b, 0) / vals.length], ['Maximum', Math.max(...vals)]];
-    return '<p class="muted small">Reaktionszeit: Befehl abgeschickt → Motor dreht · letzte ' + vals.length + ' Messungen</p>' +
-      '<div class="rtst">' + st.map((x) => '<div class="' + rtClass(x[1]) + '"><span>' + x[0] + '</span><b>' + f(x[1]) + '</b></div>').join('') + '</div>';
+    const last = rows[rows.length - 1];
+    const status = Math.max(0, last.total - last.conn - last.lock);
+    const w = (v) => last.total > 0 ? Math.max(6, v / last.total * 100) : 0;
+    const bar = last.total > 0.05 ? '<div class="rtbar">' +
+      (last.conn > 0.05 ? '<b class="cn" style="width:' + w(last.conn) + '%"></b>' : '') +
+      (last.lock > 0.05 ? '<b class="lo" style="width:' + w(last.lock) + '%"></b>' : '') + '</div>' : '';
+    const parts = [];
+    if (last.conn > 0.05) parts.push('Verbindung ' + f(last.conn));
+    if (status > 0.05) parts.push('Finger/Status ' + f(status));
+    if (last.lock > 0.05) parts.push('Schloss ' + f(last.lock));
+    const avg = (k) => rows.reduce((a, r) => a + r[k], 0) / rows.length;
+    const maxTotal = Math.max(...rows.map((r) => r.total));
+    const st = [['Ø gesamt', avg('total'), ' (max ' + f(maxTotal) + ')', rtClass(avg('total'))],
+      ['Ø Verbindung', avg('conn'), '', 'cn'], ['Ø Schloss', avg('lock'), '', 'lo']];
+    return '<p class="muted small">Reaktionszeit: Auslöser → Motor dreht · letzte ' + rows.length + ' Messungen</p>' +
+      bar + (parts.length ? '<p class="rtparts">' + parts.join(' · ') + '</p>' : '') +
+      '<div class="rtst">' + st.map((x) => '<div class="' + x[3] + '"><span>' + x[0] + '</span><b>' + f(x[1]) + x[2] + '</b></div>').join('') + '</div>';
   }
   function viewStart() {
     const st = txt('text_sensor/Lock Status', '');
@@ -318,6 +339,8 @@
         (has('button/Status abfragen') ? btn('press', icon('spin', 14) + 'Aktualisieren', 'href', 'button/Status abfragen') : '') + '</div>';
     }
     const hk = unpaired ? 'wr' : ({ LOCKED: 'lk', UNLOCKED: 'ul', OPENED: 'op', MOVING: 'mv' }[st] || (st ? 'wr' : 'mv'));
+    // Knoten-Welle am Haus: während echtem Verbindungsaufbau oder Motorlauf
+    const houseWave = st === 'MOVING' || ble === 'CONNECTING';
     const short = unpaired ? 'Bitte zuerst koppeln' : st === 'MOVING' ? 'Befehl wird ausgeführt' : st === 'UNKNOWN' ? 'Einmal Zu oder Auf drücken' : '';
     const long = st === 'UNKNOWN' && !unpaired ? 'Position unbekannt – z. B. nach dem Pairing, einer halben Drehung oder wenn der Riegel klemmt.' :
       (sub && !short ? sub : '');
@@ -325,7 +348,7 @@
     const lbl = st === 'UNKNOWN' && !unpaired ? 'Unbekannt' : L.label.replace(/ …$/, '');
     const hero = card(
       stand +
-      '<div class="house h' + hk + '"><svg viewBox="0 0 340 290" aria-hidden="true">' + HOUSE_TRACES +
+      '<div class="house h' + hk + (houseWave ? ' wave' : '') + '"><svg viewBox="0 0 340 290" aria-hidden="true">' + HOUSE_TRACES +
       '<path class="hbody" d="M170 22 L298 128 L274 128 L274 254 L66 254 L66 128 L42 128 Z"/></svg>' +
       '<div class="hmid' + (short ? ' ws' : '') + '">' + icon(hicon, 40) + '<b' + (lbl.length > 12 ? ' class="lg"' : '') + '>' + esc(lbl) + '</b>' +
       (short ? '<small>' + esc(short) + '</small>' : '') + '</div>' +
@@ -998,6 +1021,12 @@ color:var(--muted);font:600 12px system-ui,sans-serif;font-variant-numeric:tabul
 #eqa .house .hbody{fill:var(--sbg);stroke:var(--s);stroke-width:7;stroke-linejoin:round}
 #eqa .house .htr{fill:none;stroke:var(--s);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
 #eqa .house .hnd{fill:var(--card);stroke:var(--s);stroke-width:3}
+/* Knoten-Welle: Bahn und Knoten leuchten zeitversetzt auf (animation-delay je Element, siehe HOUSE_TRACES) */
+#eqa .house.wave .htr{animation:eqwave-tr 1.8s ease-in-out infinite}
+#eqa .house.wave .hnd{animation:eqwave-nd 1.8s ease-in-out infinite}
+@keyframes eqwave-tr{0%,70%,100%{stroke:var(--s);stroke-width:3;opacity:1}30%{stroke:var(--pu);stroke-width:4.5;opacity:1}}
+@keyframes eqwave-nd{0%,70%,100%{fill:var(--card);stroke:var(--s)}30%{fill:var(--pu);stroke:var(--pu)}}
+@media (prefers-reduced-motion:reduce){#eqa .house.wave .htr,#eqa .house.wave .hnd{animation:none;stroke:var(--pu)}}
 #eqa .hmid{position:absolute;left:23%;right:23%;top:33%;text-align:center;color:var(--fg);display:flex;flex-direction:column;align-items:center;gap:2px}
 #eqa .hmid svg{color:var(--s)}#eqa .hmid.ws{top:29%}
 #eqa .hmid b{font-size:24px;font-weight:700;line-height:1.15;letter-spacing:-.01em}#eqa .hmid b.lg{font-size:20px}
@@ -1026,6 +1055,12 @@ box-shadow:0 0 0 3px var(--s),0 0 0 6px var(--card),0 4px 12px rgba(0,0,0,.25)}
 #eqa .tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 #eqa .rtst{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0 6px}#eqa .rtst div{border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}#eqa .rtst span{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#eqa .rtst b{font-size:22px;font-variant-numeric:tabular-nums}
 #eqa .rtst .g{background:var(--lkb);color:var(--lk)}#eqa .rtst .y{background:var(--wrb);color:var(--wr)}#eqa .rtst .r{background:var(--ulb);color:var(--ul)}
+#eqa .rtst .cn{background:var(--pub);color:var(--pu)}#eqa .rtst .lo{background:var(--soft);color:var(--fg)}
+/* Reaktionszeit-Balken (Variante B): zwei rund abgeschlossene Kapseln mit Lücke, violett Verbindung, grau/Textfarbe Schloss */
+#eqa .rtbar{display:flex;gap:5px;height:14px;margin:10px 0 2px}
+#eqa .rtbar b{display:block;height:100%;border-radius:999px;min-width:14px}
+#eqa .rtbar .cn{background:var(--pu)}#eqa .rtbar .lo{background:var(--mv)}
+#eqa .rtparts{font-size:12px;color:var(--muted);margin:0 0 8px}
 #eqa ul.ev.evrt li{display:grid;grid-template-columns:28px minmax(0,1.3fr) minmax(0,1fr) 48px;gap:8px;align-items:center}
 #eqa ul.ev.evrt li.nobar .et{grid-column:2/4}#eqa .k-info{background:var(--muted)}
 #eqa .evpic{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff}

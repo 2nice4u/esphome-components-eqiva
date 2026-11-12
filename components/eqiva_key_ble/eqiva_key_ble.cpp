@@ -515,6 +515,8 @@ bool EqivaKeyBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t 
                 this->publish_(this->user_id_sensor_, std::to_string(uid));
               }
 
+              // Reaktionszeit, Teil "Verbindung": Session steht (echter Verbindungsaufbau abgeschlossen)
+              if (conn_phase_start_ != 0 && conn_phase_ready_ == 0) conn_phase_ready_ = millis();
               if (connect_requested_at_ != 0) {
                 ESP_LOGI(TAG, "Sparmodus: Verbindung + Session nach %u ms bereit", (unsigned) (millis() - connect_requested_at_));
                 connect_requested_at_ = 0;
@@ -596,7 +598,9 @@ void EqivaKeyBle::sendCommand(CommandType command) {
     ev_pending_src_ = src_ok ? cmd_source_ : std::string("HA/Web");
     ev_pending_at_ = now;
     ev_moved_ = false;
-    reaction_started_ = now;
+    // Reaktionszeit: Auslöser ist bei Fingerprint die Berührung (note_touch, gilt 5 s), sonst dieser Klick/Zeitpunkt
+    reaction_started_ = (touch_pending_ && (now - touch_ms_) < 5000) ? touch_ms_ : now;
+    touch_pending_ = false;
     reaction_pending_ = true;
     reaction_cmd_sent_ = false;
     reaction_act_ = command == LOCK ? 'z' : (command == UNLOCK ? 'a' : 'o');
@@ -1023,20 +1027,36 @@ void EqivaKeyBle::on_lock_state_(uint8_t st) {
     reaction_pending_ = false;
     uint32_t ms = now - reaction_started_;
     if (ms > 65535) ms = 65535;
-    reaction_hist_.push_back({reaction_act_, (uint16_t) ms, reaction_src_});
+    // Aufteilung: "Verbindung" = Überlappung des letzten echten Verbindungsaufbaus mit [Auslöser, Befehl
+    // gesendet]; "Schloss" = Befehl gesendet -> Motor; Rest = "Finger/Status" (Finger lesen + Statusabfrage,
+    // in der App nur ab 0,1 s gezeigt). So fällt bei Fingerprint "Umschalten" der Verbindungsaufbau, der schon
+    // vor dem eigentlichen Schließbefehl (während der Statusabfrage) lief, noch korrekt in die Messung.
+    uint32_t conn_ms = 0;
+    if (conn_phase_start_ != 0 && conn_phase_ready_ != 0 && reaction_cmd_sent_) {
+      const uint32_t a = std::max(reaction_started_, conn_phase_start_);
+      const uint32_t b = std::min(reaction_sent_ms_, conn_phase_ready_);
+      if (b > a) conn_ms = b - a;
+    }
+    uint32_t lock_ms = reaction_cmd_sent_ && now >= reaction_sent_ms_ ? now - reaction_sent_ms_ : 0;
+    if (conn_ms + lock_ms > ms) conn_ms = ms > lock_ms ? ms - lock_ms : 0;
+    if (conn_ms > 65535) conn_ms = 65535;
+    if (lock_ms > 65535) lock_ms = 65535;
+    reaction_hist_.push_back({reaction_act_, (uint16_t) ms, (uint16_t) conn_ms, (uint16_t) lock_ms, reaction_src_});
     if (reaction_hist_.size() > 10) reaction_hist_.erase(reaction_hist_.begin());
     if (this->reaction_sensor_ != nullptr) this->reaction_sensor_->publish_state(ms / 1000.0f);
-    // Format je Eintrag: Aktion|Sekunden|Quelle, Einträge mit "; " getrennt (z|4.1|Zeitplan 1; a|3.0|HA/Web).
+    // Format je Eintrag: Aktion|Gesamt-s|Verbindung-s|Schloss-s|Quelle, Einträge mit "; " getrennt
+    // (z|4.1|3.2|0.4|Zeitplan 1; a|3.0|0.0|2.9|HA/Web). Finger/Status ergibt sich in der App als Rest.
     // Das Leerzeichen erlaubt den Zeilenumbruch in der ESPHome-Expertenansicht.
     std::string list;
     for (size_t i = 0; i < reaction_hist_.size(); i++) {
-      char buf[32];
-      snprintf(buf, sizeof(buf), "%s%c|%.1f|", i ? "; " : "", reaction_hist_[i].act, reaction_hist_[i].ms / 1000.0f);
+      char buf[48];
+      snprintf(buf, sizeof(buf), "%s%c|%.1f|%.1f|%.1f|", i ? "; " : "", reaction_hist_[i].act,
+                reaction_hist_[i].ms / 1000.0f, reaction_hist_[i].conn_ms / 1000.0f, reaction_hist_[i].lock_ms / 1000.0f);
       list += buf + reaction_hist_[i].src;
     }
     this->publish_(this->reaction_list_sensor_, list);
     ev_reaction_ms_ = ms ? ms : 1;       // fürs Ereignis "🔒 Quelle (2,4 s)"
-    ESP_LOGI(TAG, "Reaktionszeit: %.1f s", ms / 1000.0f);
+    ESP_LOGI(TAG, "Reaktionszeit: %.1f s (Verbindung %.1f s, Schloss %.1f s)", ms / 1000.0f, conn_ms / 1000.0f, lock_ms / 1000.0f);
   }
   if (st == 1) {                         // MOVING
     if (ev_pending_ >= 0) ev_moved_ = true;
@@ -1114,6 +1134,8 @@ void EqivaKeyBle::ev_tick_() {
     ESP_LOGD(TAG, "Reaktionszeit verworfen: kein Motorlauf innerhalb 15 s");
     reaction_pending_ = false;
   }
+  // Berührung ohne Folge (unbekannter Finger, falsche Erkennung, Fehlversuch-Sperre …): verfällt ungenutzt
+  if (touch_pending_ && (millis() - touch_ms_) >= 5000) touch_pending_ = false;
   // Tageswechsel: gestrige Einträge bekommen ihr Datum
   static int last_yday = -1;
   time_t now = ::time(nullptr);
