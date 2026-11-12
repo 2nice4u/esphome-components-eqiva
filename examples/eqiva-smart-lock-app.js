@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.5.8 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.5.9 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.5.8';
+  const APP_VERSION = '3.5.9';
   const REPO = '2nice4u/esphome-components-eqiva';   // eigener Fork: nur diese Zeile ändern
   const GUIDE_URL = 'https://github.com/' + REPO + '/blob/main/docs/ANLEITUNG.md';
   const RELEASES_URL = 'https://github.com/' + REPO + '/releases';
@@ -117,6 +117,15 @@
     MOVING: { label: 'Motor läuft …', cls: 'st-moving', icon: 'spin' },
     UNKNOWN: { label: 'Unbekannt / blockiert', cls: 'st-unknown', icon: 'alert' }
   };
+  // Smarthome-Haus: Leiterbahnen links (rechts gespiegelt), letzter Punkt = Knoten (Ring)
+  const HOUSE_TRACES = (() => {
+    const L = [[[60, 150], [38, 150], [24, 136]], [[60, 174], [14, 174]], [[60, 198], [34, 198]], [[60, 222], [38, 222], [24, 236]],
+      [[96, 98], [74, 76], [74, 52]], [[134, 67], [118, 51], [118, 30]], [[112, 256], [112, 272]]];
+    return L.concat(L.map((t) => t.map(([x, y]) => [340 - x, y]))).map((t, i) => {
+      const e = t[t.length - 1];
+      return '<path class="htr" d="M' + t.map((q) => q.join(' ')).join(' L') + '"/><circle class="hnd" cx="' + e[0] + '" cy="' + e[1] + '" r="' + (i % 7 === 2 ? 4 : 6.5) + '"/>';
+    }).join('');
+  })();
   const ACTIONS = ['Standard', 'Umschalten', 'Aufschließen', 'Zuschließen', 'Öffnen', 'Nur Klingel', 'Gesperrt'];
   const ACTION_HINT = ['nutzt die Standard-Aktion', 'zu → öffnen, offen → zuschließen', 'nur aufschließen',
     'nur zuschließen', 'aufschließen und Falle ziehen', 'keine Schlossaktion, nur Klingel', 'vorübergehend deaktiviert'];
@@ -296,39 +305,32 @@
       has('text_sensor/Bluetooth') ? '' :   // Verbindung zeigt die Kachel "Bluetooth"
       (ble === 'ESTABLISHED' ? 'Verbunden' : (eco ? 'Sparsam – verbindet bei Bedarf' : 'Keine Verbindung (' + (ble || '–') + ')'));
     // Wie aktuell ist der Zustand? Ohne Verbindung und ab 5 min: "Stand: vor … min" mit Knopf zum Abfragen
-    let stale = '';
+    // Wie aktuell ist der Zustand? Immer „Stand: vor … min“ mit Aktualisieren; gelb, wenn ohne Verbindung älter als 5 min
+    let stand = '';
     const lsT = Date.parse(txt('text_sensor/Letzte Statusmeldung'));
-    if (!unpaired && ble !== 'ESTABLISHED' && isFinite(lsT) && has('button/Status abfragen')) {
-      const m = Math.floor((Date.now() - lsT) / 60000);
-      if (m >= 5) {
-        const age = m < 60 ? 'vor ' + m + ' min' : m < 1440 ? 'vor ' + Math.floor(m / 60) + ' h ' + (m % 60) + ' min' :
-          'seit ' + new Date(lsT).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-        stale = '<div class="stale">' + icon('clock', 15) + '<span>Stand: ' + age + '</span>' + btn('press', icon('spin', 15) + 'Aktualisieren', 'b sm', 'button/Status abfragen') + '</div>';
-      }
+    if (!unpaired && isFinite(lsT)) {
+      const m = Math.max(0, Math.floor((Date.now() - lsT) / 60000));
+      const age = m < 1 ? 'gerade eben' : m < 60 ? 'vor ' + m + ' min' : m < 1440 ? 'vor ' + Math.floor(m / 60) + ' h ' + (m % 60) + ' min' :
+        'seit ' + new Date(lsT).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+      const old = ble !== 'ESTABLISHED' && m >= 5;
+      stand = '<div class="hstand"><span class="hchip ' + (old ? 'cold' : 'c' + ({ LOCKED: 'lk', UNLOCKED: 'ul', OPENED: 'op' }[st] || 'n')) + '">' +
+        icon('clock', 14) + 'Stand: ' + esc(age) + '</span>' +
+        (has('button/Status abfragen') ? btn('press', icon('spin', 14) + 'Aktualisieren', 'href', 'button/Status abfragen') : '') + '</div>';
     }
-    // Bedienfeld als Haus: Farbe = Zustand, Haustür = „Öffnen“, darunter Zu/Auf
     const hk = unpaired ? 'wr' : ({ LOCKED: 'lk', UNLOCKED: 'ul', OPENED: 'op', MOVING: 'mv' }[st] || (st ? 'wr' : 'mv'));
     const short = unpaired ? 'Bitte zuerst koppeln' : st === 'MOVING' ? 'Befehl wird ausgeführt' : st === 'UNKNOWN' ? 'Einmal Zu oder Auf drücken' : '';
     const long = st === 'UNKNOWN' && !unpaired ? 'Position unbekannt – z. B. nach dem Pairing, einer halben Drehung oder wenn der Riegel klemmt.' :
       (sub && !short ? sub : '');
-    // seit wann und wodurch: letztes Zustands-Ereignis aus der Liste, wenn es zum Zustand passt
-    let since = '';
-    const se = events().find((e) => /^(locked|unlocked|opened)$/.test(e.kind));
-    if (se && ((st === 'LOCKED' && se.kind === 'locked') || ((st === 'UNLOCKED' || st === 'OPENED') && se.kind !== 'locked'))) {
-      const who = /von Hand/.test(se.label) ? 'von Hand' : se.label.replace(/^(Zu|Auf|Geöffnet) · /, '');
-      since = 'seit ' + (se.day ? se.day + ' ' : '') + se.time + (who && who !== se.label ? ' · ' + who : '');
-    }
     const hicon = { lk: 'lockF', ul: 'unlock', op: 'door', mv: 'spin' }[hk] || (unpaired ? 'unlock' : 'help');
-    const lbl = L.label.replace(/ …$/, '');
+    const lbl = st === 'UNKNOWN' && !unpaired ? 'Unbekannt' : L.label.replace(/ …$/, '');
     const hero = card(
-      (since ? '<div class="hsince"><span class="hchip c' + hk + '"><i></i>' + esc(since) + '</span></div>' : '') +
-      '<div class="house h' + hk + '"><svg viewBox="0 0 300 270" aria-hidden="true"><defs><linearGradient id="eqhg" gradientUnits="userSpaceOnUse" x1="120" y1="10" x2="200" y2="265">' +
-      '<stop offset="0" class="s0"/><stop offset="1" class="s1"/></linearGradient></defs>' +
-      '<path d="M150 22 L282 128 L258 128 L258 252 L42 252 L42 128 L18 128 Z" fill="url(#eqhg)" stroke="url(#eqhg)" stroke-width="26" stroke-linejoin="round"/></svg>' +
-      '<div class="hmid' + (short ? ' ws' : '') + '">' + icon(hicon, 40) + '<b' + (lbl.length > 14 ? ' class="lg"' : '') + '>' + esc(lbl) + '</b>' +
+      stand +
+      '<div class="house h' + hk + '"><svg viewBox="0 0 340 290" aria-hidden="true">' + HOUSE_TRACES +
+      '<path class="hbody" d="M170 22 L298 128 L274 128 L274 254 L66 254 L66 128 L42 128 Z"/></svg>' +
+      '<div class="hmid' + (short ? ' ws' : '') + '">' + icon(hicon, 40) + '<b' + (lbl.length > 12 ? ' class="lg"' : '') + '>' + esc(lbl) + '</b>' +
       (short ? '<small>' + esc(short) + '</small>' : '') + '</div>' +
       (unpaired ? '' : btn('open', icon('door', 30) + 'Öffnen', 'hdoor', undefined, ' aria-label="Öffnen"')) + '</div>' +
-      (long ? '<p class="hnote">' + esc(long) + '</p>' : '') + stale +
+      (long ? '<p class="hnote">' + esc(long) + '</p>' : '') +
       (unpaired ? '' : '<div class="hacts">' +
         btn('lock', icon('lockF', 20) + 'Zu', 'hp zu' + (st === 'LOCKED' ? ' on' : '')) +
         btn('unlock', icon('unlock', 20) + 'Auf', 'hp auf' + (st === 'UNLOCKED' || st === 'OPENED' ? ' on' : '')) + '</div>') +
@@ -613,10 +615,19 @@
             : '<div class="foot">' + btn('ask-unpair', 'Kopplung entfernen', 'b') + '</div>') : ''));
     }
     if (has('button/Lock Settings _Apply_')) {
-      h += card('<h3>Schlossantrieb einstellen</h3><p class="muted">Nach einem Werksreset nötig. Das Schloss muss verbunden sein.</p>' +
+      const many = (S.lsApply || []).filter((t) => Date.now() - t < 15 * 60e3).length >= 2;
+      h += card('<h3>Schlossantrieb einstellen</h3><p class="muted">Nach einem Werksreset oder Umbau nötig. Das Schloss muss verbunden sein. ' +
+        'Alle drei Werte werden zusammen ans Schloss geschickt – falsche Werte vertauschen Auf/Zu oder lassen den Motor lange laufen.</p>' +
         choiceMap('select/Lock Settings Close Direction', 'Schließrichtung', { Left: 'Links', Right: 'Rechts' }) +
+        '<p class="muted small">Richtung, in die der Knauf zum Zuschließen gedreht wird (von innen gesehen).</p>' +
         choiceMap('select/Lock Settings Key Position', 'Schlüsselposition', { Vertical: 'Senkrecht', Horizontal: 'Waagerecht' }) +
+        '<p class="muted small">Stellung des Schlüssels, in der er sich abziehen lässt.</p>' +
         choiceMap('select/Lock Settings Turns', 'Umdrehungen', { 1: '1', 2: '2', 3: '3', 4: '4' }) +
+        '<p class="muted small">Volle Umdrehungen von ganz auf bis ganz zu.</p>' +
+        '<div class="knauf sm">' + icon('alert', 18) + '<span><b>Danach kalibrieren:</b> im eingebauten Zustand einmal über die Tasten am Schloss zu- und wieder ' +
+        'aufschließen. Erst dann kennt das Schloss seine Endpunkte wieder.</span></div>' +
+        (many ? '<div class="knauf sm">' + icon('alert', 18) + '<span><b>Mehrfach übernommen.</b> Das Schloss kann dabei durcheinanderkommen – Werte prüfen, ' +
+          'einmal übernehmen und dann über die Tasten am Schloss zu- und aufschließen.</span></div>' : '') +
         '<div class="foot">' + btn('press', 'Am Schloss übernehmen', 'b pri', 'button/Lock Settings _Apply_') + '</div>');
     }
     return h;
@@ -809,7 +820,9 @@
       case 'lock': return run([['lock/Schloss', 'lock']]);
       case 'unlock': return run([['lock/Schloss', 'unlock']]);
       case 'open': return run([['lock/Schloss', 'open']]);
-      case 'press': return run([[x, 'press']]);
+      case 'press':
+        if (x === 'button/Lock Settings _Apply_') S.lsApply = (S.lsApply || []).filter((t) => Date.now() - t < 15 * 60e3).concat(Date.now());
+        return run([[x, 'press']]);
       case 'sw': return run([[x, 'toggle']]);
       case 'opt': return run([[x, 'set', { option: b.dataset.v }]]);
       case 'sched-edit': case 'sched-new': {
@@ -947,8 +960,8 @@ color-scheme:light;position:fixed;inset:0;overflow-y:auto;background:var(--bg);c
 html[data-eqa-theme=dark] #eqa{color-scheme:dark;--bg:#08090C;--card:#1B1F27;--fg:#E6E9EF;--muted:#9AA3B2;--line:#333A48;--soft:#20242D;--acc:#6EA0FF;--accs:#1E2F57;--acci:#D6E4FF;--bline:#46506A;
 --lk:#4ADE80;--lkb:#12301F;--ul:#F87171;--ulb:#3A1717;--op:#7AA7FF;--opb:#172645;--mv:#CBD5E1;--mvb:#252A33;--wr:#FCD34D;--wrb:#3A2E10;--pu:#C4B5FD;--pub:#2A2142}
 #eqa{--sl:var(--lk);--slb:var(--lkb);--su:var(--ul);--sub:var(--ulb);--hpon:#fff}
-@media (prefers-color-scheme:dark){html:not([data-eqa-theme=light]) #eqa{--hpon:#0B0D12}html:not([data-eqa-theme=light]) #eqa .house{--hon:#0B0D12}html:not([data-eqa-theme=light]) #eqa .house.hmv{--s:#9CA3AF}html:not([data-eqa-theme=light]) #eqa .house.hwr{--s:#FACC15}}
-html[data-eqa-theme=dark] #eqa{--hpon:#0B0D12}html[data-eqa-theme=dark] #eqa .house{--hon:#0B0D12}html[data-eqa-theme=dark] #eqa .house.hmv{--s:#9CA3AF}html[data-eqa-theme=dark] #eqa .house.hwr{--s:#FACC15}
+@media (prefers-color-scheme:dark){html:not([data-eqa-theme=light]) #eqa{--hpon:#0B0D12}html:not([data-eqa-theme=light]) #eqa .house.hmv{--s:#9CA3AF;--sbg:#252A33}html:not([data-eqa-theme=light]) #eqa .house.hwr{--s:#FACC15;--sbg:#3A3212}}
+html[data-eqa-theme=dark] #eqa{--hpon:#0B0D12}html[data-eqa-theme=dark] #eqa .house.hmv{--s:#9CA3AF;--sbg:#252A33}html[data-eqa-theme=dark] #eqa .house.hwr{--s:#FACC15;--sbg:#3A3212}
 #eqa.swapc{--sl:var(--ul);--slb:var(--ulb);--su:var(--lk);--sub:var(--lkb)}
 html:not(.eqa-expert) esp-app{display:none}html.eqa-expert #eqa{display:none}
 #eqa-back{position:fixed;right:16px;bottom:16px;z-index:20;display:none;min-height:44px;padding:0 16px;border:0;border-radius:12px;background:#1D4ED8;color:#fff;font:600 14px system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer}
@@ -956,7 +969,6 @@ html.eqa-expert #eqa-back{display:block}
 #eqa *{box-sizing:border-box}#eqa h1{margin:0;font-size:20px;font-weight:700}#eqa h2{margin:0 0 8px;font-size:17px;font-weight:700}#eqa h3{margin:0 0 10px;padding-bottom:8px;border-bottom:2px solid var(--accs);font-size:16px;font-weight:700;color:var(--acci)}
 #eqa p{margin:6px 0}#eqa .muted{color:var(--muted)}#eqa .small{font-size:12px}#eqa .note{font-size:13px;color:var(--wr)}#eqa .knauf{display:flex;gap:10px;align-items:flex-start;margin-top:14px;padding:12px 14px;border-radius:12px;background:var(--wrb);color:var(--wr);border:1.5px solid var(--wr)}#eqa .knauf b{display:block;font-size:15px;margin-bottom:2px}#eqa .knauf span{font-size:14px;line-height:1.35}#eqa .knauf svg{flex:none;margin-top:1px}#eqa .knauf.sm{margin-top:8px;padding:10px 12px}#eqa .knauf.sm span{font-size:13px}
 #eqa header{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:14px 16px;background:var(--card);border-bottom:1px solid var(--line)}
-#eqa .stale{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:13px;color:var(--wr)}#eqa .stale svg{flex:none}#eqa .stale .b{min-height:34px;padding:0 12px;font-size:13px}
 #eqa .hlock{width:46px;height:46px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none}#eqa .hlock.klk{background:var(--slb);color:var(--sl)}#eqa .hlock.kul{background:var(--sub);color:var(--su)}#eqa .hlock.kop{background:var(--opb);color:var(--op)}#eqa .hlock.kmv{background:var(--mvb);color:var(--mv)}#eqa .hlock.kwr{background:var(--wrb);color:var(--wr)}#eqa .hstate{font:700 13px system-ui,sans-serif}#eqa .hstate.tlk{color:var(--sl)}#eqa .hstate.tul{color:var(--su)}#eqa .hstate.top{color:var(--op)}#eqa .hstate.tmv{color:var(--mv)}#eqa .hstate.twr{color:var(--wr)}#eqa .hright{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none}#eqa .hseg{display:flex;gap:6px}#eqa .hseg button{width:36px;height:36px;border-radius:50%;border:1.5px solid var(--line);background:var(--card);color:var(--muted);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}#eqa .hseg button.sel{border:2px solid var(--acc);background:var(--accs);color:var(--acci);box-shadow:0 0 0 3px var(--accs)}#eqa .hclock{display:inline-flex;align-items:center;gap:5px;font:700 13px system-ui,sans-serif;font-variant-numeric:tabular-nums;color:var(--muted)}#eqa .hclock.bad{color:var(--wr)}#eqa .tile.bt{min-width:0}#eqa .tile.bt span{display:flex;align-items:center;gap:5px}#eqa .tile.bt span svg{flex:none}#eqa .tile.bt b{white-space:normal;font-size:13px;line-height:1.25;overflow-wrap:break-word}#eqa .tile.bt small{font-size:11px;color:var(--muted)}#eqa .tile.bt.g b,#eqa .tile.bt.g span svg{color:var(--lk)}#eqa .tile.bt.bl b{color:var(--op)}#eqa .tile.bt.bl span svg{color:var(--op);animation:eqpulse 1.2s ease-in-out infinite}@keyframes eqpulse{50%{opacity:.25}}#eqa .tile.bt.rt span svg{animation:eqpulse 1.2s ease-in-out infinite}#eqa .tile.bt.n b{color:var(--muted)}#eqa .tile.bt.y{background:var(--wrb);border-color:var(--wr)}#eqa .tile.bt.y b,#eqa .tile.bt.y span{color:var(--wr)}#eqa .tile.bt.r{background:var(--ulb);border-color:var(--ul)}#eqa .tile.bt.r b,#eqa .tile.bt.r span{color:var(--ul)}
 #eqa .brand{display:flex;flex-direction:column;flex:1;min-width:0}#eqa .brand h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #eqa main{max-width:1100px;margin:0 auto;padding:16px 16px 96px}
@@ -979,33 +991,37 @@ color:var(--muted);font:600 12px system-ui,sans-serif;font-variant-numeric:tabul
 #eqa .hver i{width:6px;height:6px;border-radius:50%;background:var(--acc);margin-left:2px}
 @keyframes eqglow{0%,100%{box-shadow:0 0 0 2px color-mix(in srgb,var(--acc) 25%,transparent)}50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--acc) 30%,transparent),0 0 12px color-mix(in srgb,var(--acc) 55%,transparent)}}
 @media (prefers-reduced-motion:reduce){#eqa .hver.new{animation:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--acc) 30%,transparent)}}
-#eqa .house{--s:var(--mv);--hon:#fff;position:relative;width:300px;max-width:100%;height:270px;margin:4px auto 0}
-#eqa .house.hlk{--s:var(--sl)}#eqa .house.hul{--s:var(--su)}#eqa .house.hop{--s:var(--op)}#eqa .house.hmv{--s:#6B7280}#eqa .house.hwr{--s:#CA8A04}
-#eqa .house>svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible;filter:drop-shadow(0 10px 12px color-mix(in srgb,var(--s) 35%,transparent))}
-#eqa .house .s0{stop-color:color-mix(in srgb,var(--s) 80%,#fff)}#eqa .house .s1{stop-color:var(--s)}
-#eqa .hmid{position:absolute;left:44px;right:44px;top:74px;text-align:center;color:var(--hon);display:flex;flex-direction:column;align-items:center;gap:2px}
-#eqa .hmid.ws{top:62px}
-#eqa .hmid b{font-size:26px;font-weight:700;line-height:1.15;letter-spacing:-.01em}#eqa .hmid b.lg{font-size:20px}
-#eqa .hmid small{font-size:13px;opacity:.92;line-height:1.3}
+#eqa .house{--s:var(--mv);--sbg:var(--mvb);position:relative;width:340px;max-width:100%;aspect-ratio:340/290;margin:4px auto 0}
+#eqa .house.hlk{--s:var(--sl);--sbg:var(--slb)}#eqa .house.hul{--s:var(--su);--sbg:var(--sub)}#eqa .house.hop{--s:var(--op);--sbg:var(--opb)}
+#eqa .house.hmv{--s:#6B7280;--sbg:#EEF0F3}#eqa .house.hwr{--s:#CA8A04;--sbg:#FEF9C3}
+#eqa .house>svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+#eqa .house .hbody{fill:var(--sbg);stroke:var(--s);stroke-width:7;stroke-linejoin:round}
+#eqa .house .htr{fill:none;stroke:var(--s);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+#eqa .house .hnd{fill:var(--card);stroke:var(--s);stroke-width:3}
+#eqa .hmid{position:absolute;left:23%;right:23%;top:33%;text-align:center;color:var(--fg);display:flex;flex-direction:column;align-items:center;gap:2px}
+#eqa .hmid svg{color:var(--s)}#eqa .hmid.ws{top:29%}
+#eqa .hmid b{font-size:24px;font-weight:700;line-height:1.15;letter-spacing:-.01em}#eqa .hmid b.lg{font-size:20px}
+#eqa .hmid small{font-size:13px;color:var(--muted);line-height:1.3}
 #eqa .house.hmv .hmid svg{animation:eqspin 1.2s linear infinite}
 @keyframes eqspin{to{transform:rotate(360deg)}}
-#eqa .hdoor{position:absolute;left:50%;bottom:-2px;transform:translateX(-50%);width:88px;height:96px;border:0;border-radius:44px 44px 14px 14px;background:var(--card);color:var(--op);
-display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font:600 14px system-ui,sans-serif;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.18),0 4px 10px rgba(0,0,0,.12)}
+#eqa .hdoor{position:absolute;left:50%;bottom:4px;transform:translateX(-50%);width:84px;height:92px;border:0;border-radius:42px 42px 14px 14px;background:var(--card);color:var(--op);
+display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font:600 14px system-ui,sans-serif;cursor:pointer;
+box-shadow:0 0 0 3px var(--s),0 0 0 6px var(--card),0 4px 12px rgba(0,0,0,.25)}
 #eqa .hdoor:active{transform:translateX(-50%) scale(.96)}
-#eqa .hsince{text-align:center;margin-bottom:2px}
+#eqa .hstand{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:2px}
 #eqa .hchip{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:8px;font-size:13px;font-weight:600;background:var(--soft);color:var(--fg)}
-#eqa .hchip i{width:8px;height:8px;border-radius:50%;background:var(--muted)}
-#eqa .hchip.clk{background:var(--slb);color:var(--sl)}#eqa .hchip.clk i{background:var(--sl)}
-#eqa .hchip.cul{background:var(--sub);color:var(--su)}#eqa .hchip.cul i{background:var(--su)}
-#eqa .hchip.cop{background:var(--opb);color:var(--op)}#eqa .hchip.cop i{background:var(--op)}
+#eqa .hchip svg{flex:none}
+#eqa .hchip.clk{background:var(--slb);color:var(--sl)}#eqa .hchip.cul{background:var(--sub);color:var(--su)}#eqa .hchip.cop{background:var(--opb);color:var(--op)}
+#eqa .hchip.cold{background:var(--wrb);color:var(--wr)}
+#eqa .href{display:inline-flex;align-items:center;gap:5px;min-height:30px;padding:0 12px;border-radius:8px;border:1.5px solid var(--line);background:var(--card);color:var(--fg);font:600 13px system-ui,sans-serif;cursor:pointer}
 #eqa .hnote{font-size:13px;color:var(--muted);text-align:center;margin:12px 8px 0}
-#eqa .hacts{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}
-#eqa .hp{min-height:56px;border:0;border-radius:999px;display:flex;align-items:center;justify-content:center;gap:8px;font:600 16px system-ui,sans-serif;cursor:pointer}
-#eqa .hp.zu{background:var(--slb);color:var(--sl)}#eqa .hp.auf{background:var(--sub);color:var(--su)}
+#eqa .hacts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;padding:4px}
+#eqa .hp{min-height:54px;border:0;border-radius:999px;display:flex;align-items:center;justify-content:center;gap:8px;font:600 16px system-ui,sans-serif;cursor:pointer}
+#eqa .hp.zu{background:var(--slb);color:var(--sl);box-shadow:0 0 0 2px var(--card),0 0 0 4px var(--sl)}
+#eqa .hp.auf{background:var(--sub);color:var(--su);box-shadow:0 0 0 2px var(--card),0 0 0 4px var(--su)}
 #eqa .hp.zu.on{background:var(--sl);color:var(--hpon)}#eqa .hp.auf.on{background:var(--su);color:var(--hpon)}
-#eqa .hp.on{box-shadow:0 1px 3px rgba(0,0,0,.18),0 4px 10px rgba(0,0,0,.10)}#eqa .hp:active{transform:scale(.97)}
+#eqa .hp:active{transform:scale(.97)}
 #eqa .hcard .note{text-align:center;color:var(--muted);margin:12px 0 0}
-#eqa .hcard .stale{margin-top:12px}
 #eqa button:disabled{opacity:.55;cursor:default}
 #eqa .tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 #eqa .rtst{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0 6px}#eqa .rtst div{border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}#eqa .rtst span{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#eqa .rtst b{font-size:22px;font-variant-numeric:tabular-nums}
@@ -1116,6 +1132,7 @@ display:flex;flex-direction:column;align-items:center;justify-content:center;gap
     draw();
     connect();
     checkUpdate(); setInterval(checkUpdate, 3600e3);
+    setInterval(() => { if (S.tab === 'start' && !S.sheet) draw(); }, 30e3);   // „Stand: vor … min“ weiterzählen
     setInterval(() => { if (S.pair && S.pair.step === 3 && !S.pair.result) draw(); }, 1000);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
