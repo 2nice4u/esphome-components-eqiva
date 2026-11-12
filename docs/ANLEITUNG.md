@@ -125,13 +125,13 @@ Gemessen wird die Zeit vom **Auslöser** bis das Schloss meldet, dass der Motor 
 Die Zeit teilt sich in drei Anteile, die auch mitgezählt werden, wenn der Verbindungsaufbau schon vor dem eigentlichen Schließbefehl läuft (z. B. während der Statusabfrage bei Fingerprint „Umschalten“):
 
 - **Verbindung** (violett): echter BLE-Verbindungsaufbau, bis die gesicherte Session steht. Bei bestehender Verbindung praktisch 0.
-- **Finger/Status**: Finger lesen und Statusabfrage, nur ab 0,1 s angezeigt.
-- **Schloss**: Befehl gesendet, bis der Motor dreht.
+- **Fingerprint** (grau): Finger lesen und Statusabfrage, nur ab 0,1 s angezeigt.
+- **Motor** (grün): Befehl gesendet, bis der Motor dreht.
 
-- **Startseite → Ereignisse und Reaktionszeit:** Die letzte Messung als breiter Balken mit zwei abgerundeten Kapseln (Verbindung/Schloss) mit Lücke dazwischen, die Anteile darunter ausgeschrieben. Darunter drei Kacheln **Ø gesamt (mit Maximum) · Ø Verbindung · Ø Schloss** der letzten 10 Bedienungen.
-- Darunter alle Ereignisse mit Uhrzeit und Piktogramm (zu = ausgefülltes Schloss, auf = offenes Schloss, öffnen = Tür; auch Klingel, Abweisungen, Fehler). Bedienungen mit Messung haben einen Balken mit der Gesamt-Reaktionszeit, Handbedienung steht als ✋ „von Hand“ dazwischen – die Liste ist zugleich das Diagramm.
+- **Startseite → Ereignisse und Reaktionszeit:** oben drei Kacheln **Ø gesamt · Ø Verbindung · Max gesamt** der letzten 10 Bedienungen (Ø gesamt und Max in Ampelfarbe).
+- Darunter alle Ereignisse mit Uhrzeit und Piktogramm (zu = ausgefülltes Schloss, auf = offenes Schloss, öffnen = Tür; auch Klingel, Abweisungen, Fehler). Jede Bedienung mit Messung hat Kapseln mit Lücke für Verbindung, Fingerprint und Motor, darunter die Anteile in Sekunden („· war verbunden“, wenn keine Verbindung aufgebaut werden musste), rechts die Gesamtzeit. Handbedienung steht als ✋ „von Hand“ dazwischen – die Liste ist zugleich das Diagramm.
 - Während eines echten Verbindungsaufbaus oder solange der Motor läuft, leuchten die Leiterbahnen am Haus nacheinander als Welle auf (bei „Bewegung reduzieren“ nur hervorgehoben, ohne Animation).
-- Der Sensor „Reaktionszeit“ (Sekunden, Gesamtwert) ist in Home Assistant mit Verlauf verfügbar. Die Liste „Reaktionszeiten“ enthält die letzten 10 Bedienungen mit Aktion, Gesamt-, Verbindungs- und Schlossanteil sowie Quelle. Die Ereignisse enthalten weiterhin die Gesamt-Reaktionszeit im Text, z. B. „18:05 🔒 Zeitplan 1 (2,4 s)“. Nach einem Neustart sind beide Listen leer.
+- Der Sensor „Reaktionszeit“ (Sekunden, Gesamtwert) ist in Home Assistant mit Verlauf verfügbar. Die Liste „Reaktionszeiten“ enthält die letzten 10 Bedienungen mit Aktion, Gesamt-, Verbindungs- und Motoranteil sowie Quelle (Fingerprint = Rest). Die Ereignisse enthalten weiterhin die Gesamt-Reaktionszeit im Text, z. B. „18:05 🔒 Zeitplan 1 (2,4 s)“. Nach einem Neustart sind beide Listen leer.
 - Keine Messung gibt es, wenn das Schloss den Befehl ohne Motorlauf beantwortet (z. B. schon im Zielzustand), innerhalb von 15 s nach dem Senden kein Motorlauf kommt oder zwischendurch eine Handbedienung erkannt wird – so landen keine falschen Werte (z. B. 65 s) in der Statistik.
 
 Der Motorlauf bis zum Endzustand (ca. 3–4 s) ist Mechanik und nicht enthalten.

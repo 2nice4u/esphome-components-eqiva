@@ -23,6 +23,21 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.5.11 – 2026-11-12
+
+### Geändert
+- **Reaktionszeit in der Ereignisliste aufgeschlüsselt** (so wie als Variante B gewählt): Jede Bedienung mit Messung bekommt
+  eigene, an beiden Enden runde Kapseln mit Lücke – **Verbindung** (violett), **Fingerprint** (grau, Finger lesen +
+  Statusabfrage, ab 0,1 s) und **Motor** (grün, Befehl gesendet → Motor dreht) –, darunter die Anteile in Sekunden
+  („· war verbunden“, wenn kein Verbindungsaufbau nötig war). Rechts die Gesamtzeit in Ampelfarbe.
+- **Kacheln oben:** Ø gesamt · Ø Verbindung · Max gesamt. Der Einzelbalken für die letzte Messung aus 3.5.10 entfällt.
+- Die App ordnet jedes Ereignis der passenden Messung zu (Aktion, Gesamtzeit, Quelle); der Ereignistext in Home Assistant
+  bleibt unverändert.
+
+### Update
+- Pakete, `app.js` und den Komponenten-Ordner ersetzen (im Release `components/`, lokal laut `path:`), flashen.
+- Eigene Hauptdateien: nur `config_version: "3.5.11"`.
+
 ## 3.5.10 – 2026-11-12
 
 ### Neu
