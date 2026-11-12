@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # Status-LED (WS2812/RGB) – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 3.5.7 (2026-11-11) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.5.8 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Einbinden:   packages:
 #                status_led: !include eqiva-smart-lock-status-led.yaml
 # Nur für Boards mit (oder mit angeschlossener) WS2812-LED.
@@ -43,12 +43,26 @@ text_sensor:
             condition:
               lambda: 'return x == "LOCKED";'
             then:
-              - light.turn_on: { id: status_led, effect: "none", red: 0%, green: 100%, blue: 0%, brightness: 30% }   # grün = verriegelt
+              # grün = verriegelt (bei Zustandsfarben „Verriegelt rot“ getauscht)
+              - light.turn_on:
+                  id: status_led
+                  effect: "none"
+                  red: !lambda 'return id(key_ble)->state_colors_swapped() ? 1.0f : 0.0f;'
+                  green: !lambda 'return id(key_ble)->state_colors_swapped() ? 0.0f : 1.0f;'
+                  blue: 0%
+                  brightness: 30%
         - if:
             condition:
               lambda: 'return x == "UNLOCKED";'
             then:
-              - light.turn_on: { id: status_led, effect: "none", red: 100%, green: 0%, blue: 0%, brightness: 30% }   # rot = aufgeschlossen
+              # rot = aufgeschlossen (bei Zustandsfarben „Verriegelt rot“ getauscht)
+              - light.turn_on:
+                  id: status_led
+                  effect: "none"
+                  red: !lambda 'return id(key_ble)->state_colors_swapped() ? 0.0f : 1.0f;'
+                  green: !lambda 'return id(key_ble)->state_colors_swapped() ? 1.0f : 0.0f;'
+                  blue: 0%
+                  brightness: 30%
         - if:
             condition:
               lambda: 'return x == "OPENED";'
@@ -70,6 +84,6 @@ script:
   - id: ver_check_status_led
     then:
       - lambda: |-
-          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.7") == 0,
-                        "Versionskonflikt: eqiva-smart-lock-status-led.yaml ist 3.5.7, Hauptdatei ist ${config_version} "
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.8") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-status-led.yaml ist 3.5.8, Hauptdatei ist ${config_version} "
                         "(alle Dateien gleicher Version verwenden oder version_check: false)");

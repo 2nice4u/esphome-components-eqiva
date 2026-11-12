@@ -23,6 +23,50 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.5.8 – 2026-11-12
+
+### Neu
+- **Bedienfeld als Haus (Startseite):** Das Haus färbt sich nach dem Zustand (grün verriegelt, rot aufgeschlossen, blau geöffnet,
+  grau Motor läuft, gelb unbekannt), die **Haustür ist der Knopf „Öffnen“**, darunter **Zu** und **Auf** – der Knopf des aktuellen
+  Zustands ist kräftig gefüllt. Über dem Dach steht, seit wann und wodurch (z. B. „seit 22:14 · Zeitplan 1“). „Stand: vor … min“,
+  der Türgriff-Hinweis und die Erklärung bei „unbekannt“ stehen unter dem Haus.
+- **Zustandsfarben tauschbar:** neue Auswahl **„Zustandsfarben“** (Einstellungen → Schloss): „Verriegelt grün“ (Standard) oder
+  „Verriegelt rot“. Gilt für die Web-App, die Status-LED und die Bestätigung am Fingerprint-Ring. Grün/Rot für gut/schlecht
+  (Reaktionszeit, Bluetooth, ✓/✗, Finger erkannt/abgewiesen) bleibt.
+- **Version in der Kopfzeile:** Chip neben dem Zustand (z. B. „v3.5.8 ↗“), öffnet die Release-Übersicht auf GitHub. Gibt es eine
+  neuere Release, leuchtet und pulsiert der Rahmen. Die Prüfung macht der Browser höchstens alle 12 Stunden über die
+  GitHub-Schnittstelle – der ESP braucht dafür kein Internet; ohne Internet bleibt der Chip normal.
+
+### Geändert
+- **Fingerprint wartet bis 30 s auf die Verbindung** („Umschalten“ im Sparmodus), auch über gescheiterte Verbindungsversuche und
+  die Meldung „nicht erreichbar“ hinweg (bisher 20 s bzw. Abbruch nach zwei Fehlversuchen). Kommt keine Verbindung zustande, wird
+  nichts ausgeführt – auch nicht später.
+- **Bluetooth:** Läuft nach einem Fehler schon der nächste Versuch, meldet der Sensor „Verbindungsfehler – neuer Versuch …“
+  (Kachel: „Verbindungsfehler“, darunter „neuer Versuch …“, Symbol pulsiert).
+
+### Update
+- Pakete, `app.js` und den Komponenten-Ordner ersetzen (im Release `components/`, lokal laut `path:`), flashen.
+- Eigene Hauptdateien: `config_version: "3.5.8"`. Optional unter `select:` die Auswahl „Zustandsfarben“ aus
+  `eqiva-smart-lock-1.yaml` übernehmen – ohne sie bleibt es bei verriegelt = grün, die Auswahl fehlt dann in der App:
+  ```yaml
+    - platform: template
+      name: "Zustandsfarben"
+      id: state_colors
+      icon: "mdi:palette"
+      options: ["Verriegelt grün", "Verriegelt rot"]
+      initial_option: "Verriegelt grün"
+      optimistic: true
+      restore_value: true
+      entity_category: config
+      web_server:
+        sorting_group_id: sg_lock_cfg
+      on_value:
+        - lambda: |-
+            id(key_ble)->set_state_colors_swapped(i == 1);
+            const std::string st = id(lock_status).state;   // LED und Fingerprint-Ring gleich in den neuen Farben
+            if (!st.empty()) id(lock_status).publish_state(st);
+  ```
+
 ## 3.5.7 – 2026-11-11
 
 ### Neu

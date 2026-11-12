@@ -1128,10 +1128,11 @@ void EqivaKeyBle::publish_ble_state_(const std::string &s) {
 
 void EqivaKeyBle::update_ble_status_() {
   if (this->ble_status_sensor_ == nullptr) return;
-  const char *st;
+  const bool idle = ble_raw_ == "IDLE" || ble_raw_ == "DISCONNECTING" || ble_raw_ == "INIT";
+  std::string st;
   if (ble_raw_ == "ESTABLISHED") st = "Verbunden";
-  else if (!ble_fail_.empty()) st = ble_fail_.c_str();
-  else if (ble_raw_ == "IDLE" || ble_raw_ == "DISCONNECTING" || ble_raw_ == "INIT") st = "Idle";
+  else if (!ble_fail_.empty()) st = idle ? ble_fail_ : ble_fail_ + " – neuer Versuch …";   // nach Fehler: läuft schon der nächste Versuch?
+  else if (idle) st = "Idle";
   else st = "Verbindungsaufbau";                      // CONNECTING, DISCOVERED, READY_TO_CONNECT, CONNECTED …
   this->publish_(this->ble_status_sensor_, st);
 }

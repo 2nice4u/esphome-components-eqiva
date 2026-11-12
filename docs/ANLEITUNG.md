@@ -1,6 +1,6 @@
 # Eqiva Smart Lock – Anleitung & Hilfe
 
-Gilt für Version 3.5.7 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
+Gilt für Version 3.5.8 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
 Änderungen: [CHANGELOG.md](../CHANGELOG.md)
 
 ## Die Web-App
@@ -10,14 +10,17 @@ Sie läuft direkt auf dem ESP, auch ohne Internet, am Handy und am PC.
 
 | Bereich | Inhalt |
 |---|---|
-| **Schloss** | Zustand, Buttons Zu · Auf · Öffnen, Batterie, Empfang, Energiemodus, Bluetooth, „Ereignisse und Reaktionszeit“ |
+| **Schloss** | Bedienfeld als Haus (Zustand, Haustür = Öffnen, Zu · Auf), Batterie, Empfang, Energiemodus, Bluetooth, „Ereignisse und Reaktionszeit“ |
 | **Fingerprint** | Personen mit ihren Fingern; Finger antippen = Aktion ändern, neu anlernen, löschen; Stift = Person umbenennen; „+ Anlernen“ = Assistent |
 | **Zeitplan** | bis zu 6 Zeitpläne als Liste: antippen = bearbeiten, Schalter Ein/Aus, + Zeitplan |
-| **Einstellungen** | Einrichtung (Pairing, Schlossantrieb, Neustart), Energiemodus, Türgriff, Fingerprint, Sabotage-Erkennung, Diagnose |
+| **Einstellungen** | Einrichtung (Pairing, Schlossantrieb, Neustart), Energiemodus, Zustandsfarben, Türgriff, Fingerprint, Sabotage-Erkennung, Diagnose |
 
-- **Kopfzeile** (auf allen Seiten): links das Schloss-Symbol in der Farbe des Zustands (grün zu, rot auf, blau geöffnet, grau Motor läuft) und der Zustand als Wort; rechts der Umschalter **Automatisch · Hell · Dunkel** (drei runde Knöpfe, der gewählte mit blauem Ring) und darunter die **Uhrzeit des ESP**. Steht dort ein gelbes „⚠ --:--“, kennt der ESP keine Uhrzeit – der Zeitplan pausiert dann.
-- **Kachel „Bluetooth“** (Startseite): **Verbunden** (grün) · **Verbindungsaufbau** (blau, Symbol pulsiert) · **Idle** (grau; im Sparmodus mit „verbindet bei Bedarf“ – das ist dort der Normalzustand) · **Schloss nicht gefunden** (gelb: ein Befehl kam bis zum Zeitlimit nicht zum Schloss durch) · **Verbindungsfehler** (rot: der Verbindungsaufbau ist gescheitert). Ein Fehler bleibt stehen, bis eine Verbindung klappt oder ein neuer Befehl kommt. In Home Assistant heißt der Sensor „Bluetooth“.
-- **„Stand: vor … min“** (Startseite, unter dem Zustand): erscheint, wenn keine Verbindung besteht und die letzte Statusmeldung des Schlosses älter als 5 Minuten ist – der angezeigte Zustand könnte dann veraltet sein (z. B. von Hand aufgeschlossen). **Aktualisieren** fragt den Zustand sofort ab (Sensor „Letzte Statusmeldung“, Knopf „Status abfragen“).
+- **Kopfzeile** (auf allen Seiten): links das Schloss-Symbol in der Farbe des Zustands (grün zu, rot auf, blau geöffnet, grau Motor läuft) und der Zustand als Wort, daneben die **Version** (z. B. „v3.5.8 ↗“, öffnet die Release-Übersicht auf GitHub; leuchtet blau und pulsiert, wenn es eine neuere Version gibt); rechts der Umschalter **Automatisch · Hell · Dunkel** (drei runde Knöpfe, der gewählte mit blauem Ring) und darunter die **Uhrzeit des ESP**. Steht dort ein gelbes „⚠ --:--“, kennt der ESP keine Uhrzeit – der Zeitplan pausiert dann.
+- **Bedienfeld (Startseite):** ein Haus in der Farbe des Zustands – grün verriegelt, rot aufgeschlossen, blau geöffnet, grau Motor läuft (Symbol dreht sich), gelb unbekannt. Die **Haustür ist der Knopf „Öffnen“**, darunter **Zu** und **Auf** (der Knopf des aktuellen Zustands ist kräftig gefüllt). Über dem Dach steht, seit wann und wodurch das Schloss so steht (z. B. „seit 22:14 · Zeitplan 1“, aus den Ereignissen; nach einem Neustart erst ab dem ersten passenden Ereignis).
+- **Zustandsfarben** (Einstellungen → Schloss): „Verriegelt grün“ (Standard) oder „Verriegelt rot“. Gilt für Haus, Knöpfe, Kopfzeile, Ereignis-Symbole, Status-LED und die Bestätigung am Fingerprint-Ring. Grün/Rot für gut/schlecht (Reaktionszeit, Bluetooth, ✓/✗, Finger erkannt/abgewiesen) bleibt.
+- **Update-Hinweis:** Die Web-App fragt höchstens alle 12 Stunden bei GitHub nach der neuesten veröffentlichten Release (das macht der Browser, nicht der ESP – der ESP braucht kein Internet). Ohne Internet bleibt der Versions-Chip einfach normal.
+- **Kachel „Bluetooth“** (Startseite): **Verbunden** (grün) · **Verbindungsaufbau** (blau, Symbol pulsiert) · **Idle** (grau; im Sparmodus mit „verbindet bei Bedarf“ – das ist dort der Normalzustand) · **Schloss nicht gefunden** (gelb: ein Befehl kam bis zum Zeitlimit nicht zum Schloss durch) · **Verbindungsfehler** (rot: der Verbindungsaufbau ist gescheitert). Ein Fehler bleibt stehen, bis eine Verbindung klappt oder ein neuer Befehl kommt; läuft schon der nächste Versuch, steht darunter „neuer Versuch …“ (in Home Assistant: „Verbindungsfehler – neuer Versuch …“). In Home Assistant heißt der Sensor „Bluetooth“.
+- **„Stand: vor … min“** (Startseite, unter dem Haus): erscheint, wenn keine Verbindung besteht und die letzte Statusmeldung des Schlosses älter als 5 Minuten ist – der angezeigte Zustand könnte dann veraltet sein (z. B. von Hand aufgeschlossen). **Aktualisieren** fragt den Zustand sofort ab (Sensor „Letzte Statusmeldung“, Knopf „Status abfragen“).
 - **Auf dem Handy wie eine App:** in Chrome die Seite öffnen, Menü ⋮ → „Zum Startbildschirm hinzufügen“.
 - **Einrichtung** (Einstellungen): Schloss koppeln (Pairing-Assistent), Kopplung entfernen, Schlossantrieb einstellen, ESP neu starten.
 - **Expertenansicht** (Einstellungen, ganz unten): die bisherige ESPHome-Tabelle mit allen Entitäten –
@@ -155,8 +158,8 @@ Die Übersicht **„Angelernte Finger“** zeigt alle Finger, z. B. `#0 St R-Dau
 | 🔵 blau | Finger wird gelesen |
 | 🟢 2× kurz grün | Finger erkannt (kommt sofort, auch wenn erst noch verbunden wird) |
 | 🟢 grün atmend | Aktion läuft. Finger darf weg. |
-| 🟢 grün, 2 s an | bestätigt: **verriegelt** |
-| 🔴 rot, 2 s an | bestätigt: **aufgeschlossen / geöffnet** |
+| 🟢 grün, 2 s an | bestätigt: **verriegelt** (bei Zustandsfarben „Verriegelt rot“: rot) |
+| 🔴 rot, 2 s an | bestätigt: **aufgeschlossen / geöffnet** (bei „Verriegelt rot“: grün) |
 | 🔴 rot atmend | Finger nicht erkannt |
 | 🔴 rot blinkend | Fehler: Schloss nicht erreicht oder Status unbekannt · beim Anlernen: Finger schon angelernt · schnell (6×): Sabotage-Alarm |
 | 🔵 blau atmend | Anlernen: Finger einmal zur Prüfung auflegen |
@@ -167,7 +170,7 @@ Die Übersicht **„Angelernte Finger“** zeigt alle Finger, z. B. `#0 St R-Dau
 | 🟣 lila atmend | Anlernen: Finger auflegen (nach 2× grün: abheben und erneut auflegen) |
 | 🟢 / 🔴 / 🔵 atmend (2×) | Schloss wurde **ohne Finger** bedient (HA, Web-GUI, Zeitplan, Schlüssel): grün = zugeschlossen, rot = aufgeschlossen, blau = geöffnet. Abschaltbar: „Ring-Anzeige bei Bedienung ohne Finger“. |
 
-**Status-LED am ESP** (WS2812): 🟢 grün = verriegelt · 🔴 rot = aufgeschlossen · 🔵 blau = geöffnet · 🟠 orange pulsierend = Motor läuft · 🟣 lila blinkend = unbekannt.
+**Status-LED am ESP** (WS2812): 🟢 grün = verriegelt · 🔴 rot = aufgeschlossen (bei Zustandsfarben „Verriegelt rot“ umgekehrt) · 🔵 blau = geöffnet · 🟠 orange pulsierend = Motor läuft · 🟣 lila blinkend = unbekannt.
 
 **Klingel:** Mit **„Klingel bei unbekanntem Finger“** (Fingerprint Einstellungen) klingelt ein nicht erkannter Finger, ebenso Finger mit der Aktion „Nur Klingel“. In Home Assistant erscheint das als Entität **„Klingel“** (für Automationen, z. B. Push-Nachricht). Damit es nicht klingelt, wenn der eigene Finger einmal schlecht gelesen wird, wartet der ESP die **„Klingel-Verzögerung“** (Standard 5 s): Wird in dieser Zeit ein bekannter Finger erkannt, klingelt es nicht. Danach folgt die einstellbare **„Klingel-Pause“** (Standard 30 s). Auch ein schlecht aufgelegter Finger (gelb) löst die Klingel nach der Verzögerung aus.
 
@@ -258,7 +261,7 @@ Bei einem Alarm: **„Fingerprint Sabotage“** wird „an“ (in Home Assistant
 - **„⚠️ Schloss nicht erreichbar seit …“** (Einrichtungsstatus, App, „Ereignisse“): zwei Verbindungsversuche hintereinander
   gescheitert. Batterien des Schlosses und Abstand zum ESP prüfen. Sobald eine Verbindung wieder klappt, steht dort
   „✓ Schloss wieder erreichbar“. Ein Verbindungsversuch dauert höchstens `ble_connect_timeout` (Standard 12 s).
-  Der Fingerprint wartet nach einem gescheiterten Versuch (z. B. GATT-Fehler 133 bei schwachem Empfang) den zweiten Versuch ab und gibt erst auf, wenn das Schloss als nicht erreichbar gilt (höchstens 20 s).
+  Der Fingerprint („Umschalten“ im Sparmodus) wartet bis zu 30 s auf die Verbindung, auch über gescheiterte Versuche (z. B. GATT-Fehler 133 bei schwachem Empfang) hinweg; der Ring atmet dabei türkis. Kommt bis dahin keine Verbindung zustande, wird nichts ausgeführt – auch nicht später.
 
 - **Zustand „unbekannt“:** Kurze „unbekannt“-Meldungen übernimmt der ESP erst nach 3 s und fragt dann einmal nach. Bleibt es dabei, steht das Schloss wirklich zwischen zwei Positionen (halbe Drehung, Riegel klemmt) oder ist frisch gekoppelt – einmal **Zu** oder **Auf** drücken.
 

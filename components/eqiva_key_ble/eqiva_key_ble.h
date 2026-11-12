@@ -28,7 +28,7 @@ namespace eqiva_key_ble {
 using namespace esp32_ble_client;
 
 // Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
-#define EQIVA_PATCH_VERSION "3.5.7"
+#define EQIVA_PATCH_VERSION "3.5.8"
 
 // Patch-Konstanten
 static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
@@ -154,6 +154,7 @@ class EqivaKeyBle : public BLEClientBase {
     // Erreichbarkeit: aufeinanderfolgende fehlgeschlagene Verbindungsversuche
     uint8_t conn_fails_{0};
     time_t unreachable_since_{0};
+    bool state_colors_swapped_{false};
     bool unreachable_logged_{false};
     void conn_fail_(bool not_found = false);
     // Bluetooth-Status in Worten (App/HA): Verbunden, Verbindungsaufbau, Idle, Schloss nicht gefunden,
@@ -278,6 +279,9 @@ class EqivaKeyBle : public BLEClientBase {
         // Laufendes Pairing abbrechen, bisherige Kopplung bleibt
         void cancel_pair();
         // Seit wann das Schloss nicht erreichbar ist (ab 2 Fehlversuchen in Folge), sonst 0; 1 = Uhrzeit unbekannt
+        // Zustandsfarben (Auswahl in der Hauptdatei): true = verriegelt rot / auf grün; nutzt das LED-Paket
+        void set_state_colors_swapped(bool b) { state_colors_swapped_ = b; }
+        bool state_colors_swapped() const { return state_colors_swapped_; }
         time_t unreachable_since() const { return conn_fails_ >= 2 ? (unreachable_since_ ? unreachable_since_ : 1) : 0; }
 
         void set_state(esphome::esp32_ble_tracker::ClientState st) override {

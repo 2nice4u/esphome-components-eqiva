@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # Testmodus (Simulation) – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 3.5.7 (2026-11-11) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.5.8 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Wird automatisch geladen, wenn in der Hauptdatei use_simulation: "true" gesetzt ist.
 #
 # Es wird KEIN echtes Schloss angesteuert. Die Komponente bildet das Schloss nach:
@@ -76,6 +76,6 @@ script:
   - id: ver_check_simulation
     then:
       - lambda: |-
-          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.7") == 0,
-                        "Versionskonflikt: eqiva-smart-lock-simulation.yaml ist 3.5.7, Hauptdatei ist ${config_version} "
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.8") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-simulation.yaml ist 3.5.8, Hauptdatei ist ${config_version} "
                         "(alle Dateien gleicher Version verwenden oder version_check: false)");

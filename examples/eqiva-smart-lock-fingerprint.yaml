@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # R503 Fingerprint – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 3.5.7 (2026-11-11) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.5.8 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Einbinden: packages: fingerprint: !include eqiva-smart-lock-fingerprint.yaml
 # Nutzt ${name}, lock_status, ble_state, door_handle und ha_time aus der Hauptdatei.
 #
@@ -103,7 +103,7 @@ uart:
 
 # R503-Ring: state 1=atmen 2=blinken 3=an 4=aus | Farbe 1=rot 2=blau 3=lila 4=grün 5=gelb 6=cyan 7=weiß
 # Bedeutung: blau = Finger wird gelesen · 2× kurz grün = erkannt · grün atmen = Aktion läuft
-#            danach 2 s an: grün = verriegelt, rot = aufgeschlossen/geöffnet
+#            danach 2 s an: grün = verriegelt, rot = aufgeschlossen/geöffnet (bei Zustandsfarben „Verriegelt rot“ umgekehrt)
 #            türkis atmen = verbinde mit Schloss (Sparmodus, Umschalten)
 #            rot atmen = nicht erkannt · rot blinken = Fehler/Schloss nicht erreicht
 #            lila blinken = abgewiesen/gesperrt · gelb blinken = Finger schlecht aufgelegt
@@ -170,9 +170,6 @@ globals:
     type: uint32_t
     initial_value: '0'
   - id: fp_was_connected
-    type: bool
-    initial_value: 'false'
-  - id: fp_seen_conn          # Verbindungsversuch für die Status-Abfrage hat begonnen
     type: bool
     initial_value: 'false'
   - id: fp_ev_result
@@ -495,8 +492,8 @@ script:
   - id: ver_check_fingerprint
     then:
       - lambda: |-
-          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.7") == 0,
-                        "Versionskonflikt: eqiva-smart-lock-fingerprint.yaml ist 3.5.7, Hauptdatei ist ${config_version} "
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.8") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-fingerprint.yaml ist 3.5.8, Hauptdatei ist ${config_version} "
                         "(alle Dateien gleicher Version verwenden oder version_check: false)");
   # Meldung in "Fingerprint: Letzte Aktion" (mit Uhrzeit, wenn bekannt)
   - id: fp_msg
@@ -586,22 +583,17 @@ script:
           condition:
             lambda: 'return id(fp_act) == 1 && !id(fp_was_connected);'
           then:
-            - lambda: |-
-                id(fp_msg).execute("Verbinde mit Schloss … – " + id(fp_who));
-                id(fp_seen_conn) = false;
+            - lambda: 'id(fp_msg).execute("Verbinde mit Schloss … – " + id(fp_who));'
             - eqiva_key_ble.status:
             - delay: 600ms   # grünes Blinken zu Ende zeigen, die Verbindung läuft schon
             - lambda: 'id(fp)->aura_led_control(1, 60, 6, 0);'   # türkis atmen = verbinde mit Schloss
-            # fertig, sobald der Status da ist. Ein einzelner gescheiterter Verbindungsversuch (z. B. Fehler 133)
-            # beendet das Warten nicht – die Komponente versucht es selbst erneut. Aufgegeben wird erst, wenn sie
-            # das Schloss als nicht erreichbar meldet (2 Fehlversuche in Folge) oder nach 20 s.
+            # fertig, sobald der Status da ist. Gescheiterte Verbindungsversuche (z. B. Fehler 133 bei schwachem
+            # Empfang) beenden das Warten nicht – die Komponente versucht es selbst erneut, auch nach „nicht
+            # erreichbar“. Aufgegeben wird nach 30 s; kommt der Status später, passiert nichts mehr.
             - wait_until:
                 condition:
-                  lambda: |-
-                    if (id(ble_state).state != "IDLE") id(fp_seen_conn) = true;
-                    if (id(fp_status_seq) != id(fp_seq_mark) && id(lock_status).state != "MOVING") return true;
-                    return id(fp_seen_conn) && id(ble_state).state == "IDLE" && id(key_ble)->unreachable_since() != 0;
-                timeout: 20s
+                  lambda: 'return id(fp_status_seq) != id(fp_seq_mark) && id(lock_status).state != "MOVING";'
+                timeout: 30s
       - lambda: |-
           const std::string &st = id(lock_status).state;
           int act = id(fp_act), cmd = 0;
@@ -1004,8 +996,9 @@ script:
           id(fp_cd_start) = millis(); id(fp_cd_ms) = (uint32_t) id(fp_cooldown).state * 1000UL;
           static const char *const verbs[] = {"", "Aufgeschlossen", "Zugeschlossen", "Geöffnet"};
           if (ok) {
-            // 2 s Dauerlicht = erledigt: grün = verriegelt, rot = aufgeschlossen/geöffnet
-            id(fp)->aura_led_control(3, 0, cmd == 2 ? 4 : 1, 0);
+            // 2 s Dauerlicht = erledigt: grün = verriegelt, rot = aufgeschlossen/geöffnet (Zustandsfarben getauscht: umgekehrt)
+            const bool sw = id(key_ble)->state_colors_swapped();
+            id(fp)->aura_led_control(3, 0, (cmd == 2) != sw ? 4 : 1, 0);
             id(fp_msg).execute(std::string(verbs[cmd]) + " – " + id(fp_who));
           } else {
             id(fp)->aura_led_control(2, 25, 1, 4);      // rot blinken = fehlgeschlagen
@@ -1034,8 +1027,9 @@ text_sensor:
             if (id(fp_execute).is_running() || id(fp_bell_rainbow).is_running()) return;
             if (millis() - id(fp_last_finish) < 5000UL) return;     // gehört noch zur Finger-Aktion
             if (before == "OPENED" && x == "UNLOCKED") return;     // nach "Öffnen" kein zweites Signal
-            if (x == "LOCKED")        id(fp)->aura_led_control(1, 100, 4, 2);   // grün = zugeschlossen
-            else if (x == "UNLOCKED") id(fp)->aura_led_control(1, 100, 1, 2);   // rot = aufgeschlossen
+            const bool sw = id(key_ble)->state_colors_swapped();   // Zustandsfarben „Verriegelt rot“
+            if (x == "LOCKED")        id(fp)->aura_led_control(1, 100, sw ? 1 : 4, 2);   // grün = zugeschlossen
+            else if (x == "UNLOCKED") id(fp)->aura_led_control(1, 100, sw ? 4 : 1, 2);   // rot = aufgeschlossen
             else if (x == "OPENED")   id(fp)->aura_led_control(1, 100, 2, 2);   // blau = geöffnet
             return;
           }
