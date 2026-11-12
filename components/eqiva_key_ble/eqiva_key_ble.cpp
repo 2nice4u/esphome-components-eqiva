@@ -598,6 +598,7 @@ void EqivaKeyBle::sendCommand(CommandType command) {
     ev_moved_ = false;
     reaction_started_ = now;
     reaction_pending_ = true;
+    reaction_cmd_sent_ = false;
     reaction_act_ = command == LOCK ? 'z' : (command == UNLOCK ? 'a' : 'o');
     reaction_src_ = ev_pending_src_.substr(0, 16);
     ev_reaction_ms_ = 0;
@@ -713,6 +714,7 @@ bool EqivaKeyBle::sendMessage(eQ3Message::Message *msg, bool nonce) {
 
     if (connected && (session_ok || nonce)) {
       ESP_LOGD(TAG, "Sende Nachricht 0x%02X", (uint8_t) msg->id);
+      if ((uint8_t) msg->id == 0x87 && reaction_pending_ && !reaction_cmd_sent_) { reaction_cmd_sent_ = true; reaction_sent_ms_ = millis(); }
       std::string data;
       if (msg->isSecure()) {
           std::string padded_data;
@@ -865,6 +867,7 @@ void EqivaKeyBle::sim_disconnect() {
 void EqivaKeyBle::sim_execute_(int cmd) {
   static const char *const cmds[] = {"zuschließen", "aufschließen", "öffnen", "Status"};
   ESP_LOGI(SIM_TAG, "Simulation: %s", cmds[(cmd >= 0 && cmd <= 3) ? cmd : 3]);
+  if (cmd >= LOCK && cmd <= OPEN && reaction_pending_ && !reaction_cmd_sent_) { reaction_cmd_sent_ = true; reaction_sent_ms_ = millis(); }
   touch_();
   uint8_t target = 0;
   if (cmd == LOCK) target = 3;
@@ -999,6 +1002,23 @@ void EqivaKeyBle::on_lock_state_(uint8_t st) {
     if (t > 1600000000 && gmtime_r(&t, &ut) != nullptr) strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%SZ", &ut);
     this->publish_(this->last_status_sensor_, iso);
   }
+  // Motorlauf überwachen: über 10 s (Öffnen 15 s) = Antrieb falsch eingestellt oder nicht kalibriert
+  if (st == 1 && !moving_) { moving_ = true; moving_since_ = now; moving_open_ = ev_pending_ == OPEN; }
+  if (st != 1 && moving_) {
+    moving_ = false;
+    const uint32_t run = now - moving_since_;
+    if (run > (moving_open_ ? 15000u : 10000u) && run < 120000u) {
+      char b[96];
+      snprintf(b, sizeof(b), "⚠️ Motor lief %u s – Schlossantrieb prüfen/kalibrieren", (unsigned) ((run + 500) / 1000));
+      ESP_LOGW(TAG, "%s", b);
+      this->log_event(b);
+    }
+  }
+  // Antwort auf den Befehl ohne Bewegung (z. B. schon im Zielzustand oder Antrieb verstellt): keine Reaktionszeit
+  if (reaction_pending_ && reaction_cmd_sent_ && st >= 2) {
+    ESP_LOGD(TAG, "Reaktionszeit verworfen: Schloss antwortet ohne Motorlauf");
+    reaction_pending_ = false;
+  }
   if (st == 1 && reaction_pending_) {    // erster Motorstart nach dem Befehl = Reaktionszeit
     reaction_pending_ = false;
     uint32_t ms = now - reaction_started_;
@@ -1049,6 +1069,7 @@ void EqivaKeyBle::on_lock_state_(uint8_t st) {
       !(ev_last_state_ == 4 && st == 2) &&          // OPENED -> UNLOCKED: Falle zurück, kein Ereignis
       !hand_quiet_) {
     this->log_event(std::string("🖐 ") + icon[st] + " von Hand");
+    reaction_pending_ = false;           // Handbedienung: offene Messung gehört nicht mehr zum Befehl
   }
   ev_last_state_ = st;
 }
@@ -1064,6 +1085,7 @@ void EqivaKeyBle::ev_success_(uint8_t st, uint32_t now, time_t t) {
     dur = b;
   }
   this->log_event_at_(std::string(icon[st]) + " " + ev_pending_src_ + dur, t);
+  reaction_pending_ = false;
   if (ev_pending_ == OPEN) { hand_quiet_ = true; hand_quiet_since_ = now; }
   ev_pending_ = -1;
   ev_reaction_ms_ = 0;
@@ -1077,6 +1099,7 @@ void EqivaKeyBle::ev_fail_(const char *why) {
                   " (" + why + ")");
   ev_pending_ = -1;
   ev_open_unlocked_ = false;
+  reaction_pending_ = false;
   hand_quiet_ = true;
   hand_quiet_since_ = millis();
 }
@@ -1086,6 +1109,11 @@ void EqivaKeyBle::ev_tick_() {
   if (ev_pending_ == OPEN && ev_open_unlocked_ && (millis() - ev_open_unlocked_ms_) >= OPEN_NO_OPENED_MS)
     this->ev_success_(4, ev_open_unlocked_ms_, ev_open_unlocked_t_);
   if (ev_pending_ >= 0 && (millis() - ev_pending_at_) > 60000) this->ev_fail_("keine Bestätigung");
+  // 15 s nach dem Senden noch kein Motorlauf: Messung verwerfen (sonst zählt eine spätere Bewegung mit)
+  if (reaction_pending_ && reaction_cmd_sent_ && (millis() - reaction_sent_ms_) > 15000) {
+    ESP_LOGD(TAG, "Reaktionszeit verworfen: kein Motorlauf innerhalb 15 s");
+    reaction_pending_ = false;
+  }
   // Tageswechsel: gestrige Einträge bekommen ihr Datum
   static int last_yday = -1;
   time_t now = ::time(nullptr);

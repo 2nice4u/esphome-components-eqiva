@@ -28,7 +28,7 @@ namespace eqiva_key_ble {
 using namespace esp32_ble_client;
 
 // Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
-#define EQIVA_PATCH_VERSION "3.5.8"
+#define EQIVA_PATCH_VERSION "3.5.9"
 
 // Patch-Konstanten
 static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
@@ -308,6 +308,11 @@ class EqivaKeyBle : public BLEClientBase {
         text_sensor::TextSensor *reaction_list_sensor_{nullptr};
         uint32_t reaction_started_{0};
         bool reaction_pending_{false};
+        bool reaction_cmd_sent_{false};      // Befehl ist wirklich beim Schloss (nicht nur zurückgehalten)
+        uint32_t reaction_sent_ms_{0};
+        bool moving_{false};                 // Motorlauf überwachen: ungewöhnlich lang = Antrieb prüfen
+        uint32_t moving_since_{0};
+        bool moving_open_{false};
         struct ReactionEntry { char act; uint16_t ms; std::string src; };
         std::vector<ReactionEntry> reaction_hist_;   // älteste zuerst, max. 10
         char reaction_act_{'z'};             // Aktion des laufenden Befehls: z zu, a auf, o öffnen

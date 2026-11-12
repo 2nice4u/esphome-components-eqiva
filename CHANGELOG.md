@@ -23,6 +23,27 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.5.9 – 2026-11-12
+
+### Neu
+- **Smarthome-Haus:** Das Bedienfeld ist jetzt ein Haus mit Leiterbahnen (Kontur in der Zustandsfarbe, helle Füllung,
+  Knoten als Ringe). Zu und Auf haben einen farbigen **Doppelring mit Abstand**, die Haustür („Öffnen“) einen Ring in der Hausfarbe.
+- **„Stand: vor … min“ wieder über dem Haus**, immer sichtbar, mit **Aktualisieren** daneben („gerade eben“, „vor 6 min“ …).
+  Gelb, wenn keine Verbindung besteht und der Stand älter als 5 Minuten ist. Die Angabe „seit … · Quelle“ entfällt (steht in den Ereignissen).
+- **Schlossantrieb einstellen:** Erklärung der drei Werte, Hinweis, danach über die Tasten am Schloss einmal zu- und wieder
+  aufzuschließen (Kalibrierung), und eine Warnung, wenn die Einstellung mehrmals hintereinander übernommen wurde.
+- **Warnung bei langem Motorlauf:** Läuft der Motor länger als 10 s (Öffnen 15 s), steht im Ereignisprotokoll
+  „⚠️ Motor lief … s – Schlossantrieb prüfen/kalibrieren“ – typisch für falsche Antriebs-Werte oder fehlende Kalibrierung.
+
+### Behoben
+- **Falsche Reaktionszeiten** (z. B. 65,5 s): Eine Messung wird jetzt verworfen, wenn das Schloss den Befehl ohne Motorlauf
+  beantwortet, innerhalb von 15 s nach dem Senden kein Motorlauf kommt, eine Handbedienung dazwischenkommt oder der Befehl
+  ohne Messung abgeschlossen wurde. Bisher blieb die Messung offen und die nächste Bewegung (z. B. per Taste am Schloss) wurde mitgezählt.
+
+### Update
+- Pakete, `app.js` und den Komponenten-Ordner ersetzen (im Release `components/`, lokal laut `path:`), flashen.
+- Eigene Hauptdateien: nur `config_version: "3.5.9"`.
+
 ## 3.5.8 – 2026-11-12
 
 ### Neu

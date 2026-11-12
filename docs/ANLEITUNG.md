@@ -1,6 +1,6 @@
 # Eqiva Smart Lock – Anleitung & Hilfe
 
-Gilt für Version 3.5.8 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
+Gilt für Version 3.5.9 (Komponente, Pakete und Web-App mit gleicher Versionsnummer).
 Änderungen: [CHANGELOG.md](../CHANGELOG.md)
 
 ## Die Web-App
@@ -15,12 +15,12 @@ Sie läuft direkt auf dem ESP, auch ohne Internet, am Handy und am PC.
 | **Zeitplan** | bis zu 6 Zeitpläne als Liste: antippen = bearbeiten, Schalter Ein/Aus, + Zeitplan |
 | **Einstellungen** | Einrichtung (Pairing, Schlossantrieb, Neustart), Energiemodus, Zustandsfarben, Türgriff, Fingerprint, Sabotage-Erkennung, Diagnose |
 
-- **Kopfzeile** (auf allen Seiten): links das Schloss-Symbol in der Farbe des Zustands (grün zu, rot auf, blau geöffnet, grau Motor läuft) und der Zustand als Wort, daneben die **Version** (z. B. „v3.5.8 ↗“, öffnet die Release-Übersicht auf GitHub; leuchtet blau und pulsiert, wenn es eine neuere Version gibt); rechts der Umschalter **Automatisch · Hell · Dunkel** (drei runde Knöpfe, der gewählte mit blauem Ring) und darunter die **Uhrzeit des ESP**. Steht dort ein gelbes „⚠ --:--“, kennt der ESP keine Uhrzeit – der Zeitplan pausiert dann.
-- **Bedienfeld (Startseite):** ein Haus in der Farbe des Zustands – grün verriegelt, rot aufgeschlossen, blau geöffnet, grau Motor läuft (Symbol dreht sich), gelb unbekannt. Die **Haustür ist der Knopf „Öffnen“**, darunter **Zu** und **Auf** (der Knopf des aktuellen Zustands ist kräftig gefüllt). Über dem Dach steht, seit wann und wodurch das Schloss so steht (z. B. „seit 22:14 · Zeitplan 1“, aus den Ereignissen; nach einem Neustart erst ab dem ersten passenden Ereignis).
+- **Kopfzeile** (auf allen Seiten): links das Schloss-Symbol in der Farbe des Zustands (grün zu, rot auf, blau geöffnet, grau Motor läuft) und der Zustand als Wort, daneben die **Version** (z. B. „v3.5.9 ↗“, öffnet die Release-Übersicht auf GitHub; leuchtet blau und pulsiert, wenn es eine neuere Version gibt); rechts der Umschalter **Automatisch · Hell · Dunkel** (drei runde Knöpfe, der gewählte mit blauem Ring) und darunter die **Uhrzeit des ESP**. Steht dort ein gelbes „⚠ --:--“, kennt der ESP keine Uhrzeit – der Zeitplan pausiert dann.
+- **Bedienfeld (Startseite):** ein Smarthome-Haus mit Leiterbahnen in der Farbe des Zustands – grün verriegelt, rot aufgeschlossen, blau geöffnet, grau Motor läuft (Symbol dreht sich), gelb unbekannt. Die **Haustür ist der Knopf „Öffnen“**, darunter **Zu** und **Auf** mit farbigem Doppelring (der Knopf des aktuellen Zustands ist kräftig gefüllt).
 - **Zustandsfarben** (Einstellungen → Schloss): „Verriegelt grün“ (Standard) oder „Verriegelt rot“. Gilt für Haus, Knöpfe, Kopfzeile, Ereignis-Symbole, Status-LED und die Bestätigung am Fingerprint-Ring. Grün/Rot für gut/schlecht (Reaktionszeit, Bluetooth, ✓/✗, Finger erkannt/abgewiesen) bleibt.
 - **Update-Hinweis:** Die Web-App fragt höchstens alle 12 Stunden bei GitHub nach der neuesten veröffentlichten Release (das macht der Browser, nicht der ESP – der ESP braucht kein Internet). Ohne Internet bleibt der Versions-Chip einfach normal.
 - **Kachel „Bluetooth“** (Startseite): **Verbunden** (grün) · **Verbindungsaufbau** (blau, Symbol pulsiert) · **Idle** (grau; im Sparmodus mit „verbindet bei Bedarf“ – das ist dort der Normalzustand) · **Schloss nicht gefunden** (gelb: ein Befehl kam bis zum Zeitlimit nicht zum Schloss durch) · **Verbindungsfehler** (rot: der Verbindungsaufbau ist gescheitert). Ein Fehler bleibt stehen, bis eine Verbindung klappt oder ein neuer Befehl kommt; läuft schon der nächste Versuch, steht darunter „neuer Versuch …“ (in Home Assistant: „Verbindungsfehler – neuer Versuch …“). In Home Assistant heißt der Sensor „Bluetooth“.
-- **„Stand: vor … min“** (Startseite, unter dem Haus): erscheint, wenn keine Verbindung besteht und die letzte Statusmeldung des Schlosses älter als 5 Minuten ist – der angezeigte Zustand könnte dann veraltet sein (z. B. von Hand aufgeschlossen). **Aktualisieren** fragt den Zustand sofort ab (Sensor „Letzte Statusmeldung“, Knopf „Status abfragen“).
+- **„Stand: vor … min“** (Startseite, über dem Haus): wie alt die letzte Statusmeldung des Schlosses ist („gerade eben“, „vor 6 min“ …), daneben **Aktualisieren** (fragt den Zustand sofort ab). Gelb, wenn keine Verbindung besteht und der Stand älter als 5 Minuten ist – der Zustand könnte dann veraltet sein (z. B. von Hand aufgeschlossen). Grundlage: Sensor „Letzte Statusmeldung“, Knopf „Status abfragen“.
 - **Auf dem Handy wie eine App:** in Chrome die Seite öffnen, Menü ⋮ → „Zum Startbildschirm hinzufügen“.
 - **Einrichtung** (Einstellungen): Schloss koppeln (Pairing-Assistent), Kopplung entfernen, Schlossantrieb einstellen, ESP neu starten.
 - **Expertenansicht** (Einstellungen, ganz unten): die bisherige ESPHome-Tabelle mit allen Entitäten –
@@ -67,6 +67,13 @@ In der Web-App: Einstellungen → **„Schlossantrieb einstellen“**, dann „A
 Unter **Schloss Einstellungen** Schließrichtung, Schlüsselposition und Umdrehungen wählen, dann **Lock Settings _Apply_** drücken.
 
 Bestätigt das Schloss die Einstellung, steht in den Ereignissen **„⚙️ Schlossantrieb übernommen“**.
+
+Die drei Werte werden immer zusammen geschickt:
+- **Schließrichtung:** Richtung, in die der Knauf zum Zuschließen gedreht wird (von innen gesehen).
+- **Schlüsselposition:** Stellung des Schlüssels, in der er sich abziehen lässt.
+- **Umdrehungen:** volle Umdrehungen von ganz auf bis ganz zu.
+
+> **Danach kalibrieren:** Im eingebauten Zustand einmal über die **Tasten am Schloss** zu- und wieder aufschließen – erst dann kennt das Schloss seine Endpunkte. Falsche Werte oder mehrfaches Übernehmen hintereinander bringen das Schloss durcheinander: „Auf“ reagiert nicht oder verzögert, der Motor läuft sehr lange. Dann Werte prüfen, **einmal** übernehmen und kalibrieren. Läuft der Motor länger als 10 s (Öffnen 15 s), steht in den Ereignissen „⚠️ Motor lief … s – Schlossantrieb prüfen/kalibrieren“.
 
 ## 4. Bedienung: Zuschließen, Aufschließen, Öffnen
 
@@ -119,6 +126,7 @@ Gemessen wird die Zeit vom Absetzen des Befehls (App, HA, Fingerprint, Zeitplan)
 - Darunter alle Ereignisse mit Uhrzeit und Piktogramm (zu = ausgefülltes Schloss, auf = offenes Schloss, öffnen = Tür; auch Klingel, Abweisungen, Fehler). Bedienungen mit Messung haben einen Balken mit der Reaktionszeit, Handbedienung steht als ✋ „von Hand“ dazwischen – die Liste ist zugleich das Diagramm.
 - Farben: **grün** bis 4 s · **gelb** bis 8 s · **rot** darüber.
 - Der Sensor „Reaktionszeit“ (Sekunden) ist in Home Assistant mit Verlauf verfügbar. Die Liste „Reaktionszeiten“ enthält die letzten 10 Bedienungen mit Aktion, Dauer und Quelle. Die Ereignisse enthalten die Reaktionszeit im Text, z. B. „18:05 🔒 Zeitplan 1 (2,4 s)“. Nach einem Neustart sind beide Listen leer.
+- Keine Messung gibt es, wenn das Schloss den Befehl ohne Motorlauf beantwortet (z. B. schon im Zielzustand), innerhalb von 15 s nach dem Senden kein Motorlauf kommt oder zwischendurch eine Handbedienung erkannt wird – so landen keine falschen Werte (z. B. 65 s) in der Statistik.
 
 Der Motorlauf bis zum Endzustand (ca. 3–4 s) ist Mechanik und nicht enthalten.
 

@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # Status-LED (WS2812/RGB) – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 3.5.8 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.5.9 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Einbinden:   packages:
 #                status_led: !include eqiva-smart-lock-status-led.yaml
 # Nur für Boards mit (oder mit angeschlossener) WS2812-LED.
@@ -84,6 +84,6 @@ script:
   - id: ver_check_status_led
     then:
       - lambda: |-
-          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.8") == 0,
-                        "Versionskonflikt: eqiva-smart-lock-status-led.yaml ist 3.5.8, Hauptdatei ist ${config_version} "
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.9") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-status-led.yaml ist 3.5.9, Hauptdatei ist ${config_version} "
                         "(alle Dateien gleicher Version verwenden oder version_check: false)");
