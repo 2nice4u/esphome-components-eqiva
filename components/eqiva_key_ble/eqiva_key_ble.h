@@ -28,7 +28,7 @@ namespace eqiva_key_ble {
 using namespace esp32_ble_client;
 
 // Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
-#define EQIVA_PATCH_VERSION "3.5.9"
+#define EQIVA_PATCH_VERSION "3.5.10"
 
 // Patch-Konstanten
 static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
@@ -92,6 +92,16 @@ class EqivaKeyBle : public BLEClientBase {
     bool eco_poll_done_{false};
     bool conn_params_applied_{false};
     uint32_t connect_requested_at_{0};   // für Zeitmessung im Sparmodus
+    // Reaktionszeit, Teil "Verbindung": letzter echter Verbindungsaufbau (CONNECTING -> Session steht).
+    // Global erfasst (nicht nur während einer laufenden Messung), damit auch ein Verbindungsaufbau, der
+    // schon vor dem eigentlichen Befehl begann (z. B. Fingerprint fragt zuerst den Status ab), der
+    // späteren Messung noch zugerechnet werden kann.
+    uint32_t conn_phase_start_{0};
+    uint32_t conn_phase_ready_{0};
+    // Reaktionszeit, Auslöser "Berührung" (Fingerprint): beim Auflegen gesetzt, unabhängig vom Ergebnis;
+    // wird nur verwendet, wenn kurz danach wirklich ein Schließbefehl gesendet wird, sonst verfällt sie.
+    uint32_t touch_ms_{0};
+    bool touch_pending_{false};
     std::vector<PairedTrigger *> paired_triggers_;
     // --- Simulation (ohne Schloss, zum Testen von Fingerprint/Zeitplan/LED) ---
     bool simulate_{false};
@@ -264,6 +274,9 @@ class EqivaKeyBle : public BLEClientBase {
         void log_event(const std::string &text);
         // Auslöser für den nächsten Befehl setzen (z. B. "Max", "Zeitplan 1"); gilt 3 s, sonst "HA/Web"
         void set_cmd_source(const std::string &src) { this->cmd_source_ = src; this->cmd_source_at_ = millis(); }
+        // Reaktionszeit, Auslöser Fingerprint: beim Auflegen aufrufen (vor Statusabfrage/Erkennung).
+        // Gilt 5 s für den nächsten Schließbefehl, sonst verfällt die Berührung ungenutzt.
+        void note_touch() { this->touch_ms_ = millis(); this->touch_pending_ = true; }
         // Simulation: kein BLE, Schloss wird nachgebildet (Zustände, Fahrzeit, Sparmodus-Verbindung)
         void set_simulate(bool s) { this->simulate_ = s; }
         bool is_simulated() const { return this->simulate_; }
@@ -287,6 +300,11 @@ class EqivaKeyBle : public BLEClientBase {
         void set_state(esphome::esp32_ble_tracker::ClientState st) override {
             BLEClientBase::set_state(st);
             this->publish_ble_state_(getClientState());
+            // Reaktionszeit, Teil "Verbindung": neuer echter Verbindungsaufbau beginnt
+            if (st == esphome::esp32_ble_tracker::ClientState::CONNECTING) {
+                this->conn_phase_start_ = millis();
+                this->conn_phase_ready_ = 0;
+            }
         };
         void dump_config() override;
         bool gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
@@ -313,7 +331,9 @@ class EqivaKeyBle : public BLEClientBase {
         bool moving_{false};                 // Motorlauf überwachen: ungewöhnlich lang = Antrieb prüfen
         uint32_t moving_since_{0};
         bool moving_open_{false};
-        struct ReactionEntry { char act; uint16_t ms; std::string src; };
+        // ms = Gesamt (Auslöser -> Motor), conn_ms = Anteil Verbindungsaufbau, lock_ms = Anteil
+        // Befehl gesendet -> Motor; Rest (ms - conn_ms - lock_ms) = Finger/Status, nur ab 0,1 s gezeigt.
+        struct ReactionEntry { char act; uint16_t ms; uint16_t conn_ms; uint16_t lock_ms; std::string src; };
         std::vector<ReactionEntry> reaction_hist_;   // älteste zuerst, max. 10
         char reaction_act_{'z'};             // Aktion des laufenden Befehls: z zu, a auf, o öffnen
         std::string reaction_src_;           // Quelle des laufenden Befehls

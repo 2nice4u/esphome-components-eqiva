@@ -1,6 +1,6 @@
 # Änderungen in diesem Fork
 
-**Version 3.5.9** (2026-11-12) – Komponente, Beispiel-YAMLs und Anleitung tragen dieselbe Versionsnummer.
+**Version 3.5.10** (2026-11-12) – Komponente, Beispiel-YAMLs und Anleitung tragen dieselbe Versionsnummer.
 1.1.0: Fingerprint-Paket mit Zuordnung Person/Hand/Finger, Aktion pro Finger (inkl. Umschalten), Ring-Rückmeldung und Scan-Pause.
 1.1.1: Pinbelegung als Substitutions, R503-Stromabschaltung per PNP-Transistor (sensor_power_pin), mehrere Status-LEDs.
 1.2.0: Paket Zeitplan (2 Zeitpläne mit Uhrzeit, Wochentagen und Aktion, SNTP).
@@ -46,6 +46,7 @@
 3.5.7: Ereignisliste mit Reaktionszeit-Balken und Handbedienung, Kacheln zuletzt/Ø/max, runde Darstellungs-Knöpfe, „unbekannt“ entprellt, Statusabfrage nach Pairing, 0x85 als Bestätigung von „Schlossantrieb einstellen“, Fingerprint wartet auf zweiten Verbindungsversuch, „Letzte Statusmeldung“ in UTC.
 3.5.8: Bedienfeld als Haus, Zustandsfarben tauschbar (App, Status-LED, Fingerprint-Ring), Versions-Chip mit Update-Hinweis, Fingerprint wartet bis 30 s auf die Verbindung, Bluetooth „neuer Versuch …“.
 3.5.9: Smarthome-Haus mit Leiterbahnen, Doppelring-Knöpfe, „Stand: vor … min“ immer sichtbar, Antriebs-Dialog mit Kalibrier-Hinweis, Warnung bei langem Motorlauf, falsche Reaktionszeiten verworfen.
+3.5.10: Reaktionszeit ab Berührung (Fingerprint) und mit korrekt mitgerechnetem Verbindungsaufbau, Aufschlüsselung Verbindung/Finger-Status/Schloss in der Web-App, animierte Leiterbahnen (Knoten-Welle) während Verbindungsaufbau/Motorlauf, Update-Prüfung ohne Zwischenspeicher.
 
 Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (Fix für ESPHome 2026.8).
 
@@ -53,7 +54,7 @@ Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (
 
 ```yaml
 external_components:
-  - source: github://DEIN-GITHUB-NAME/esphome-components-eqiva@v3.5.9
+  - source: github://DEIN-GITHUB-NAME/esphome-components-eqiva@v3.5.10
 ```
 
 Vollständiges Beispiel mit Web-GUI, Energiemodi, Pairing-Info, optionalem R503-Fingerprint und Status-LED:

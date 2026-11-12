@@ -23,6 +23,27 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.5.10 – 2026-11-12
+
+### Neu
+- **Reaktionszeit-Messung überarbeitet:** Der Auslöser ist jetzt bei Fingerprint „Umschalten“ die **Berührung**
+  (Finger aufgelegt), nicht erst das fertige Erkennen – unbekannte Finger ohne Schließbefehl erzeugen keine Messung.
+  Zusätzlich wird ein Verbindungsaufbau, der schon während der Statusabfrage lief, korrekt mitgerechnet (vorher
+  stand bei Fingerprint „Umschalten“ praktisch immer ~0,2 s, weil die Verbindungszeit außerhalb der Messung lag).
+- **Aufschlüsselung der Reaktionszeit** in drei Anteile: **Verbindung** (violett, echter Verbindungsaufbau bis die
+  Session steht), **Finger/Status** (Finger lesen + Statusabfrage) und **Schloss** (Befehl gesendet → Motor dreht).
+  Die Startseiten-Karte zeigt die letzte Messung als breiten Balken mit zwei abgerundeten Kapseln (Verbindung/Schloss)
+  mit Lücke, die Anteile darunter ausgeschrieben, sowie drei Kacheln Ø gesamt (mit Maximum) · Ø Verbindung · Ø Schloss.
+- **Animierte Leiterbahnen am Haus:** Während eines echten Verbindungsaufbaus oder solange der Motor läuft, leuchten
+  Knoten und Leiterbahnen nacheinander als Welle auf. Bei „Bewegung reduzieren“ bleiben nur die Bahnen hervorgehoben,
+  ohne Animation.
+- **Update-Prüfung ohne Zwischenspeicher:** Die Web-App fragt GitHub jetzt bei jedem Laden sofort nach der neuesten
+  Release, statt das Ergebnis bis zu 12 Stunden im Browser zu behalten.
+
+### Update
+- Pakete, `app.js` und den Komponenten-Ordner ersetzen (im Release `components/`, lokal laut `path:`), flashen.
+- Eigene Hauptdateien: nur `config_version: "3.5.10"`.
+
 ## 3.5.9 – 2026-11-12
 
 ### Neu
