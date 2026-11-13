@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.5.12 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.6.0 (2026-11-14) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.5.12';
+  const APP_VERSION = '3.6.0';
   const REPO = '2nice4u/esphome-components-eqiva';   // eigener Fork: nur diese Zeile ändern
   const GUIDE_URL = 'https://github.com/' + REPO + '/blob/main/docs/ANLEITUNG.md';
   const RELEASES_URL = 'https://github.com/' + REPO + '/releases';
@@ -117,20 +117,63 @@
     MOVING: { label: 'Motor läuft …', cls: 'st-moving', icon: 'spin' },
     UNKNOWN: { label: 'Unbekannt / blockiert', cls: 'st-unknown', icon: 'alert' }
   };
-  // Smarthome-Haus: Leiterbahnen links (rechts gespiegelt), letzter Punkt = Knoten (Ring)
-  // Knoten-Welle: jede Bahn/jeder Knoten leuchtet zeitversetzt auf (animation-delay je Index), aktiv nur
-  // während Verbindungsaufbau/Motorlauf (Klasse "wave" am Haus-Container, siehe viewStart). Bei
-  // "Bewegung reduzieren" blendet eine CSS-Regel die Animation aus (nur leicht hervorgehobene Bahnen).
-  const HOUSE_TRACES = (() => {
-    const L = [[[60, 150], [38, 150], [24, 136]], [[60, 174], [14, 174]], [[60, 198], [34, 198]], [[60, 222], [38, 222], [24, 236]],
-      [[96, 98], [74, 76], [74, 52]], [[134, 67], [118, 51], [118, 30]], [[112, 256], [112, 272]]];
-    return L.concat(L.map((t) => t.map(([x, y]) => [340 - x, y]))).map((t, i) => {
-      const e = t[t.length - 1];
-      const delay = ' style="animation-delay:' + (i * 90) + 'ms"';
-      return '<path class="htr" d="M' + t.map((q) => q.join(' ')).join(' L') + '"' + delay + '/><circle class="hnd" cx="' + e[0] + '" cy="' + e[1] +
-        '" r="' + (i % 7 === 2 ? 4 : 6.5) + '"' + delay + '/>';
-    }).join('');
+  // Neon-Glasschloss im Platinen-Stil (Startseite). Geometrie einmal berechnen; Lichtimpulse, Leuchten und
+  // Bügelfahrt laufen per CSS. Damit das ständige Neuzeichnen der App die Animationen nicht neu startet, hängen
+  // alle Verzögerungen an der Variable --ph (aktuelle Zeit, wird bei jedem draw() gesetzt).
+  const LOCK_ART = (() => {
+    const lines = [];
+    const bus = (n, start, dirOut, dirSide, step, L1, end) => {
+      for (let i = 0; i < n; i++) {
+        const k = i - (n - 1) / 2, a = Math.abs(k), sg = Math.sign(k);
+        const p0 = [start[0] + step[0] * i, start[1] + step[1] * i], l1 = L1 + (n / 2 - a) * 8, d = sg === 0 ? 0 : 6 + a * 12;
+        const p1 = [p0[0] + dirOut[0] * l1, p0[1] + dirOut[1] * l1];
+        const p2 = [p1[0] + (dirOut[0] + dirSide[0] * sg) * d, p1[1] + (dirOut[1] + dirSide[1] * sg) * d];
+        lines.push([p0, p1, p2, end(p2)]);
+      }
+    };
+    bus(7, [98, 172], [-1, 0], [0, 1], [0, 10], 10, (q) => [14 + ((q[1] * 7) % 22), q[1]]);
+    bus(7, [202, 172], [1, 0], [0, 1], [0, 10], 10, (q) => [286 - ((q[1] * 5) % 22), q[1]]);
+    bus(7, [114, 244], [0, 1], [1, 0], [12, 0], 6, (q) => [q[0], 286 - ((q[0] * 3) % 14)]);
+    let base = '', puls = '', vias = '';
+    lines.forEach((pts, i) => {
+      const d = 'M' + pts.map((q) => q[0].toFixed(1) + ' ' + q[1].toFixed(1)).join(' L');
+      base += '<path d="' + d + '"/>';
+      puls += '<path pathLength="100" d="' + d + '" style="animation-delay:calc(var(--ph,0ms) - ' + (i * 370) + 'ms)"/>';
+      const e = pts[3];
+      vias += '<circle class="v" cx="' + e[0] + '" cy="' + e[1] + '" r="4.6"/><circle class="vd" cx="' + e[0] + '" cy="' + e[1] + '" r="1.4"/>';
+      if (i % 3 === 1) vias += '<circle class="v" cx="' + pts[2][0] + '" cy="' + pts[2][1] + '" r="3.4"/>';
+    });
+    let seed = 23, sp = '';
+    const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    for (let i = 0; i < 18; i++) sp += '<circle cx="' + (104 + rnd() * 92).toFixed(1) + '" cy="' + (166 + rnd() * 72).toFixed(1) + '" r="' + (rnd() * 1.4 + 0.4).toFixed(2) + '" opacity="' + (rnd() * 0.7 + 0.2).toFixed(2) + '"/>';
+    return '<defs><filter id="eqnL" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="1.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>' +
+      '<filter id="eqnD" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>' +
+      '<filter id="eqnS" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="14"/></filter>' +
+      '<linearGradient id="eqnG" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset=".55" stop-color="#fff" stop-opacity="0"/></linearGradient>' +
+      '<clipPath id="eqnC"><rect x="0" y="0" width="300" height="164"/></clipPath></defs>' +
+      '<circle class="ncore" cx="150" cy="200" r="70" filter="url(#eqnS)"/>' +
+      '<g class="ntr"><g class="nbase">' + base + '</g><g class="nvia">' + vias + '</g><g class="npuls ne">' + puls + '</g></g>' +
+      '<g clip-path="url(#eqnC)"><g class="nshk">' +
+      '<path class="nshk-f" d="M120 210 V124 A30 30 0 0 1 180 124 V166"/>' +
+      '<path class="nshk-e ne" d="M112 210 V124 A38 38 0 0 1 188 124 V166 H172 V124 A22 22 0 0 0 128 124 V210"/></g></g>' +
+      '<rect class="nbg" x="98" y="160" width="104" height="84" rx="12"/>' +
+      '<rect class="nbody ne" x="98" y="160" width="104" height="84" rx="12"/>' +
+      '<rect class="nhl" x="100" y="162" width="100" height="80" rx="10" fill="url(#eqnG)"/>' +
+      '<g class="nsp">' + sp + '</g>' +
+      '<path class="nkey" d="M150 186 a10 10 0 0 1 6 18 l4 20 h-20 l4 -20 a10 10 0 0 1 6 -18 Z"/>';
   })();
+  // Bügel: zu 0, halb -15 (unbekannt), offen -30 px; Wechsel als kurze Fahrt (700 ms), auch über Neuzeichnen hinweg
+  const SHK_Y = { closed: 0, half: -15, open: -30 };
+  function lockArt(state, pos) {
+    const now = performance.now();
+    if (S.lockPos && S.lockPos !== pos) S.lockAnim = { from: SHK_Y[S.lockPos], to: SHK_Y[pos], t: now };
+    S.lockPos = pos;
+    const a = S.lockAnim, el = a ? now - a.t : 1e9;
+    const shk = el < 700 && !matchMedia('(prefers-reduced-motion: reduce)').matches ?
+      'style="--y0:' + a.from + 'px;--y1:' + a.to + 'px;animation:eqshk 700ms cubic-bezier(.3,.7,.3,1) both;animation-delay:-' + Math.round(el) + 'ms"' :
+      'style="transform:translateY(' + SHK_Y[pos] + 'px)"';
+    return '<div class="nlock s-' + state + '"><svg viewBox="0 46 300 254" aria-hidden="true">' + LOCK_ART.replace('<g class="nshk">', '<g class="nshk" ' + shk + '>') + '</svg></div>';
+  }
   const ACTIONS = ['Standard', 'Umschalten', 'Aufschließen', 'Zuschließen', 'Öffnen', 'Nur Klingel', 'Gesperrt'];
   const ACTION_HINT = ['nutzt die Standard-Aktion', 'zu → öffnen, offen → zuschließen', 'nur aufschließen',
     'nur zuschließen', 'aufschließen und Falle ziehen', 'keine Schlossaktion, nur Klingel', 'vorübergehend deaktiviert'];
@@ -245,8 +288,22 @@
     book: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/>',
     table: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/>',
     hand: '<path d="M18 11V6a2 2 0 0 0-4 0v5"/><path d="M14 10V4a2 2 0 0 0-4 0v6"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-6-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
-    bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>'
+    bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
+    link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+    trash: '<path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/>',
+    battery: '<rect x="3" y="7" width="16" height="10" rx="2"/><path d="M21 10v4"/><path d="M6 10v4M9 10v4"/>'
   };
+  // "1|seit|Motorläufe|Verbindungen;Start|Ende|Motorläufe|Verbindungen;…" (Unix-Sekunden, 0 = unbekannt)
+  function battInfo() {
+    const raw = txt('text_sensor/Batterie-Info');
+    if (!/^1\|/.test(raw)) return null;
+    const parts = raw.split(';'), h = parts[0].split('|').map(Number);
+    return { since: h[1], motor: h[2], conn: h[3], hist: parts.slice(1).map((x) => { const v = x.split('|').map(Number); return { start: v[0], end: v[1], motor: v[2], conn: v[3] }; }) };
+  }
+  const fmtInt = (v) => Math.round(Number(v) || 0).toLocaleString('de-DE');
+  const days = (a, b) => { if (!a || !b || b < a) return '–'; const d = Math.floor((b - a) / 86400); return d === 1 ? '1 Tag' : d + ' Tage'; };
+  const fmtDate = (t, y) => t ? new Date(t * 1000).toLocaleDateString('de-DE', y ? { day: '2-digit', month: '2-digit', year: 'numeric' } : { day: '2-digit', month: '2-digit' }) : '?';
   const icon = (n, size, label) => '<svg width="' + (size || 22) + '" height="' + (size || 22) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"' +
     (label ? ' role="img" aria-label="' + esc(label) + '"' : ' aria-hidden="true"') + '>' + P[n] + '</svg>';
 
@@ -364,30 +421,30 @@
         icon('clock', 14) + 'Stand: ' + esc(age) + '</span>' +
         (has('button/Status abfragen') ? btn('press', icon('spin', 14) + 'Aktualisieren', 'href', 'button/Status abfragen') : '') + '</div>';
     }
-    const hk = unpaired ? 'wr' : ({ LOCKED: 'lk', UNLOCKED: 'ul', OPENED: 'op', MOVING: 'mv' }[st] || (st ? 'wr' : 'mv'));
-    // Knoten-Welle am Haus: während echtem Verbindungsaufbau oder Motorlauf
-    const houseWave = st === 'MOVING' || ble === 'CONNECTING';
+    // Schloss: Farbe nach Zustand, Bügel offen bei auf/geöffnet, halb bei unbekannt; beim Motorlauf bleibt er stehen
+    const ls = unpaired ? 'np' : ({ LOCKED: 'lk', UNLOCKED: 'ul', OPENED: 'ul', MOVING: 'mv' }[st] || (st ? 'wr' : 'mv'));
+    const pos = unpaired ? 'half' : st === 'LOCKED' ? 'closed' : (st === 'UNLOCKED' || st === 'OPENED') ? 'open' : st === 'MOVING' ? (S.lockPos || 'closed') : 'half';
     const short = unpaired ? 'Bitte zuerst koppeln' : st === 'MOVING' ? 'Befehl wird ausgeführt' : st === 'UNKNOWN' ? 'Einmal Zu oder Auf drücken' : '';
     const long = st === 'UNKNOWN' && !unpaired ? 'Position unbekannt – z. B. nach dem Pairing, einer halben Drehung oder wenn der Riegel klemmt.' :
       (sub && !short ? sub : '');
-    const hicon = { lk: 'lockF', ul: 'unlock', op: 'door', mv: 'spin' }[hk] || (unpaired ? 'unlock' : 'help');
     const lbl = st === 'UNKNOWN' && !unpaired ? 'Unbekannt' : L.label.replace(/ …$/, '');
     const hero = card(
-      stand +
-      '<div class="house h' + hk + (houseWave ? ' wave' : '') + '"><svg viewBox="0 0 340 290" aria-hidden="true">' + HOUSE_TRACES +
-      '<path class="hbody" d="M170 22 L298 128 L274 128 L274 254 L66 254 L66 128 L42 128 Z"/></svg>' +
-      '<div class="hmid' + (short ? ' ws' : '') + '">' + icon(hicon, 40) + '<b' + (lbl.length > 12 ? ' class="lg"' : '') + '>' + esc(lbl) + '</b>' +
-      (short ? '<small>' + esc(short) + '</small>' : '') + '</div>' +
-      (unpaired ? '' : btn('open', icon('door', 30) + 'Öffnen', 'hdoor', undefined, ' aria-label="Öffnen"')) + '</div>' +
+      stand + lockArt(ls, pos) +
+      '<div class="nlbl s-' + ls + '"><b>' + esc(lbl) + '</b>' + (short ? '<small>' + esc(short) + '</small>' : '') + '</div>' +
       (long ? '<p class="hnote">' + esc(long) + '</p>' : '') +
       (unpaired ? '' : '<div class="hacts">' +
         btn('lock', icon('lockF', 20) + 'Zu', 'hp zu' + (st === 'LOCKED' ? ' on' : '')) +
-        btn('unlock', icon('unlock', 20) + 'Auf', 'hp auf' + (st === 'UNLOCKED' || st === 'OPENED' ? ' on' : '')) + '</div>') +
+        btn('open', icon('door', 20) + 'Öffnen', 'hp op' + (st === 'OPENED' ? ' on' : '')) +
+        btn('unlock', icon('unlock', 20) + 'Auf', 'hp auf' + (st === 'UNLOCKED' ? ' on' : '')) + '</div>') +
       (txt('select/Türgriff außen') === 'Türklinke' ? '<p class="note">Türgriff außen = Türklinke: „Öffnen“ schließt nur auf.</p>' :
         txt('select/Türgriff außen') === 'Knauf' ? '<div class="knauf">' + icon('alert', 22) + '<div><b>Türgriff außen = Knauf</b><span>„Öffnen“ und der Finger (Umschalten/Öffnen) ziehen die Falle – die Tür wird komplett geöffnet. „Auf“ schließt nur auf.</span></div></div>' : ''), 'hcard');
     const tiles = [];
     if (has('binary_sensor/Batterie schwach')) tiles.push(['Batterie', on('binary_sensor/Batterie schwach') ? 'Schwach' : 'OK', on('binary_sensor/Batterie schwach') ? 'warn' : '']);
     if (has('sensor/Schloss Signal')) { const v = Number(val('sensor/Schloss Signal', NaN)); tiles.push(['Signal', isFinite(v) ? Math.round(v) + ' dBm' : '–', '']); }
+    // Zähler seit dem letzten Batteriewechsel
+    const bat = battInfo(), seit = bat && bat.since ? 'seit ' + new Date(bat.since * 1000).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }) + ' · ' + days(bat.since, Date.now() / 1000) : '';
+    if (has('sensor/Motorläufe')) tiles.push(['Motorläufe', fmtInt(val('sensor/Motorläufe', 0)), 'cnt', 'gear', seit]);
+    if (has('sensor/Verbindungsaufbauten')) tiles.push(['Verbindungen', fmtInt(val('sensor/Verbindungsaufbauten', 0)), 'cnt', 'link', seit]);
     if (has('select/Energiemodus')) tiles.push(['Energie', txt('select/Energiemodus'), '']);
     if (has('text_sensor/Bluetooth')) {   // immer Bluetooth-Symbol, Zustand über Farbe und Text
       const b = txt('text_sensor/Bluetooth');
@@ -596,11 +653,16 @@
         continue;
       }
       const what = p.act === 1 ? 'Aufschließen' : 'Zuschließen';
+      if (S.confirm === 'sdel' + n) {
+        h += '<div class="srow ask"><span class="sq">Zeitplan ' + p.time + ' löschen?</span>' + btn('sched-nodel', 'Abbrechen', 'b sm') + btn('sched-del', 'Löschen', 'b sm danger', n) + '</div>';
+        continue;
+      }
       h += '<div class="srow' + (p.on ? '' : ' off') + '"><button type="button" class="smain" data-a="sched-edit" data-x="' + n + '" aria-label="Zeitplan ' + n + ': ' + p.time + ' ' + daysText(p.mask) + ' ' + what + ' – bearbeiten">' +
         '<span class="sic ' + (p.act === 1 ? 'unl' : 'lck') + '">' + icon(p.act === 1 ? 'unlock' : 'lock', 20) + '</span>' +
         '<span class="stime">' + p.time + (p.rdir ? '<small class="srnd">' + RSYM[p.rdir] + p.rmin + ' min</small>' : '') + '</span><span class="sdays" aria-hidden="true">' +
         'MDMDFSS'.split('').map((d, i) => '<span' + (p.mask & (1 << i) ? ' class="on"' : '') + '>' + d + '</span>').join('') + '</span></button>' +
-        '<button type="button" class="sw' + (p.on ? ' on' : '') + '" role="switch" aria-checked="' + p.on + '" aria-label="Zeitplan ' + n + ' aktiv" data-a="sched-tog" data-x="' + n + '"' + (S.busy ? ' disabled' : '') + '><span></span></button></div>';
+        '<button type="button" class="sw' + (p.on ? ' on' : '') + '" role="switch" aria-checked="' + p.on + '" aria-label="Zeitplan ' + n + ' aktiv" data-a="sched-tog" data-x="' + n + '"' + (S.busy ? ' disabled' : '') + '><span></span></button>' +
+        '<button type="button" class="sdel" data-a="sched-askdel" data-x="' + n + '" aria-label="Zeitplan ' + n + ' löschen"' + (S.busy ? ' disabled' : '') + '>' + icon('trash', 18) + '</button></div>';
     }
     if (!list.length) h += '<p class="muted">Noch kein Zeitplan angelegt.</p>';
     if (free) h += '<button type="button" class="sadd" data-a="sched-new" data-x="' + firstFree + '">+ Zeitplan (' + list.length + ' von ' + (list.length + free) + ')</button>';
@@ -737,6 +799,27 @@
       '<div class="prog"><div style="width:' + (w.step / 3 * 100) + '%"></div></div>' + body + '<div class="foot">' + foot + '</div>', 'wiz');
   }
 
+  // Batterie: aktueller Satz (seit wann, Zähler), "Batterien gewechselt" mit Rückfrage, Verlauf der letzten 3 Wechsel
+  function viewBattery() {
+    if (!has('button/Batterien gewechselt')) return '';
+    const b = battInfo() || { since: 0, motor: 0, conn: 0, hist: [] };
+    const now = Date.now() / 1000, low = on('binary_sensor/Batterie schwach');
+    const m = has('sensor/Motorläufe') ? val('sensor/Motorläufe', b.motor) : b.motor, c = has('sensor/Verbindungsaufbauten') ? val('sensor/Verbindungsaufbauten', b.conn) : b.conn;
+    let h = '<h3>Batterie</h3><p class="since">' + (b.since ? 'Aktuelle Batterien seit <b>' + fmtDate(b.since, true) + '</b> · ' + days(b.since, now) + ' im Gerät' : 'Gezählt ab dem ersten Start mit Uhrzeit') +
+      (has('binary_sensor/Batterie schwach') ? ' · Zustand <b class="' + (low ? 'bad' : 'ok') + '">' + (low ? 'schwach' : 'OK') + '</b>' : '') + '</p>' +
+      '<div class="bcur"><div><span>Motorläufe</span><b>' + fmtInt(m) + '</b></div><div><span>Verbindungen</span><b>' + fmtInt(c) + '</b></div><div><span>Tage</span><b>' +
+      (b.since ? Math.max(0, Math.floor((now - b.since) / 86400)) : '–') + '</b></div></div>';
+    h += S.confirm === 'batt' ?
+      '<div class="bconf"><b>Batterien gewechselt?</b><span>Die Zähler werden auf 0 gesetzt, der jetzige Satz kommt in den Verlauf (' + (b.since ? fmtDate(b.since) + '–' + fmtDate(now, true) + ' · ' : '') +
+        fmtInt(m) + ' Motorläufe · ' + fmtInt(c) + ' Verbindungen).</span><div class="foot">' + btn('no-batt', 'Abbrechen', 'b') + btn('batt', 'Ja, gewechselt', 'b pri') + '</div></div>' :
+      btn('ask-batt', icon('battery', 18) + 'Batterien gewechselt', 'b bwide');
+    if (b.hist.length) {
+      h += '<h4 class="bh">Letzte Batteriewechsel</h4><div class="bhist">' + b.hist.map((x) =>
+        '<div><b>' + (x.start ? fmtDate(x.start, x.end && new Date(x.start * 1000).getFullYear() !== new Date(x.end * 1000).getFullYear()) : '?') + ' – ' + fmtDate(x.end, true) +
+        (x.start && x.end ? ' · ' + days(x.start, x.end) : '') + '</b><span><strong>' + fmtInt(x.motor) + '</strong> Motorläufe · <strong>' + fmtInt(x.conn) + '</strong> Verbindungen</span></div>').join('') + '</div>';
+    }
+    return card(h);
+  }
   function viewMore() {
     if (S.pair) return viewPair();
     const grp = (title, items) => { const inner = items.filter(Boolean).join(''); return inner ? card('<h3>' + title + '</h3>' + inner) : ''; };
@@ -754,6 +837,7 @@
         '<p class="muted small">„Öffnen“ und „Umschalten“ schließen nur auf, die Klinke drückt man selbst.</p>'),
       num('number/Ausgewogen: Verbindungsabstand', 'Ausgewogen: Abstand'), num('number/Sparsam: Trennen nach Leerlauf', 'Sparsam: trennen nach'),
       num('number/Sparsam: Status-Abfrage alle', 'Sparsam: Status alle')]);
+    h += viewBattery();
     h += grp('Fingerprint', [choice('select/Standard-Aktion (Finger ohne Zuordnung)', 'Standard-Aktion'), toggle('switch/Klingel bei unbekanntem Finger', 'Klingel bei unbekanntem Finger'),
       toggle('switch/Bei Berührung vorab verbinden', 'Bei Berührung vorab verbinden (Sparmodus)'),
       has('switch/Bei Berührung vorab verbinden') ? '<p class="muted small">Baut schon beim Auflegen die Verbindung zum Schloss auf – der Befehl geht dann schneller raus. Höchstens einmal pro Minute.</p>' : '',
@@ -845,6 +929,7 @@
       const keepVal = key ? a.value : null;
       const sy = root.scrollTop;
       root.classList.toggle('swapc', txt('select/Zustandsfarben') === 'Verriegelt rot');
+      root.style.setProperty('--ph', -Math.round(performance.now() % 600000) + 'ms');   // Animationen laufen über Neuzeichnen hinweg weiter
       root.innerHTML = page();
       root.scrollTop = sy;
       if (key) {
@@ -894,6 +979,16 @@
       case 'sc-day': S.sheet.mask ^= 1 << +x; break;
       case 'sc-pre': S.sheet.mask = +x; break;
       case 'ask-sched': S.confirm = 'sched'; break;
+      case 'ask-batt': S.confirm = 'batt'; break;
+      case 'no-batt': S.confirm = ''; break;
+      case 'batt': S.confirm = ''; return run([['button/Batterien gewechselt', 'press']], 'Batterien gewechselt – Zähler auf 0');
+      case 'sched-askdel': {   // Mülleimer: Zeile fragt nach, springt nach 5 s ohne Antwort zurück
+        S.confirm = 'sdel' + x; const c = S.confirm;
+        clearTimeout(S.sdelT); S.sdelT = setTimeout(() => { if (S.confirm === c) { S.confirm = ''; draw(); } }, 5000);
+        break;
+      }
+      case 'sched-nodel': S.confirm = ''; break;
+      case 'sched-del': S.confirm = ''; return run([[schedId(+x), 'set', { value: '' }]], 'Zeitplan gelöscht');
       case 'sc-del': { const s = S.sheet; S.sheet = null; S.confirm = ''; return run([[schedId(s.n), 'set', { value: '' }]], 'Zeitplan gelöscht'); }
       case 'sc-save': {
         const s = S.sheet;
@@ -1011,8 +1106,8 @@ color-scheme:light;position:fixed;inset:0;overflow-y:auto;background:var(--bg);c
 html[data-eqa-theme=dark] #eqa{color-scheme:dark;--bg:#08090C;--card:#1B1F27;--fg:#E6E9EF;--muted:#9AA3B2;--line:#333A48;--soft:#20242D;--acc:#6EA0FF;--accs:#1E2F57;--acci:#D6E4FF;--bline:#46506A;
 --lk:#4ADE80;--lkb:#12301F;--ul:#F87171;--ulb:#3A1717;--op:#7AA7FF;--opb:#172645;--mv:#CBD5E1;--mvb:#252A33;--wr:#FCD34D;--wrb:#3A2E10;--pu:#C4B5FD;--pub:#2A2142}
 #eqa{--sl:var(--lk);--slb:var(--lkb);--su:var(--ul);--sub:var(--ulb);--hpon:#fff}
-@media (prefers-color-scheme:dark){html:not([data-eqa-theme=light]) #eqa{--hpon:#0B0D12}html:not([data-eqa-theme=light]) #eqa .house.hmv{--s:#9CA3AF;--sbg:#252A33}html:not([data-eqa-theme=light]) #eqa .house.hwr{--s:#FACC15;--sbg:#3A3212}}
-html[data-eqa-theme=dark] #eqa{--hpon:#0B0D12}html[data-eqa-theme=dark] #eqa .house.hmv{--s:#9CA3AF;--sbg:#252A33}html[data-eqa-theme=dark] #eqa .house.hwr{--s:#FACC15;--sbg:#3A3212}
+@media (prefers-color-scheme:dark){html:not([data-eqa-theme=light]) #eqa{--hpon:#0B0D12;--nedge:#E8FBFF;--npulse:#E8FBFF;--nglass:.42;--nglow:.42;--nkey:#0A1030;--nfilt:url(#eqnD)}}
+html[data-eqa-theme=dark] #eqa{--hpon:#0B0D12;--nedge:#E8FBFF;--npulse:#E8FBFF;--nglass:.42;--nglow:.42;--nkey:#0A1030;--nfilt:url(#eqnD)}
 #eqa.swapc{--sl:var(--ul);--slb:var(--ulb);--su:var(--lk);--sub:var(--lkb)}
 html:not(.eqa-expert) esp-app{display:none}html.eqa-expert #eqa{display:none}
 #eqa-back{position:fixed;right:16px;bottom:16px;z-index:20;display:none;min-height:44px;padding:0 16px;border:0;border-radius:12px;background:#1D4ED8;color:#fff;font:600 14px system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer}
@@ -1020,7 +1115,7 @@ html.eqa-expert #eqa-back{display:block}
 #eqa *{box-sizing:border-box}#eqa h1{margin:0;font-size:20px;font-weight:700}#eqa h2{margin:0 0 8px;font-size:17px;font-weight:700}#eqa h3{margin:0 0 10px;padding-bottom:8px;border-bottom:2px solid var(--accs);font-size:16px;font-weight:700;color:var(--acci)}
 #eqa p{margin:6px 0}#eqa .muted{color:var(--muted)}#eqa .small{font-size:12px}#eqa .note{font-size:13px;color:var(--wr)}#eqa .knauf{display:flex;gap:10px;align-items:flex-start;margin-top:14px;padding:12px 14px;border-radius:12px;background:var(--wrb);color:var(--wr);border:1.5px solid var(--wr)}#eqa .knauf b{display:block;font-size:15px;margin-bottom:2px}#eqa .knauf span{font-size:14px;line-height:1.35}#eqa .knauf svg{flex:none;margin-top:1px}#eqa .knauf.sm{margin-top:8px;padding:10px 12px}#eqa .knauf.sm span{font-size:13px}
 #eqa header{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:14px 16px;background:var(--card);border-bottom:1px solid var(--line)}
-#eqa .hlock{width:46px;height:46px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none}#eqa .hlock.klk{background:var(--slb);color:var(--sl)}#eqa .hlock.kul{background:var(--sub);color:var(--su)}#eqa .hlock.kop{background:var(--opb);color:var(--op)}#eqa .hlock.kmv{background:var(--mvb);color:var(--mv)}#eqa .hlock.kwr{background:var(--wrb);color:var(--wr)}#eqa .hstate{font:700 13px system-ui,sans-serif}#eqa .hstate.tlk{color:var(--sl)}#eqa .hstate.tul{color:var(--su)}#eqa .hstate.top{color:var(--op)}#eqa .hstate.tmv{color:var(--mv)}#eqa .hstate.twr{color:var(--wr)}#eqa .hright{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none}#eqa .hseg{display:flex;gap:6px}#eqa .hseg button{width:36px;height:36px;border-radius:50%;border:1.5px solid var(--line);background:var(--card);color:var(--muted);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}#eqa .hseg button.sel{border:2px solid var(--acc);background:var(--accs);color:var(--acci);box-shadow:0 0 0 3px var(--accs)}#eqa .hclock{display:inline-flex;align-items:center;gap:5px;font:700 13px system-ui,sans-serif;font-variant-numeric:tabular-nums;color:var(--muted)}#eqa .hclock.bad{color:var(--wr)}#eqa .tile.bt{min-width:0}#eqa .tile.bt span{display:flex;align-items:center;gap:5px}#eqa .tile.bt span svg{flex:none}#eqa .tile.bt b{white-space:normal;font-size:13px;line-height:1.25;overflow-wrap:break-word}#eqa .tile.bt small{font-size:11px;color:var(--muted)}#eqa .tile.bt.g b,#eqa .tile.bt.g span svg{color:var(--lk)}#eqa .tile.bt.bl b{color:var(--op)}#eqa .tile.bt.bl span svg{color:var(--op);animation:eqpulse 1.2s ease-in-out infinite}@keyframes eqpulse{50%{opacity:.25}}#eqa .tile.bt.rt span svg{animation:eqpulse 1.2s ease-in-out infinite}#eqa .tile.bt.n b{color:var(--muted)}#eqa .tile.bt.y{background:var(--wrb);border-color:var(--wr)}#eqa .tile.bt.y b,#eqa .tile.bt.y span{color:var(--wr)}#eqa .tile.bt.r{background:var(--ulb);border-color:var(--ul)}#eqa .tile.bt.r b,#eqa .tile.bt.r span{color:var(--ul)}
+#eqa .hlock{width:46px;height:46px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none}#eqa .hlock.klk{background:var(--slb);color:var(--sl)}#eqa .hlock.kul{background:var(--sub);color:var(--su)}#eqa .hlock.kop{background:var(--opb);color:var(--op)}#eqa .hlock.kmv{background:var(--mvb);color:var(--mv)}#eqa .hlock.kwr{background:var(--wrb);color:var(--wr)}#eqa .hstate{font:700 13px system-ui,sans-serif}#eqa .hstate.tlk{color:var(--sl)}#eqa .hstate.tul{color:var(--su)}#eqa .hstate.top{color:var(--op)}#eqa .hstate.tmv{color:var(--mv)}#eqa .hstate.twr{color:var(--wr)}#eqa .hright{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none}#eqa .hseg{display:flex;gap:6px}#eqa .hseg button{width:36px;height:36px;border-radius:50%;border:1.5px solid var(--line);background:var(--card);color:var(--muted);display:inline-flex;align-items:center;justify-content:center;cursor:pointer}#eqa .hseg button.sel{border:2px solid var(--acc);background:var(--accs);color:var(--acci);box-shadow:0 0 0 3px var(--accs)}#eqa .hclock{display:inline-flex;align-items:center;gap:5px;font:700 13px system-ui,sans-serif;font-variant-numeric:tabular-nums;color:var(--muted)}#eqa .hclock.bad{color:var(--wr)}#eqa .tile.cnt b{font-size:22px;font-variant-numeric:tabular-nums}#eqa .tile.cnt span{display:flex;align-items:center;gap:5px}#eqa .tile.cnt small{font-size:11.5px;color:var(--muted)}#eqa .tile.bt{min-width:0}#eqa .tile.bt span{display:flex;align-items:center;gap:5px}#eqa .tile.bt span svg{flex:none}#eqa .tile.bt b{white-space:normal;font-size:13px;line-height:1.25;overflow-wrap:break-word}#eqa .tile.bt small{font-size:11px;color:var(--muted)}#eqa .tile.bt.g b,#eqa .tile.bt.g span svg{color:var(--lk)}#eqa .tile.bt.bl b{color:var(--op)}#eqa .tile.bt.bl span svg{color:var(--op);animation:eqpulse 1.2s ease-in-out infinite}@keyframes eqpulse{50%{opacity:.25}}#eqa .tile.bt.rt span svg{animation:eqpulse 1.2s ease-in-out infinite}#eqa .tile.bt.n b{color:var(--muted)}#eqa .tile.bt.y{background:var(--wrb);border-color:var(--wr)}#eqa .tile.bt.y b,#eqa .tile.bt.y span{color:var(--wr)}#eqa .tile.bt.r{background:var(--ulb);border-color:var(--ul)}#eqa .tile.bt.r b,#eqa .tile.bt.r span{color:var(--ul)}
 #eqa .brand{display:flex;flex-direction:column;flex:1;min-width:0}#eqa .brand h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #eqa main{max-width:1100px;margin:0 auto;padding:16px 16px 96px}
 #eqa nav.top{display:none;gap:4px}#eqa nav.bottom{position:fixed;left:0;right:0;bottom:0;z-index:5;display:flex;background:var(--card);border-top:1px solid var(--line);padding:4px 6px calc(6px + env(safe-area-inset-bottom))}
@@ -1042,29 +1137,29 @@ color:var(--muted);font:600 12px system-ui,sans-serif;font-variant-numeric:tabul
 #eqa .hver i{width:6px;height:6px;border-radius:50%;background:var(--acc);margin-left:2px}
 @keyframes eqglow{0%,100%{box-shadow:0 0 0 2px color-mix(in srgb,var(--acc) 25%,transparent)}50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--acc) 30%,transparent),0 0 12px color-mix(in srgb,var(--acc) 55%,transparent)}}
 @media (prefers-reduced-motion:reduce){#eqa .hver.new{animation:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--acc) 30%,transparent)}}
-#eqa .house{--s:var(--mv);--sbg:var(--mvb);position:relative;width:340px;max-width:100%;aspect-ratio:340/290;margin:4px auto 0}
-#eqa .house.hlk{--s:var(--sl);--sbg:var(--slb)}#eqa .house.hul{--s:var(--su);--sbg:var(--sub)}#eqa .house.hop{--s:var(--op);--sbg:var(--opb)}
-#eqa .house.hmv{--s:#6B7280;--sbg:#EEF0F3}#eqa .house.hwr{--s:#CA8A04;--sbg:#FEF9C3}
-#eqa .house>svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
-#eqa .house .hbody{fill:var(--sbg);stroke:var(--s);stroke-width:7;stroke-linejoin:round}
-#eqa .house .htr{fill:none;stroke:var(--s);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
-#eqa .house .hnd{fill:var(--card);stroke:var(--s);stroke-width:3}
-/* Knoten-Welle: Bahn und Knoten leuchten zeitversetzt auf (animation-delay je Element, siehe HOUSE_TRACES) */
-#eqa .house.wave .htr{animation:eqwave-tr 1.8s ease-in-out infinite}
-#eqa .house.wave .hnd{animation:eqwave-nd 1.8s ease-in-out infinite}
-@keyframes eqwave-tr{0%,70%,100%{stroke:var(--s);stroke-width:3;opacity:1}30%{stroke:var(--pu);stroke-width:4.5;opacity:1}}
-@keyframes eqwave-nd{0%,70%,100%{fill:var(--card);stroke:var(--s)}30%{fill:var(--pu);stroke:var(--pu)}}
-@media (prefers-reduced-motion:reduce){#eqa .house.wave .htr,#eqa .house.wave .hnd{animation:none;stroke:var(--pu)}}
-#eqa .hmid{position:absolute;left:23%;right:23%;top:33%;text-align:center;color:var(--fg);display:flex;flex-direction:column;align-items:center;gap:2px}
-#eqa .hmid svg{color:var(--s)}#eqa .hmid.ws{top:29%}
-#eqa .hmid b{font-size:24px;font-weight:700;line-height:1.15;letter-spacing:-.01em}#eqa .hmid b.lg{font-size:20px}
-#eqa .hmid small{font-size:13px;color:var(--muted);line-height:1.3}
-#eqa .house.hmv .hmid svg{animation:eqspin 1.2s linear infinite}
-@keyframes eqspin{to{transform:rotate(360deg)}}
-#eqa .hdoor{position:absolute;left:50%;bottom:4px;transform:translateX(-50%);width:84px;height:92px;border:0;border-radius:42px 42px 14px 14px;background:var(--card);color:var(--op);
-display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font:600 14px system-ui,sans-serif;cursor:pointer;
-box-shadow:0 0 0 3px var(--s),0 0 0 6px var(--card),0 4px 12px rgba(0,0,0,.25)}
-#eqa .hdoor:active{transform:translateX(-50%) scale(.96)}
+/* Neon-Glasschloss (Startseite) – ohne eigenen Hintergrund, Farben je Tag/Nacht über Variablen */
+#eqa{--nedge:currentColor;--npulse:currentColor;--nglass:.24;--nglow:.22;--nkey:#0F172A;--nfilt:url(#eqnL);--nbase:.55}
+#eqa .nlock{color:var(--sl);width:300px;max-width:100%;margin:6px auto 0}
+#eqa .nlock svg{display:block;width:100%;height:auto;overflow:visible}
+#eqa .s-ul{color:var(--su)}#eqa .s-mv{color:#D97706}#eqa .s-wr{color:#CA8A04}#eqa .s-np{color:#9CA3AF}
+#eqa .nlock .ne{filter:var(--nfilt)}
+#eqa .nlock .ncore{fill:currentColor;opacity:var(--nglow);animation:eqnglow 2.2s ease-in-out infinite;animation-delay:var(--ph,0ms)}
+#eqa .nlock .ntr{fill:none;stroke-linecap:round;stroke-linejoin:round}
+#eqa .nlock .nbase{stroke:currentColor;stroke-width:2.2;opacity:var(--nbase)}
+#eqa .nlock .nvia .v{fill:var(--card);stroke:currentColor;stroke-width:2}#eqa .nlock .nvia .vd{fill:currentColor}
+#eqa .nlock .npuls path{stroke:var(--npulse);stroke-width:2.6;stroke-dasharray:8 200;stroke-dashoffset:108;animation:eqflow 2.6s linear infinite}
+#eqa .nlock.s-mv .npuls path{animation-duration:1.3s}
+#eqa .nlock .nshk-f{fill:none;stroke:currentColor;stroke-width:15;stroke-opacity:.3}
+#eqa .nlock .nshk-e{fill:none;stroke:var(--nedge);stroke-width:2.2;stroke-linejoin:round}
+#eqa .nlock .nbg{fill:var(--card)}
+#eqa .nlock .nbody{fill:currentColor;fill-opacity:var(--nglass);stroke:var(--nedge);stroke-width:2.4}
+#eqa .nlock .nsp{fill:#fff}#eqa .nlock .nkey{fill:var(--nkey)}
+@keyframes eqflow{from{stroke-dashoffset:108}to{stroke-dashoffset:-60}}
+@keyframes eqnglow{0%,100%{opacity:calc(var(--nglow) * .4)}50%{opacity:var(--nglow)}}
+@keyframes eqshk{from{transform:translateY(var(--y0))}to{transform:translateY(var(--y1))}}
+@media (prefers-reduced-motion:reduce){#eqa .nlock .npuls{display:none}#eqa .nlock .ncore{animation:none}}
+#eqa .nlbl{text-align:center;color:var(--sl);margin:2px 0 4px}#eqa .nlbl.s-ul{color:var(--su)}#eqa .nlbl.s-mv{color:#D97706}#eqa .nlbl.s-wr{color:#CA8A04}#eqa .nlbl.s-np{color:#9CA3AF}
+#eqa .nlbl b{display:block;font-size:26px;font-weight:800;letter-spacing:-.01em}#eqa .nlbl small{display:block;font-size:13px;color:var(--muted);margin-top:2px}
 #eqa .hstand{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:2px}
 #eqa .hchip{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:8px;font-size:13px;font-weight:600;background:var(--soft);color:var(--fg)}
 #eqa .hchip svg{flex:none}
@@ -1072,8 +1167,9 @@ box-shadow:0 0 0 3px var(--s),0 0 0 6px var(--card),0 4px 12px rgba(0,0,0,.25)}
 #eqa .hchip.cold{background:var(--wrb);color:var(--wr)}
 #eqa .href{display:inline-flex;align-items:center;gap:5px;min-height:30px;padding:0 12px;border-radius:8px;border:1.5px solid var(--line);background:var(--card);color:var(--fg);font:600 13px system-ui,sans-serif;cursor:pointer}
 #eqa .hnote{font-size:13px;color:var(--muted);text-align:center;margin:12px 8px 0}
-#eqa .hacts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;padding:4px}
-#eqa .hp{min-height:54px;border:0;border-radius:999px;display:flex;align-items:center;justify-content:center;gap:8px;font:600 16px system-ui,sans-serif;cursor:pointer}
+#eqa .hacts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:12px;padding:4px}
+#eqa .hp{min-height:58px;border:0;border-radius:999px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font:700 15px system-ui,sans-serif;cursor:pointer}
+#eqa .hp.op{background:var(--opb);color:var(--op);box-shadow:0 0 0 2px var(--card),0 0 0 4px var(--op)}#eqa .hp.op.on{background:var(--op);color:var(--hpon)}
 #eqa .hp.zu{background:var(--slb);color:var(--sl);box-shadow:0 0 0 2px var(--card),0 0 0 4px var(--sl)}
 #eqa .hp.auf{background:var(--sub);color:var(--su);box-shadow:0 0 0 2px var(--card),0 0 0 4px var(--su)}
 #eqa .hp.zu.on{background:var(--sl);color:var(--hpon)}#eqa .hp.auf.on{background:var(--su);color:var(--hpon)}
@@ -1155,6 +1251,14 @@ box-shadow:0 0 0 3px var(--s),0 0 0 6px var(--card),0 4px 12px rgba(0,0,0,.25)}
 #eqa .stime{font:700 24px system-ui,sans-serif;font-variant-numeric:tabular-nums;min-width:72px}
 #eqa .sdays{display:flex;gap:2px;flex:1;min-width:0}#eqa .sdays span{width:17px;text-align:center;font:700 12px system-ui,sans-serif;color:var(--bline)}#eqa .sdays span.on{color:var(--acci)}
 #eqa .sbad{display:flex;flex-direction:column;min-width:0}#eqa .sbad small{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#eqa .sdel{flex:none;width:38px;height:38px;border-radius:10px;border:1.5px solid color-mix(in srgb,var(--ul) 35%,transparent);background:var(--ulb);color:var(--ul);display:flex;align-items:center;justify-content:center;cursor:pointer}
+#eqa .srow.ask{background:var(--ulb);border-color:var(--ul);padding:8px 10px}#eqa .srow.ask .sq{flex:1;font-weight:700;color:var(--ul);padding-left:6px}
+#eqa .since{font-size:13px;color:var(--muted);margin:0 0 8px}#eqa .since b.ok{color:var(--lk)}#eqa .since b.bad{color:var(--ul)}
+#eqa .bcur{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px}#eqa .bcur div{background:var(--soft);border-radius:12px;padding:8px 10px}
+#eqa .bcur span{display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}#eqa .bcur b{font-size:20px;font-variant-numeric:tabular-nums}
+#eqa .bwide{width:100%;justify-content:center;border-color:var(--acc);background:var(--accs);color:var(--acci)}#eqa .bconf{background:var(--wrb);border:1.5px solid #F59E0B;border-radius:12px;padding:10px 12px;color:var(--wr);font-size:13.5px}#eqa .bconf b{display:block}
+#eqa .bh{font-size:14px;margin:16px 0 8px;color:var(--acci)}#eqa .bhist{display:flex;flex-direction:column;gap:8px}
+#eqa .bhist div{border:1px solid var(--line);border-radius:12px;padding:8px 10px}#eqa .bhist b{display:block;font-size:13.5px}#eqa .bhist span{font-size:13px;color:var(--muted)}#eqa .bhist strong{color:var(--fg);font-variant-numeric:tabular-nums}
 #eqa .sadd{min-height:52px;border:1.5px dashed var(--bline);border-radius:16px;background:transparent;color:var(--acci);font:700 15px system-ui,sans-serif;cursor:pointer}
 #eqa .stbig{display:block;width:100%;text-align:center;font-size:44px;margin:4px 0 8px}
 #eqa .presets{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}#eqa .presets .chip{min-height:34px;font-weight:600}

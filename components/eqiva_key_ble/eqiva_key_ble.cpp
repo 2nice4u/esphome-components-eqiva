@@ -25,8 +25,10 @@ void EqivaKeyBle::setup() {
   BLEClientBase::setup();
   this->set_interval("eqiva_events", 1000, [this]() { this->ev_tick_(); });
   this->persist_load_();                 // Ereignisse/Reaktionszeiten vom letzten Start
+  this->cnt_load_();                     // Zähler seit dem letzten Batteriewechsel
   this->publish_events_();
   this->publish_reaction_list_();
+  this->publish_counters_();
   if (this->simulate_) {
     // Simulation: kein BLE-Verbindungsaufbau, nur nachgebildetes Schloss
     this->set_auto_connect(false);
@@ -1012,7 +1014,12 @@ void EqivaKeyBle::on_lock_state_(uint8_t st) {
     this->publish_(this->last_status_sensor_, iso);
   }
   // Motorlauf überwachen: über 10 s (Öffnen 15 s) = Antrieb falsch eingestellt oder nicht kalibriert
-  if (st == 1 && !moving_) { moving_ = true; moving_since_ = now; moving_open_ = ev_pending_ == OPEN; }
+  if (st == 1 && !moving_) {
+    moving_ = true; moving_since_ = now; moving_open_ = ev_pending_ == OPEN;
+    cnt_motor_++;                        // Zähler Motorläufe (seit Batteriewechsel)
+    this->publish_counters_();
+    this->cnt_save_();
+  }
   if (st != 1 && moving_) {
     moving_ = false;
     const uint32_t run = now - moving_since_;
@@ -1144,6 +1151,11 @@ void EqivaKeyBle::ev_tick_() {
   // Berührung ohne Folge (unbekannter Finger, falsche Erkennung, Fehlversuch-Sperre …): verfällt ungenutzt
   if (touch_pending_ && (millis() - touch_ms_) >= touch_window_()) { touch_pending_ = false; touch_hold_ = false; }
   // Tageswechsel: gestrige Einträge bekommen ihr Datum
+  // Zähler: Startdatum nachtragen, sobald die Uhrzeit bekannt ist (erster Start mit Zählern / Wechsel ohne Uhrzeit)
+  if (cnt_since_ == 0) {
+    const time_t n = ::time(nullptr);
+    if (n > 1600000000) { cnt_since_ = (uint32_t) n; this->publish_counters_(); this->cnt_save_(); }
+  }
   static int last_yday = -1;
   time_t now = ::time(nullptr);
   struct tm lt;
@@ -1218,6 +1230,57 @@ void EqivaKeyBle::persist_save_() {
   persist_pref_.save(&p);
 }
 
+static const uint32_t COUNTER_KEY = 0xE91A3601;   // Zähler + Batteriewechsel (Version 1)
+
+void EqivaKeyBle::cnt_load_() {
+  cnt_pref_ = global_preferences->make_preference<PersistCnt>(COUNTER_KEY);
+  PersistCnt p{};
+  if (cnt_pref_.load(&p) && p.ver == 1 && p.n_hist <= 3) {
+    cnt_since_ = p.since; cnt_motor_ = p.motor; cnt_connects_ = p.connects; batt_n_ = p.n_hist;
+    for (uint8_t i = 0; i < 3; i++) batt_hist_[i] = p.hist[i];
+    ESP_LOGI(TAG, "Zähler seit Batteriewechsel: %u Motorläufe, %u Verbindungen", (unsigned) cnt_motor_, (unsigned) cnt_connects_);
+  }
+}
+
+void EqivaKeyBle::cnt_save_() {
+  PersistCnt p{};
+  p.ver = 1; p.n_hist = batt_n_; p.since = cnt_since_; p.motor = cnt_motor_; p.connects = cnt_connects_;
+  for (uint8_t i = 0; i < 3; i++) p.hist[i] = batt_hist_[i];
+  cnt_pref_.save(&p);
+}
+
+void EqivaKeyBle::publish_counters_() {
+  if (this->motor_runs_sensor_ != nullptr && this->motor_runs_sensor_->get_state() != (float) cnt_motor_)
+    this->motor_runs_sensor_->publish_state(cnt_motor_);
+  if (this->connects_sensor_ != nullptr && this->connects_sensor_->get_state() != (float) cnt_connects_)
+    this->connects_sensor_->publish_state(cnt_connects_);
+  if (this->battery_info_sensor_ == nullptr) return;
+  char buf[48];
+  snprintf(buf, sizeof(buf), "1|%u|%u|%u", (unsigned) cnt_since_, (unsigned) cnt_motor_, (unsigned) cnt_connects_);
+  std::string s = buf;
+  for (uint8_t i = 0; i < batt_n_; i++) {
+    snprintf(buf, sizeof(buf), ";%u|%u|%u|%u", (unsigned) batt_hist_[i].start, (unsigned) batt_hist_[i].end,
+             (unsigned) batt_hist_[i].motor, (unsigned) batt_hist_[i].connects);
+    s += buf;
+  }
+  this->publish_(this->battery_info_sensor_, s);
+}
+
+void EqivaKeyBle::battery_changed() {
+  time_t now = ::time(nullptr);
+  const uint32_t t = now > 1600000000 ? (uint32_t) now : 0;
+  // jetzigen Satz vorne in den Verlauf, ältester fällt raus
+  for (int i = 2; i > 0; i--) batt_hist_[i] = batt_hist_[i - 1];
+  batt_hist_[0] = {cnt_since_, t, cnt_motor_, cnt_connects_};
+  if (batt_n_ < 3) batt_n_++;
+  ESP_LOGI(TAG, "Batterien gewechselt – bisher %u Motorläufe, %u Verbindungen", (unsigned) cnt_motor_, (unsigned) cnt_connects_);
+  cnt_since_ = t; cnt_motor_ = 0; cnt_connects_ = 0;
+  this->publish_counters_();
+  this->cnt_save_();
+  global_preferences->sync();
+  this->log_event("🔋 Batterien gewechselt");
+}
+
 void EqivaKeyBle::forget_pairing() {
   ESP_LOGW(TAG, "Kopplung entfernt - Benutzer im Schloss bleibt angelernt (Eqiva-App oder Werksreset)");
   clear_pending_();
@@ -1280,6 +1343,9 @@ void EqivaKeyBle::conn_fail_(bool not_found) {
 }
 
 void EqivaKeyBle::conn_ok_() {
+  cnt_connects_++;                       // Zähler Verbindungsaufbauten (seit Batteriewechsel)
+  this->publish_counters_();
+  this->cnt_save_();
   if (unreachable_logged_) this->log_event("✓ Schloss wieder erreichbar");
   conn_fails_ = 0;
   unreachable_since_ = 0;
