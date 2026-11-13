@@ -29,7 +29,7 @@ namespace eqiva_key_ble {
 using namespace esp32_ble_client;
 
 // Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
-#define EQIVA_PATCH_VERSION "3.5.12"
+#define EQIVA_PATCH_VERSION "3.6.0"
 
 // Patch-Konstanten
 static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
@@ -115,6 +115,18 @@ class EqivaKeyBle : public BLEClientBase {
     void persist_load_();
     void persist_save_();
     void publish_reaction_list_();
+    // Zähler seit dem letzten Batteriewechsel + Verlauf der letzten 3 Wechsel (eigener NVS-Eintrag)
+    struct BattSet { uint32_t start; uint32_t end; uint32_t motor; uint32_t connects; };
+    struct PersistCnt { uint8_t ver; uint8_t n_hist; uint8_t pad[2]; uint32_t since; uint32_t motor; uint32_t connects; BattSet hist[3]; };
+    uint32_t cnt_since_{0};
+    uint32_t cnt_motor_{0};
+    uint32_t cnt_connects_{0};
+    BattSet batt_hist_[3]{};
+    uint8_t batt_n_{0};
+    ESPPreferenceObject cnt_pref_;
+    void cnt_load_();
+    void cnt_save_();
+    void publish_counters_();
     std::vector<PairedTrigger *> paired_triggers_;
     // --- Simulation (ohne Schloss, zum Testen von Fingerprint/Zeitplan/LED) ---
     bool simulate_{false};
@@ -283,6 +295,13 @@ class EqivaKeyBle : public BLEClientBase {
         // Reaktionszeit: vom Befehl bis das Schloss sich dreht (Sekunden, letzte 10 als Liste)
         void set_reaction_time_sensor(sensor::Sensor *s) { this->reaction_sensor_ = s; }
         void set_reaction_list_sensor(text_sensor::TextSensor *s) { this->reaction_list_sensor_ = s; }
+        // Zähler seit dem letzten Batteriewechsel: Motorläufe (jeder Wechsel auf MOVING) und Verbindungsaufbauten
+        void set_motor_runs_sensor(sensor::Sensor *s) { this->motor_runs_sensor_ = s; }
+        void set_connects_sensor(sensor::Sensor *s) { this->connects_sensor_ = s; }
+        // "1|seit|Motorläufe|Verbindungen;Start|Ende|Motorläufe|Verbindungen;…" (Unix-Zeit, 0 = unbekannt)
+        void set_battery_info_sensor(text_sensor::TextSensor *s) { this->battery_info_sensor_ = s; }
+        // Batterien gewechselt: jetzigen Satz in den Verlauf (max. 3), Zähler auf 0, Datum merken
+        void battery_changed();
         // Ereignisprotokoll: Eintrag mit Uhrzeit (sofern bekannt) hinzufügen
         void log_event(const std::string &text);
         // Auslöser für den nächsten Befehl setzen (z. B. "Max", "Zeitplan 1"); gilt 3 s, sonst "HA/Web"
@@ -340,6 +359,9 @@ class EqivaKeyBle : public BLEClientBase {
         text_sensor::TextSensor *events_sensor_{nullptr};
         sensor::Sensor *reaction_sensor_{nullptr};
         text_sensor::TextSensor *reaction_list_sensor_{nullptr};
+        sensor::Sensor *motor_runs_sensor_{nullptr};
+        sensor::Sensor *connects_sensor_{nullptr};
+        text_sensor::TextSensor *battery_info_sensor_{nullptr};
         uint32_t reaction_started_{0};
         bool reaction_pending_{false};
         bool reaction_cmd_sent_{false};      // Befehl ist wirklich beim Schloss (nicht nur zurückgehalten)

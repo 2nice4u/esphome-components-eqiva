@@ -1,206 +1,25 @@
 # ---------------------------------------------------------------
-# Statistik – Paket für eqiva-smart-lock-<nr>.yaml
-# Version 3.5.12 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
-# Einbinden:   packages:
-#                stats: !include eqiva-smart-lock-stats.yaml
+# Statistik – ENTFÄLLT ab 3.6.0 (leere Hülle)
+# Version 3.6.0 (2026-11-14) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 #
-# Zählt Motorfahrten, Verbindungsaufbauten und die verbundene Zeit.
-# Zum Vergleich der Energiemodi: Modus einstellen, "Statistik zurücksetzen",
-# einige Tage laufen lassen, Werte notieren, nächsten Modus testen.
-# Alle Werte bleiben über Neustarts und OTA erhalten. Bei Stromausfall geht höchstens die Zeit
-# seit dem letzten Speichern verloren (einstellbar: "Statistik: Speichern alle", Standard 15 min).
+# Die Zähler (Motorläufe, Verbindungsaufbauten) sind jetzt fest in der Komponente eingebaut und
+# werden mit "Batterien gewechselt" zurückgesetzt (Verlauf der letzten 3 Wechsel in der Web-App).
+# Diese Datei bleibt nur noch eine Version lang, damit eigene Hauptdateien mit
+#     use_stats: "true"
+#     - !include
+#       file: eqiva-smart-lock-stats.yaml
+#       condition: ${use_stats}
+# ohne Änderung weiter kompilieren. Bitte diese Zeilen in der eigenen Hauptdatei löschen –
+# in einer der nächsten Versionen fällt die Datei weg.
 # ---------------------------------------------------------------
 
 substitutions:
   version_check: "true"     # Standard, wird von der Hauptdatei überschrieben
 
-web_server:
-  sorting_groups:
-    - id: sg_stats
-      name: "Statistik"
-      sorting_weight: -2
-
-globals:
-  - id: stat_motor          # Motorfahrten (Wechsel nach MOVING)
-    type: uint32_t
-    restore_value: true
-    initial_value: '0'
-  - id: stat_connects       # erfolgreiche Verbindungsaufbauten
-    type: uint32_t
-    restore_value: true
-    initial_value: '0'
-  - id: stat_conn_s         # Sekunden mit bestehender Verbindung
-    type: uint32_t
-    restore_value: true
-    initial_value: '0'
-  - id: stat_total_s        # erfasste Sekunden insgesamt
-    type: uint32_t
-    restore_value: true
-    initial_value: '0'
-  - id: stat_was_moving
-    type: bool
-    initial_value: 'false'
-  # Zeit wird zuerst im RAM gesammelt und nur alle 15 min in den Flash übernommen
-  - id: stat_conn_ram
-    type: uint32_t
-    initial_value: '0'
-  - id: stat_total_ram
-    type: uint32_t
-    initial_value: '0'
-  - id: stat_minutes_since_save
-    type: uint32_t
-    initial_value: '0'
-
-# Vor Neustart/OTA die RAM-Werte noch übernehmen
-esphome:
-  on_shutdown:
-    - lambda: |-
-        id(stat_total_s) += id(stat_total_ram);
-        id(stat_conn_s) += id(stat_conn_ram);
-        id(stat_total_ram) = 0;
-        id(stat_conn_ram) = 0;
-        global_preferences->sync();
-
-# Interne Spiegel von Lock-Status und BLE-Status (die Hauptdatei bleibt unverändert)
-text_sensor:
-  - platform: copy
-    source_id: lock_status
-    id: stat_lock_mirror
-    internal: true
-    on_value:
-      - lambda: |-
-          const bool moving = (x == "MOVING");
-          if (moving && !id(stat_was_moving))
-            id(stat_motor) += 1;
-          id(stat_was_moving) = moving;
-  - platform: copy
-    source_id: ble_state
-    id: stat_ble_mirror
-    internal: true
-    on_value:
-      - lambda: |-
-          if (x == "ESTABLISHED")
-            id(stat_connects) += 1;
-
-# Zeit jede Minute im RAM erfassen und nach der eingestellten Zeit
-# ("Statistik: Speichern alle") in den Flash übernehmen
-interval:
-  - interval: 60s
-    then:
-      - lambda: |-
-          id(stat_total_ram) += 60;
-          if (id(ble_state).state == "ESTABLISHED")
-            id(stat_conn_ram) += 60;
-          id(stat_minutes_since_save) += 1;
-          if (id(stat_minutes_since_save) >= (uint32_t) id(stat_save_minutes).state) {
-            id(stat_total_s) += id(stat_total_ram);
-            id(stat_conn_s) += id(stat_conn_ram);
-            id(stat_total_ram) = 0;
-            id(stat_conn_ram) = 0;
-            id(stat_minutes_since_save) = 0;
-          }
-
-number:
-  - platform: template
-    name: "Statistik: Speichern alle"
-    id: stat_save_minutes
-    icon: "mdi:content-save-cog"
-    unit_of_measurement: "min"
-    mode: box
-    min_value: 1
-    max_value: 240
-    step: 1
-    initial_value: 15
-    optimistic: true
-    restore_value: true
-    entity_category: config
-    web_server:
-      sorting_group_id: sg_stats
-
-sensor:
-  - platform: template
-    name: "Statistik: Motorfahrten"
-    icon: "mdi:cog-transfer"
-    accuracy_decimals: 0
-    state_class: total_increasing
-    update_interval: 30s
-    filters:
-      - delta: 0.0   # nur bei Änderung senden
-    lambda: 'return (float) id(stat_motor);'
-    web_server:
-      sorting_group_id: sg_stats
-
-  - platform: template
-    name: "Statistik: Verbindungsaufbauten"
-    icon: "mdi:bluetooth-connect"
-    accuracy_decimals: 0
-    state_class: total_increasing
-    update_interval: 30s
-    filters:
-      - delta: 0.0   # nur bei Änderung senden
-    lambda: 'return (float) id(stat_connects);'
-    web_server:
-      sorting_group_id: sg_stats
-
-  - platform: template
-    name: "Statistik: Verbindungen pro Tag"
-    icon: "mdi:chart-line"
-    accuracy_decimals: 1
-    state_class: measurement
-    update_interval: 60s
-    lambda: |-
-      const float total = id(stat_total_s) + id(stat_total_ram);
-      if (total < 3600) return NAN;   // erst nach 1 h aussagekräftig
-      return id(stat_connects) / (total / 86400.0f);
-    web_server:
-      sorting_group_id: sg_stats
-
-  - platform: template
-    name: "Statistik: Anteil verbunden"
-    icon: "mdi:percent"
-    unit_of_measurement: "%"
-    accuracy_decimals: 1
-    state_class: measurement
-    update_interval: 60s
-    lambda: |-
-      const float total = id(stat_total_s) + id(stat_total_ram);
-      if (total == 0) return NAN;
-      return (id(stat_conn_s) + id(stat_conn_ram)) * 100.0f / total;
-    web_server:
-      sorting_group_id: sg_stats
-
-  - platform: template
-    name: "Statistik: Erfasst seit"
-    icon: "mdi:timer-outline"
-    unit_of_measurement: "h"
-    accuracy_decimals: 1
-    update_interval: 60s
-    lambda: 'return (id(stat_total_s) + id(stat_total_ram)) / 3600.0f;'
-    web_server:
-      sorting_group_id: sg_stats
-
-button:
-  - platform: template
-    name: "Statistik zurücksetzen"
-    icon: "mdi:restart"
-    entity_category: config
-    web_server:
-      sorting_group_id: sg_stats
-    on_press:
-      - lambda: |-
-          id(stat_motor) = 0;
-          id(stat_connects) = 0;
-          id(stat_conn_s) = 0;
-          id(stat_total_s) = 0;
-          id(stat_conn_ram) = 0;
-          id(stat_total_ram) = 0;
-          ESP_LOGI("stats", "Statistik zurückgesetzt");
-
-# Versionsprüfung (wird nie ausgeführt, nur beim Kompilieren geprüft)
 script:
   - id: ver_check_stats
     then:
       - lambda: |-
-          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.5.12") == 0,
-                        "Versionskonflikt: eqiva-smart-lock-stats.yaml ist 3.5.12, Hauptdatei ist ${config_version} "
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.6.0") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-stats.yaml ist 3.6.0, Hauptdatei ist ${config_version} "
                         "(alle Dateien gleicher Version verwenden oder version_check: false)");

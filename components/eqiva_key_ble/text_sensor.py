@@ -21,6 +21,7 @@ CONF_EVENTS = "events"
 CONF_REACTION_LIST = "reaction_list"
 CONF_BLE_STATUS = "ble_status"
 CONF_LAST_STATUS = "last_status"
+CONF_BATTERY_INFO = "battery_info"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -59,6 +60,11 @@ CONFIG_SCHEMA = cv.Schema(
             icon="mdi:clock-check-outline",
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
+        # Batteriesatz: eingelegt seit, Zähler und die letzten 3 Wechsel (für die App)
+        cv.Optional(CONF_BATTERY_INFO): text_sensor.text_sensor_schema(
+            icon="mdi:battery-sync",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
         # Reaktionszeiten der letzten 10 Bedienungen (Aktion|Sekunden|Quelle, mit "; " getrennt)
         cv.Optional(CONF_REACTION_LIST): text_sensor.text_sensor_schema(
             icon="mdi:timer-outline",
@@ -82,6 +88,7 @@ async def to_code(config):
         CONF_REACTION_LIST,
         CONF_BLE_STATUS,
         CONF_LAST_STATUS,
+        CONF_BATTERY_INFO,
     ]:
         if key not in config:
             continue

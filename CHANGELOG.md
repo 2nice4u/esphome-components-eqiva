@@ -23,6 +23,32 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.6.0 – 2026-11-14
+
+### Neu
+- **Neues Bedienfeld:** Statt des Hauses zeigt die Startseite ein gläsernes Neon-Schloss auf Leiterbahnen mit Vias, über die
+  Lichtimpulse laufen. Aufgeschlossen fährt der Bügel nach oben (rechts offen), verriegelt sitzt er unten. Grün/rot nach
+  Zustandsfarben, orange bei Motorlauf, gelb bei „unbekannt“. Ohne eigenen Hintergrund, mit eigener Tag- und Nachtdarstellung.
+  Darunter groß der Zustand und drei Knöpfe **Zu · Öffnen · Auf** nebeneinander (Öffnen war bisher die Haustür).
+- **Zähler Motorläufe und Verbindungsaufbauten**, fest in der Komponente (Kacheln auf der Startseite, Sensoren für HA).
+  Bleiben über Neustarts erhalten (im Flash, nur bei Änderung geschrieben).
+- **„Batterien gewechselt“** (Einstellungen → Batterie, mit Rückfrage): Zähler auf 0, Datum merken; die letzten 3 Wechsel
+  bleiben mit Zeitraum, Tagen, Motorläufen und Verbindungen als Verlauf stehen. Im Ereignisprotokoll steht „🔋 Batterien gewechselt“.
+- **Zeitpläne direkt löschen:** roter Mülleimer hinter jeder Zeile; die Zeile fragt nach und springt nach 5 s ohne Antwort zurück.
+
+### Entfällt
+- **Statistik-Paket:** Die Zähler sind jetzt fest eingebaut. `eqiva-smart-lock-stats.yaml` bleibt diese Version noch als leere
+  Hülle, damit eigene Hauptdateien weiter kompilieren. Die bisherigen Statistik-Werte werden nicht übernommen (Zählung beginnt bei 0).
+- Haus mit Leiterbahnen und Knoten-Welle (ersetzt durch das Schloss).
+
+### Update
+- Pakete, `app.js` und den Komponenten-Ordner ersetzen (im Release `components/`, lokal laut `path:`), flashen.
+- Eigene Hauptdateien: `config_version: "3.6.0"`. Neue Einträge übernehmen (sonst fehlen Zähler und Batterie-Bereich):
+  - unter `sensor: - platform: eqiva_key_ble` die Einträge `motor_runs:` („Motorläufe“) und `connects:` („Verbindungsaufbauten“),
+  - unter `text_sensor: - platform: eqiva_key_ble` den Eintrag `battery_info:` („Batterie-Info“),
+  - unter `button:` den Knopf „Batterien gewechselt“ (`id(key_ble)->battery_changed();`) – siehe Beispiel-Hauptdatei.
+- Die Zeilen `use_stats: …` und das Include von `eqiva-smart-lock-stats.yaml` können weg (in einer der nächsten Versionen Pflicht).
+
 ## 3.5.12 – 2026-11-12
 
 ### Neu

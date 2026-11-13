@@ -1,19 +1,18 @@
 # ---------------------------------------------------------------
 # Eqiva Smart Lock – ESP32-C3 + optional R503 Fingerprint
-# Version 3.5.12 (2026-11-12) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.6.0 (2026-11-14) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Für ein weiteres Schloss: Datei kopieren (eqiva-smart-lock-2.yaml),
 # lock_nr ändern und die vier !secret-Namen unten auf _2_ anpassen.
 # Schloss-spezifisches (MAC, Keys) wird nur in der Web-GUI eingetragen.
 # (!secret kann keine Substitutions verwenden).
 # ---------------------------------------------------------------
 substitutions:
-  config_version: "3.5.12"   # Version dieser Konfiguration (siehe Kopfzeile)
+  config_version: "3.6.0"   # Version dieser Konfiguration (siehe Kopfzeile)
   lock_nr: "1"
   # --- Funktionen ein-/ausschalten: true = an, false = aus ---
   # (Nicht vorhandene Hardware einfach auf false setzen, sonst nichts ändern.)
   use_fingerprint: "true"   # R503 Fingerprint
   use_status_led: "true"    # WS2812 Status-LED
-  use_stats: "true"         # Statistik (Motorfahrten, Verbindungen)
   use_schedule: "true"      # Zeitplan (Uhrzeit + Wochentage)
   # TESTMODUS: true = kein echtes Schloss, Zustände werden simuliert (Fingerprint/LED/Zeitplan testen).
   # Für den Betrieb am Schloss unbedingt wieder auf false stellen!
@@ -171,9 +170,6 @@ packages:
     file: eqiva-smart-lock-status-led.yaml    # WS2812 Status-LED (Pin: status_led_pin)
     condition: ${use_status_led}
   - !include
-    file: eqiva-smart-lock-stats.yaml         # Statistik (Motorfahrten, Verbindungen)
-    condition: ${use_stats}
-  - !include
     file: eqiva-smart-lock-schedule.yaml      # Zeitplan (Uhrzeit + Wochentage)
     condition: ${use_schedule}
   - !include
@@ -184,7 +180,7 @@ packages:
 # Bei einem Update die Nummer zusammen mit config_version anpassen (gleiche Version).
 # Alternativ lokal: source: { type: local, path: eqiva_components }
 external_components:
-  - source: github://2nice4u/esphome-components-eqiva@v3.5.12
+  - source: github://2nice4u/esphome-components-eqiva@v3.6.0
 
 # ---------------------------------------------------------------
 # Eqiva BLE
@@ -315,6 +311,17 @@ button:
       sorting_group_id: sg_ble
     on_press:
       - eqiva_key_ble.disconnect:
+
+  # Batterien gewechselt: Zähler (Motorläufe, Verbindungsaufbauten) auf 0, bisheriger Satz in den Verlauf (letzte 3)
+  - platform: template
+    id: battery_changed_btn
+    name: "Batterien gewechselt"
+    icon: "mdi:battery-sync"
+    entity_category: config
+    web_server:
+      sorting_group_id: sg_lock
+    on_press:
+      - lambda: 'id(key_ble)->battery_changed();'
 
   # Kopplung vergessen, z. B. wenn das Schloss getauscht wird. Danach neu pairen.
   # Der Benutzer bleibt im (alten) Schloss angelernt: austragen per Eqiva-App oder Werksreset.
@@ -591,6 +598,17 @@ sensor:
       id: reaction_time_sn
       web_server:
         sorting_group_id: sg_lock
+    # Zähler seit dem letzten Batteriewechsel (bleiben über Neustarts erhalten, Reset: "Batterien gewechselt")
+    motor_runs:
+      name: "Motorläufe"
+      id: motor_runs_sn
+      web_server:
+        sorting_group_id: sg_lock
+    connects:
+      name: "Verbindungsaufbauten"
+      id: connects_sn
+      web_server:
+        sorting_group_id: sg_lock
     rssi:
       name: "Schloss Signal"
       id: lock_rssi
@@ -759,6 +777,11 @@ text_sensor:
       icon: "mdi:bluetooth"
       web_server:
         sorting_group_id: sg_lock
+    battery_info:                    # Batteriesatz: seit wann, Zähler, letzte 3 Wechsel (für die App)
+      name: "Batterie-Info"
+      id: battery_info_txt
+      web_server:
+        sorting_group_id: sg_diag
     last_status:                     # Zeitpunkt der letzten Statusmeldung (App: "Stand: vor … min")
       name: "Letzte Statusmeldung"
       id: last_status_txt

@@ -11,7 +11,7 @@ Protokoll und Verschlüsselung sind unverändert. Die wichtigsten Änderungen:
 - **Ereignisse und Reaktionszeit:** alle Ereignisse mit Uhrzeit auf der Startseite, dazu die Zeit vom Befehl bis der Motor dreht, mit Ø, max und Ampel
 - **Pairing abgesichert:** bei Fehlschlag oder Abbruch bleibt die bisherige Kopplung, Hinweis „Schloss nicht erreichbar“
 - **Neu in der Komponente:** RSSI-Sensor der Verbindung, `on_paired`-Auslöser, klare Meldungen bei fehlendem Pairing oder Pairing-Modus
-- **Beispiel-Konfiguration** in [`examples/`](examples/): Energiemodi, Testmodus ohne Schloss und optionale Pakete für R503-Fingerprint, Status-LED, Statistik und bis zu 6 Zeitpläne (optional mit zufälliger Abweichung, offline per SNTP)
+- **Beispiel-Konfiguration** in [`examples/`](examples/): Energiemodi, Testmodus ohne Schloss und optionale Pakete für R503-Fingerprint, Status-LED und bis zu 6 Zeitpläne; Zähler für Motorläufe und Verbindungen mit Batteriewechsel-Verlauf (optional mit zufälliger Abweichung, offline per SNTP)
 
 Alle Details: [FORK-CHANGES.md](FORK-CHANGES.md)
 Versionen und Änderungen: [CHANGELOG.md](CHANGELOG.md)
@@ -38,12 +38,12 @@ Die Bilder zeigen Testdaten, keine echten Personen oder Bedienungen.
 1. Die Dateien aus [`examples/`](examples/) in den ESPHome-Ordner kopieren (meist `/config/esphome/`).
 2. [`secrets.example.yaml`](examples/secrets.example.yaml) als `secrets.yaml` übernehmen und ausfüllen.
 3. In `eqiva-smart-lock-1.yaml` oben unter `substitutions` die Pins und die gewünschten Pakete einstellen
-   (`use_fingerprint`, `use_status_led`, `use_stats`, `use_schedule`, `use_simulation`).
+   (`use_fingerprint`, `use_status_led`, `use_schedule`, `use_simulation`).
 4. Die Komponente wird direkt aus diesem Repository geladen, fest auf die Version der Beispiel-YAMLs:
 
    ```yaml
    external_components:
-     - source: github://2nice4u/esphome-components-eqiva@v3.5.12
+     - source: github://2nice4u/esphome-components-eqiva@v3.6.0
    ```
 
    YAMLs und Komponente gehören zusammen. Für ein Update die Dateien des neuen

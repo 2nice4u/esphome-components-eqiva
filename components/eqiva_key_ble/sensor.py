@@ -6,6 +6,7 @@ from esphome.const import (
     DEVICE_CLASS_SIGNAL_STRENGTH,
     ENTITY_CATEGORY_DIAGNOSTIC,
     STATE_CLASS_MEASUREMENT,
+    STATE_CLASS_TOTAL_INCREASING,
     UNIT_DECIBEL_MILLIWATT,
     UNIT_SECOND,
 )
@@ -15,6 +16,8 @@ DEPENDENCIES = ["eqiva_key_ble"]
 
 CONF_RSSI = "rssi"
 CONF_REACTION_TIME = "reaction_time"
+CONF_MOTOR_RUNS = "motor_runs"
+CONF_CONNECTS = "connects"
 
 # Patch: Empfangsstärke der aktiven BLE-Verbindung zum Schloss (keine MAC nötig)
 CONFIG_SCHEMA = cv.Schema(
@@ -34,6 +37,17 @@ CONFIG_SCHEMA = cv.Schema(
             device_class=DEVICE_CLASS_DURATION,
             state_class=STATE_CLASS_MEASUREMENT,
         ),
+        # Zähler seit dem letzten Batteriewechsel (gespeichert, Reset über battery_changed())
+        cv.Optional(CONF_MOTOR_RUNS): sensor.sensor_schema(
+            icon="mdi:cog-counterclockwise",
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_TOTAL_INCREASING,
+        ),
+        cv.Optional(CONF_CONNECTS): sensor.sensor_schema(
+            icon="mdi:bluetooth-connect",
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_TOTAL_INCREASING,
+        ),
     }
 )
 
@@ -46,3 +60,9 @@ async def to_code(config):
     if conf := config.get(CONF_REACTION_TIME):
         sens = await sensor.new_sensor(conf)
         cg.add(hub.set_reaction_time_sensor(sens))
+    if conf := config.get(CONF_MOTOR_RUNS):
+        sens = await sensor.new_sensor(conf)
+        cg.add(hub.set_motor_runs_sensor(sens))
+    if conf := config.get(CONF_CONNECTS):
+        sens = await sensor.new_sensor(conf)
+        cg.add(hub.set_connects_sensor(sens))
