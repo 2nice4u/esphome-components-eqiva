@@ -1063,7 +1063,9 @@ void EqivaKeyBle::on_lock_state_(uint8_t st) {
     } else if (conn_r + lock_r > ms_r) {
       conn_r = ms_r - lock_r;
     }
-    reaction_hist_.push_back({reaction_act_, (uint16_t) ms_r, (uint16_t) conn_r, (uint16_t) lock_r, reaction_src_});
+    const time_t t_now = ::time(nullptr);
+    reaction_hist_.push_back({reaction_act_, (uint16_t) ms_r, (uint16_t) conn_r, (uint16_t) lock_r, reaction_src_,
+                              t_now > 1600000000 ? (uint32_t) t_now : 0});
     if (reaction_hist_.size() > 10) reaction_hist_.erase(reaction_hist_.begin());
     if (this->reaction_sensor_ != nullptr) this->reaction_sensor_->publish_state(ms_r / 1000.0f);
     this->publish_reaction_list_();
@@ -1166,8 +1168,9 @@ void EqivaKeyBle::ev_tick_() {
 }
 
 
-// Liste "Reaktionszeiten": Aktion|Gesamt-s|Verbindung-s|Motor-s|Quelle, Einträge mit "; " getrennt
-// (z|4.1|3.2|0.4|Zeitplan 1; a|3.0|0.0|2.9|HA/Web). Fingerprint ergibt sich in der App als Rest.
+// Liste "Reaktionszeiten": Aktion|Gesamt-s|Verbindung-s|Motor-s|Quelle|Zeit, Einträge mit "; " getrennt
+// (z|4.1|3.2|0.4|Zeitplan 1|1794470400; a|3.0|0.0|2.9|HA/Web|0). Fingerprint ergibt sich in der App als Rest,
+// Zeit = Unix-Sekunden der Messung (0 = unbekannt, z. B. Messungen von vor 3.6.1).
 // Das Leerzeichen erlaubt den Zeilenumbruch in der ESPHome-Expertenansicht.
 void EqivaKeyBle::publish_reaction_list_() {
   if (this->reaction_list_sensor_ == nullptr || reaction_hist_.empty()) return;
@@ -1177,6 +1180,8 @@ void EqivaKeyBle::publish_reaction_list_() {
     snprintf(buf, sizeof(buf), "%s%c|%.1f|%.1f|%.1f|", i ? "; " : "", reaction_hist_[i].act,
              reaction_hist_[i].ms / 1000.0f, reaction_hist_[i].conn_ms / 1000.0f, reaction_hist_[i].lock_ms / 1000.0f);
     list += buf + reaction_hist_[i].src;
+    snprintf(buf, sizeof(buf), "|%u", (unsigned) reaction_hist_[i].t);
+    list += buf;
   }
   this->publish_(this->reaction_list_sensor_, list);
 }
@@ -1189,30 +1194,49 @@ static void copy_utf8_(char *dst, size_t n, const std::string &src) {
   dst[len] = 0;
 }
 
-static const uint32_t PERSIST_KEY = 0xE91A3512;   // Ereignisse + Reaktionszeiten (Version 1)
+static const uint32_t PERSIST_KEY_V1 = 0xE91A3512;   // Ereignisse + Reaktionszeiten (Version 1, bis 3.6.0)
+static const uint32_t PERSIST_KEY = 0xE91A3611;      // Version 2: zusätzlich Zeitpunkt je Messung
 
 void EqivaKeyBle::persist_load_() {
-  persist_pref_ = global_preferences->make_preference<Persist>(PERSIST_KEY);
+  persist_pref_ = global_preferences->make_preference<Persist2>(PERSIST_KEY);
   persist_ok_ = true;
-  Persist p{};
-  if (!persist_pref_.load(&p) || p.ver != 1 || p.n_ev > 10 || p.n_rt > 10) return;
+  Persist2 p{};
+  if (persist_pref_.load(&p) && p.ver == 2 && p.n_ev <= 10 && p.n_rt <= 10) {
+    events_.clear();
+    for (uint8_t i = 0; i < p.n_ev; i++) {
+      p.ev[i].text[sizeof(p.ev[i].text) - 1] = 0;
+      events_.push_back({(time_t) p.ev[i].t, std::string(p.ev[i].text)});
+    }
+    reaction_hist_.clear();
+    for (uint8_t i = 0; i < p.n_rt; i++) {
+      p.rt[i].src[sizeof(p.rt[i].src) - 1] = 0;
+      reaction_hist_.push_back({p.rt[i].act, p.rt[i].ms, p.rt[i].conn_ms, p.rt[i].lock_ms, std::string(p.rt[i].src), p.rt[i].t});
+    }
+    ESP_LOGI(TAG, "Vom letzten Start übernommen: %u Ereignisse, %u Reaktionszeiten", p.n_ev, p.n_rt);
+    return;
+  }
+  // Update von 3.5.12–3.6.0: alten Eintrag einmal übernehmen (Messungen ohne Zeitpunkt)
+  auto old_pref = global_preferences->make_preference<Persist>(PERSIST_KEY_V1);
+  Persist o{};
+  if (!old_pref.load(&o) || o.ver != 1 || o.n_ev > 10 || o.n_rt > 10) return;
   events_.clear();
-  for (uint8_t i = 0; i < p.n_ev; i++) {
-    p.ev[i].text[sizeof(p.ev[i].text) - 1] = 0;
-    events_.push_back({(time_t) p.ev[i].t, std::string(p.ev[i].text)});
+  for (uint8_t i = 0; i < o.n_ev; i++) {
+    o.ev[i].text[sizeof(o.ev[i].text) - 1] = 0;
+    events_.push_back({(time_t) o.ev[i].t, std::string(o.ev[i].text)});
   }
   reaction_hist_.clear();
-  for (uint8_t i = 0; i < p.n_rt; i++) {
-    p.rt[i].src[sizeof(p.rt[i].src) - 1] = 0;
-    reaction_hist_.push_back({p.rt[i].act, p.rt[i].ms, p.rt[i].conn_ms, p.rt[i].lock_ms, std::string(p.rt[i].src)});
+  for (uint8_t i = 0; i < o.n_rt; i++) {
+    o.rt[i].src[sizeof(o.rt[i].src) - 1] = 0;
+    reaction_hist_.push_back({o.rt[i].act, o.rt[i].ms, o.rt[i].conn_ms, o.rt[i].lock_ms, std::string(o.rt[i].src), 0});
   }
-  ESP_LOGI(TAG, "Vom letzten Start übernommen: %u Ereignisse, %u Reaktionszeiten", p.n_ev, p.n_rt);
+  ESP_LOGI(TAG, "Aus Version 3.6.0 übernommen: %u Ereignisse, %u Reaktionszeiten", o.n_ev, o.n_rt);
+  this->persist_save_();
 }
 
 void EqivaKeyBle::persist_save_() {
   if (!persist_ok_) return;
-  Persist p{};
-  p.ver = 1;
+  Persist2 p{};
+  p.ver = 2;
   p.n_ev = (uint8_t) std::min<size_t>(events_.size(), 10);
   for (uint8_t i = 0; i < p.n_ev; i++) {
     p.ev[i].t = (uint32_t) events_[i].t;
@@ -1225,6 +1249,7 @@ void EqivaKeyBle::persist_save_() {
     p.rt[i].ms = r.ms;
     p.rt[i].conn_ms = r.conn_ms;
     p.rt[i].lock_ms = r.lock_ms;
+    p.rt[i].t = r.t;
     copy_utf8_(p.rt[i].src, sizeof(p.rt[i].src), r.src);
   }
   persist_pref_.save(&p);
@@ -1279,6 +1304,68 @@ void EqivaKeyBle::battery_changed() {
   this->cnt_save_();
   global_preferences->sync();
   this->log_event("🔋 Batterien gewechselt");
+}
+
+bool EqivaKeyBle::battery_edit(uint32_t since, uint32_t motor, int64_t connects) {
+  const time_t now = ::time(nullptr);
+  if (since < 1600000000 || (now > 1600000000 && since > (uint32_t) now + 86400) || motor > 9999999 || connects > 9999999) {
+    ESP_LOGW(TAG, "Batteriesatz bearbeiten: ungültige Werte");
+    return false;
+  }
+  cnt_since_ = since;
+  cnt_motor_ = motor;
+  if (connects >= 0) cnt_connects_ = (uint32_t) connects;
+  ESP_LOGI(TAG, "Batteriesatz bearbeitet: seit %u, %u Motorläufe, %u Verbindungen", (unsigned) cnt_since_,
+           (unsigned) cnt_motor_, (unsigned) cnt_connects_);
+  this->publish_counters_();
+  this->cnt_save_();
+  global_preferences->sync();
+  this->log_event("🔋 Batteriesatz bearbeitet");
+  return true;
+}
+
+bool EqivaKeyBle::battery_delete(uint8_t idx, uint32_t start, uint32_t end) {
+  if (idx >= batt_n_ || batt_hist_[idx].start != start || batt_hist_[idx].end != end) {
+    ESP_LOGW(TAG, "Batteriewechsel löschen: Eintrag %u nicht gefunden", idx);
+    return false;
+  }
+  for (uint8_t i = idx; i + 1 < 3; i++) batt_hist_[i] = batt_hist_[i + 1];
+  batt_hist_[2] = {};
+  batt_n_--;
+  ESP_LOGI(TAG, "Batteriewechsel %u aus dem Verlauf gelöscht", idx + 1);
+  this->publish_counters_();
+  this->cnt_save_();
+  global_preferences->sync();
+  return true;
+}
+
+void EqivaKeyBle::battery_command(const std::string &cmd) {
+  std::vector<std::string> f;
+  size_t a = 0;
+  while (true) {
+    size_t b = cmd.find('|', a);
+    f.push_back(cmd.substr(a, b == std::string::npos ? std::string::npos : b - a));
+    if (b == std::string::npos) break;
+    a = b + 1;
+  }
+  auto num = [](const std::string &s, int64_t &out) {
+    if (s.empty() || s.size() > 12) return false;
+    int64_t v = 0;
+    for (char ch : s) { if (ch < '0' || ch > '9') return false; v = v * 10 + (ch - '0'); }
+    out = v;
+    return true;
+  };
+  int64_t x = 0, y = 0, z = -1, w = 0;
+  if (f.size() == 4 && f[0] == "set" && num(f[1], x) && num(f[2], y) && (f[3].empty() || num(f[3], z))) {
+    if (x <= 0xFFFFFFFFLL && y <= 0xFFFFFFFFLL) this->battery_edit((uint32_t) x, (uint32_t) y, f[3].empty() ? -1 : z);
+    return;
+  }
+  if (f.size() == 4 && f[0] == "del" && num(f[1], x) && num(f[2], y) && num(f[3], w) && x < 3 && y <= 0xFFFFFFFFLL &&
+      w <= 0xFFFFFFFFLL) {
+    this->battery_delete((uint8_t) x, (uint32_t) y, (uint32_t) w);
+    return;
+  }
+  if (!cmd.empty()) ESP_LOGW(TAG, "Batterie-Befehl nicht erkannt: %s", cmd.c_str());
 }
 
 void EqivaKeyBle::forget_pairing() {

@@ -29,7 +29,7 @@ namespace eqiva_key_ble {
 using namespace esp32_ble_client;
 
 // Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
-#define EQIVA_PATCH_VERSION "3.6.0"
+#define EQIVA_PATCH_VERSION "3.6.1"
 
 // Patch-Konstanten
 static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
@@ -110,6 +110,9 @@ class EqivaKeyBle : public BLEClientBase {
     struct PersistEv { uint32_t t; char text[72]; };
     struct PersistRt { char act; uint8_t pad; uint16_t ms; uint16_t conn_ms; uint16_t lock_ms; char src[18]; };
     struct Persist { uint8_t ver; uint8_t n_ev; uint8_t n_rt; uint8_t pad; PersistEv ev[10]; PersistRt rt[10]; };
+    // ab 3.6.1: mit Zeitpunkt je Messung (eigener Schlüssel, Daten aus Version 1 werden einmal übernommen)
+    struct PersistRt2 { char act; uint8_t pad; uint16_t ms; uint16_t conn_ms; uint16_t lock_ms; char src[18]; uint8_t pad2[2]; uint32_t t; };
+    struct Persist2 { uint8_t ver; uint8_t n_ev; uint8_t n_rt; uint8_t pad; PersistEv ev[10]; PersistRt2 rt[10]; };
     ESPPreferenceObject persist_pref_;
     bool persist_ok_{false};
     void persist_load_();
@@ -302,6 +305,14 @@ class EqivaKeyBle : public BLEClientBase {
         void set_battery_info_sensor(text_sensor::TextSensor *s) { this->battery_info_sensor_ = s; }
         // Batterien gewechselt: jetzigen Satz in den Verlauf (max. 3), Zähler auf 0, Datum merken
         void battery_changed();
+        // Befehlskanal der Web-App (Text "Batterie-Befehl"):
+        //   "set|Eingelegt (Unix)|Motorläufe|Verbindungen"  aktuellen Satz bearbeiten (Verbindungen leer = bleibt)
+        //   "del|Nr|Start|Ende (Unix)"                    vergangenen Wechsel Nr (0 = jüngster) löschen
+        void battery_command(const std::string &cmd);
+        // aktuellen Satz bearbeiten: eingelegt seit (Unix-Zeit), Zählerstände; connects < 0 = unverändert
+        bool battery_edit(uint32_t since, uint32_t motor, int64_t connects);
+        // vergangenen Wechsel löschen (0 = jüngster); Start und Ende müssen passen, sonst wird nichts gelöscht
+        bool battery_delete(uint8_t idx, uint32_t start, uint32_t end);
         // Ereignisprotokoll: Eintrag mit Uhrzeit (sofern bekannt) hinzufügen
         void log_event(const std::string &text);
         // Auslöser für den nächsten Befehl setzen (z. B. "Max", "Zeitplan 1"); gilt 3 s, sonst "HA/Web"
@@ -371,7 +382,7 @@ class EqivaKeyBle : public BLEClientBase {
         bool moving_open_{false};
         // ms = Gesamt (Auslöser -> Motor), conn_ms = Anteil Verbindungsaufbau, lock_ms = Anteil
         // Befehl gesendet -> Motor; Rest (ms - conn_ms - lock_ms) = Finger/Status, nur ab 0,1 s gezeigt.
-        struct ReactionEntry { char act; uint16_t ms; uint16_t conn_ms; uint16_t lock_ms; std::string src; };
+        struct ReactionEntry { char act; uint16_t ms; uint16_t conn_ms; uint16_t lock_ms; std::string src; uint32_t t; };
         std::vector<ReactionEntry> reaction_hist_;   // älteste zuerst, max. 10
         bool reaction_touch_{false};         // Messung begann mit einer Berührung (nur dann gibt es einen Fingerprint-Anteil)
         char reaction_act_{'z'};             // Aktion des laufenden Befehls: z zu, a auf, o öffnen
