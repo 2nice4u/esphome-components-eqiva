@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.6.0 (2026-11-14) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.6.1 (2026-11-14) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.6.0';
+  const APP_VERSION = '3.6.1';
   const REPO = '2nice4u/esphome-components-eqiva';   // eigener Fork: nur diese Zeile ändern
   const GUIDE_URL = 'https://github.com/' + REPO + '/blob/main/docs/ANLEITUNG.md';
   const RELEASES_URL = 'https://github.com/' + REPO + '/releases';
@@ -17,6 +17,9 @@
   const S = {
     tab: 'start', title: '', conn: 'connecting', expert: false,
     theme: load('eqa-theme', 'auto'),
+    anim: load('eqa-anim', 'auto'),  // Animationen auf diesem Gerät: auto / on / slow / off
+    sc: load('eqa-sc', ''),          // zuletzt gesehene Zustandsfarben (gegen Farbsprung beim Neuladen)
+    bedit: null,                     // Batteriesatz bearbeiten (Formular)
     wiz: null,                       // Anlern-/Zuordnungs-Assistent
     pair: null,                      // Pairing-Assistent (Card Key nur im Speicher der Seite)
     sheet: null,                     // geöffnetes Detailfenster (Finger, Person, Platz)
@@ -162,15 +165,18 @@
       '<g class="nsp">' + sp + '</g>' +
       '<path class="nkey" d="M150 186 a10 10 0 0 1 6 18 l4 20 h-20 l4 -20 a10 10 0 0 1 6 -18 Z"/>';
   })();
+  // Animationen: Einstellung pro Gerät. "Automatisch" läuft normal, bei "weniger Bewegung" im System langsam statt aus.
+  const ANIM = [['auto', 'Automatisch'], ['on', 'An'], ['slow', 'Langsam'], ['off', 'Aus']];
+  const animMode = () => S.anim !== 'auto' ? S.anim : (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches ? 'slow' : 'on');
   // Bügel: zu 0, halb -15 (unbekannt), offen -30 px; Wechsel als kurze Fahrt (700 ms), auch über Neuzeichnen hinweg
   const SHK_Y = { closed: 0, half: -15, open: -30 };
   function lockArt(state, pos) {
     const now = performance.now();
     if (S.lockPos && S.lockPos !== pos) S.lockAnim = { from: SHK_Y[S.lockPos], to: SHK_Y[pos], t: now };
     S.lockPos = pos;
-    const a = S.lockAnim, el = a ? now - a.t : 1e9;
-    const shk = el < 700 && !matchMedia('(prefers-reduced-motion: reduce)').matches ?
-      'style="--y0:' + a.from + 'px;--y1:' + a.to + 'px;animation:eqshk 700ms cubic-bezier(.3,.7,.3,1) both;animation-delay:-' + Math.round(el) + 'ms"' :
+    const a = S.lockAnim, el = a ? now - a.t : 1e9, am = animMode(), dur = am === 'slow' ? 1400 : 700;
+    const shk = el < dur && am !== 'off' ?
+      'style="--y0:' + a.from + 'px;--y1:' + a.to + 'px;animation:eqshk ' + dur + 'ms cubic-bezier(.3,.7,.3,1) both;animation-delay:-' + Math.round(el) + 'ms"' :
       'style="transform:translateY(' + SHK_Y[pos] + 'px)"';
     return '<div class="nlock s-' + state + '"><svg viewBox="0 46 300 254" aria-hidden="true">' + LOCK_ART.replace('<g class="nshk">', '<g class="nshk" ' + shk + '>') + '</svg></div>';
   }
@@ -345,24 +351,37 @@
   // Reaktionszeit, Variante B: jede Bedienung in der Ereignisliste bekommt Kapseln mit Lücke – Verbindung (violett),
   // Fingerprint (grau: Finger lesen + Statusabfrage, nur ab 0,1 s) und Motor (grün: Befehl gesendet → Motor dreht),
   // darunter die Anteile ausgeschrieben. Oben drei Kacheln: Ø gesamt · Ø Verbindung · Max gesamt.
-  // "Reaktionszeiten" je Eintrag: Aktion|Gesamt-s|Verbindung-s|Motor-s|Quelle, durch ";" getrennt (älteste zuerst).
+  // "Reaktionszeiten" je Eintrag: Aktion|Gesamt-s|Verbindung-s|Motor-s|Quelle|Zeit, durch ";" getrennt (älteste zuerst).
+  // Zeit = Unix-Sekunden (ab 3.6.1, 0 = unbekannt); ältere Firmware schickt sie nicht.
   function reactionRows() {
     if (!has('text_sensor/Reaktionszeiten')) return [];
     return txt('text_sensor/Reaktionszeiten').split(/;\s*/).map((s) => s.split('|'))
       .filter((p) => p.length >= 5 && /^[zao]$/.test(p[0]) && [1, 2, 3].every((i) => isFinite(Number(p[i]))))
       .map((p) => { const total = Number(p[1]), conn = Number(p[2]), lock = Number(p[3]);
-        return { act: p[0], total, conn, lock, fp: Math.max(0, +(total - conn - lock).toFixed(1)), src: p.slice(4).join('|') }; });
+        const t = p.length >= 6 && /^\d+$/.test(p[p.length - 1]) ? Number(p.pop()) : 0;
+        return { act: p[0], total, conn, lock, fp: Math.max(0, +(total - conn - lock).toFixed(1)), src: p.slice(4).join('|'), t }; });
+  }
+  // Zeitpunkt einer Messung: innerhalb einer Woche Wochentag + Uhrzeit, sonst Datum + Uhrzeit
+  function whenText(t) {
+    if (!t) return '';
+    const d = new Date(t * 1000), hm = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    if (Date.now() / 1000 - t < 6.5 * 86400) return d.toLocaleDateString('de-DE', { weekday: 'short' }).replace('.', '') + ' ' + hm;
+    return fmtDate(t) + ' ' + hm;
   }
   function reactionHead(rows) {
     if (!rows.length) return '';
     const f = (v) => v.toFixed(1).replace('.', ',') + ' s';
     const avg = rows.reduce((a, r) => a + r.total, 0) / rows.length;
     const mx = Math.max(...rows.map((r) => r.total));
+    // Max gesamt: wann und wodurch (bei Gleichstand die neueste Messung)
+    let mr = rows[0];
+    rows.forEach((r) => { if (r.total >= mr.total) mr = r; });
+    const mxInfo = [whenText(mr.t), mr.src].filter(Boolean).join(' · ');
     // Ø Verbindung nur über Messungen mit echtem Verbindungsaufbau (sonst drücken die 0-Werte den Schnitt)
     const cn = connStats(rows);
     const st = [['Ø gesamt', f(avg), rtClass(avg), ''],
       ['Ø Verbindung', cn.n ? f(cn.avg) : '–', 'cn', cn.n ? 'aus ' + cn.n + ' von ' + rows.length : 'immer verbunden'],
-      ['Max gesamt', f(mx), rtClass(mx), '']];
+      ['Max gesamt', f(mx), rtClass(mx), mxInfo]];
     return '<p class="muted small">Reaktionszeit: Auslöser → Motor dreht · letzte ' + rows.length + ' Messungen</p>' +
       '<div class="rtst">' + st.map((x) => '<div class="' + x[2] + '"><span>' + x[0] + '</span><b>' + x[1] + '</b>' +
         (x[3] ? '<small>' + x[3] + '</small>' : '') + '</div>').join('') + '</div>';
@@ -422,8 +441,9 @@
         (has('button/Status abfragen') ? btn('press', icon('spin', 14) + 'Aktualisieren', 'href', 'button/Status abfragen') : '') + '</div>';
     }
     // Schloss: Farbe nach Zustand, Bügel offen bei auf/geöffnet, halb bei unbekannt; beim Motorlauf bleibt er stehen
-    const ls = unpaired ? 'np' : ({ LOCKED: 'lk', UNLOCKED: 'ul', OPENED: 'ul', MOVING: 'mv' }[st] || (st ? 'wr' : 'mv'));
-    const pos = unpaired ? 'half' : st === 'LOCKED' ? 'closed' : (st === 'UNLOCKED' || st === 'OPENED') ? 'open' : st === 'MOVING' ? (S.lockPos || 'closed') : 'half';
+    // Vor dem ersten echten Zustand (Neuladen): neutral grau und geschlossen, ohne Farbsprung
+    const ls = unpaired ? 'np' : ({ LOCKED: 'lk', UNLOCKED: 'ul', OPENED: 'ul', MOVING: 'mv' }[st] || (st ? 'wr' : 'ld'));
+    const pos = unpaired ? 'half' : st === 'LOCKED' ? 'closed' : (st === 'UNLOCKED' || st === 'OPENED') ? 'open' : (st === 'MOVING' || !st) ? (S.lockPos || 'closed') : 'half';
     const short = unpaired ? 'Bitte zuerst koppeln' : st === 'MOVING' ? 'Befehl wird ausgeführt' : st === 'UNKNOWN' ? 'Einmal Zu oder Auf drücken' : '';
     const long = st === 'UNKNOWN' && !unpaired ? 'Position unbekannt – z. B. nach dem Pairing, einer halben Drehung oder wenn der Riegel klemmt.' :
       (sub && !short ? sub : '');
@@ -434,8 +454,8 @@
       (long ? '<p class="hnote">' + esc(long) + '</p>' : '') +
       (unpaired ? '' : '<div class="hacts">' +
         btn('lock', icon('lockF', 20) + 'Zu', 'hp zu' + (st === 'LOCKED' ? ' on' : '')) +
-        btn('open', icon('door', 20) + 'Öffnen', 'hp op' + (st === 'OPENED' ? ' on' : '')) +
-        btn('unlock', icon('unlock', 20) + 'Auf', 'hp auf' + (st === 'UNLOCKED' ? ' on' : '')) + '</div>') +
+        btn('unlock', icon('unlock', 20) + 'Auf', 'hp auf' + (st === 'UNLOCKED' ? ' on' : '')) +
+        btn('open', icon('door', 20) + 'Öffnen', 'hp op' + (st === 'OPENED' ? ' on' : '')) + '</div>') +
       (txt('select/Türgriff außen') === 'Türklinke' ? '<p class="note">Türgriff außen = Türklinke: „Öffnen“ schließt nur auf.</p>' :
         txt('select/Türgriff außen') === 'Knauf' ? '<div class="knauf">' + icon('alert', 22) + '<div><b>Türgriff außen = Knauf</b><span>„Öffnen“ und der Finger (Umschalten/Öffnen) ziehen die Falle – die Tür wird komplett geöffnet. „Auf“ schließt nur auf.</span></div></div>' : ''), 'hcard');
     const tiles = [];
@@ -799,26 +819,67 @@
       '<div class="prog"><div style="width:' + (w.step / 3 * 100) + '%"></div></div>' + body + '<div class="foot">' + foot + '</div>', 'wiz');
   }
 
-  // Batterie: aktueller Satz (seit wann, Zähler), "Batterien gewechselt" mit Rückfrage, Verlauf der letzten 3 Wechsel
+  // Batterie: aktueller Satz (seit wann, Zähler) mit "Bearbeiten", "Batterien gewechselt" mit Rückfrage,
+  // Verlauf der letzten 3 Wechsel (nur löschen, nicht nachtragen/bearbeiten). Befehle über den Text "Batterie-Befehl".
+  const isoDay = (t) => { const d = new Date(t * 1000); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  // Datum (JJJJ-MM-TT) → Unix-Zeit: heute = jetzt, sonst 12:00 Uhr Ortszeit; ungültig/Zukunft → 0
+  function dayToUnix(v) {
+    const m = /^(\d{4})-(\d\d)-(\d\d)$/.exec(v || '');
+    if (!m) return 0;
+    const now = Date.now() / 1000;
+    if (v === isoDay(now)) return Math.floor(now);
+    const t = Math.floor(new Date(+m[1], +m[2] - 1, +m[3], 12).getTime() / 1000);
+    return t > now || t < 1600000000 ? 0 : t;
+  }
+  function beDaysText(v) {
+    const t = dayToUnix(v);
+    if (!t) return v ? 'Datum in der Zukunft?' : '';
+    const d = Math.floor((Date.now() / 1000 - t) / 86400);
+    return d <= 0 ? '= heute' : d === 1 ? '= vor 1 Tag' : '= vor ' + d + ' Tagen';
+  }
   function viewBattery() {
     if (!has('button/Batterien gewechselt')) return '';
     const b = battInfo() || { since: 0, motor: 0, conn: 0, hist: [] };
     const now = Date.now() / 1000, low = on('binary_sensor/Batterie schwach');
     const m = has('sensor/Motorläufe') ? val('sensor/Motorläufe', b.motor) : b.motor, c = has('sensor/Verbindungsaufbauten') ? val('sensor/Verbindungsaufbauten', b.conn) : b.conn;
-    let h = '<h3>Batterie</h3><p class="since">' + (b.since ? 'Aktuelle Batterien seit <b>' + fmtDate(b.since, true) + '</b> · ' + days(b.since, now) + ' im Gerät' : 'Gezählt ab dem ersten Start mit Uhrzeit') +
-      (has('binary_sensor/Batterie schwach') ? ' · Zustand <b class="' + (low ? 'bad' : 'ok') + '">' + (low ? 'schwach' : 'OK') + '</b>' : '') + '</p>' +
-      '<div class="bcur"><div><span>Motorläufe</span><b>' + fmtInt(m) + '</b></div><div><span>Verbindungen</span><b>' + fmtInt(c) + '</b></div><div><span>Tage</span><b>' +
-      (b.since ? Math.max(0, Math.floor((now - b.since) / 86400)) : '–') + '</b></div></div>';
-    h += S.confirm === 'batt' ?
-      '<div class="bconf"><b>Batterien gewechselt?</b><span>Die Zähler werden auf 0 gesetzt, der jetzige Satz kommt in den Verlauf (' + (b.since ? fmtDate(b.since) + '–' + fmtDate(now, true) + ' · ' : '') +
-        fmtInt(m) + ' Motorläufe · ' + fmtInt(c) + ' Verbindungen).</span><div class="foot">' + btn('no-batt', 'Abbrechen', 'b') + btn('batt', 'Ja, gewechselt', 'b pri') + '</div></div>' :
-      btn('ask-batt', icon('battery', 18) + 'Batterien gewechselt', 'b bwide');
+    let h = '<div class="headrow"><h3>Batterie</h3>' + (S.bedit ? '' : btn('be-open', icon('edit', 15) + 'Bearbeiten', 'href')) + '</div>' +
+      '<p class="since">' + (b.since ? 'Aktuelle Batterien seit <b>' + fmtDate(b.since, true) + '</b> · ' + days(b.since, now) + ' im Gerät' : 'Gezählt ab dem ersten Start mit Uhrzeit') +
+      (has('binary_sensor/Batterie schwach') ? ' · Zustand <b class="' + (low ? 'bad' : 'ok') + '">' + (low ? 'schwach' : 'OK') + '</b>' : '') + '</p>';
+    if (S.bedit) {
+      const e = S.bedit;
+      h += '<div class="bedit"><b>Aktuellen Batteriesatz bearbeiten</b><span class="muted small">Z. B. wenn die Batterien schon vor dem Update drin waren. Der ESP zählt von diesen Werten aus weiter.</span>' +
+        '<label class="fld"><span class="lbl">Eingelegt am</span><span class="bedate"><input type="date" data-c="be-date" data-k="be-date" value="' + esc(e.date) + '" max="' + isoDay(now) + '">' +
+          '<span class="bedays">' + esc(beDaysText(e.date)) + '</span></span></label>' +
+        '<label class="fld"><span class="lbl">Motorläufe bisher</span><input type="number" inputmode="numeric" min="0" step="1" data-c="be-motor" data-k="be-motor" value="' + esc(e.motor) + '"></label>' +
+        '<label class="fld"><span class="lbl">Verbindungen bisher <i>(optional)</i></span><input type="number" inputmode="numeric" min="0" step="1" data-c="be-conn" data-k="be-conn" value="' + esc(e.conn) +
+          '" placeholder="leer = bleibt bei ' + esc(fmtInt(c)) + '"></label>' +
+        '<div class="foot">' + btn('be-cancel', 'Abbrechen', 'b') + btn('be-save', 'Speichern', 'b pri') + '</div></div>';
+    } else {
+      h += '<div class="bcur"><div><span>Motorläufe</span><b>' + fmtInt(m) + '</b></div><div><span>Verbindungen</span><b>' + fmtInt(c) + '</b></div><div><span>Tage</span><b>' +
+        (b.since ? Math.max(0, Math.floor((now - b.since) / 86400)) : '–') + '</b></div></div>';
+      h += S.confirm === 'batt' ?
+        '<div class="bconf"><b>Batterien gewechselt?</b><span>Die Zähler werden auf 0 gesetzt, der jetzige Satz kommt in den Verlauf (' + (b.since ? fmtDate(b.since) + '–' + fmtDate(now, true) + ' · ' : '') +
+          fmtInt(m) + ' Motorläufe · ' + fmtInt(c) + ' Verbindungen).</span><div class="foot">' + btn('no-batt', 'Abbrechen', 'b') + btn('batt', 'Ja, gewechselt', 'b pri') + '</div></div>' :
+        btn('ask-batt', icon('battery', 18) + 'Batterien gewechselt', 'b bwide');
+    }
     if (b.hist.length) {
-      h += '<h4 class="bh">Letzte Batteriewechsel</h4><div class="bhist">' + b.hist.map((x) =>
-        '<div><b>' + (x.start ? fmtDate(x.start, x.end && new Date(x.start * 1000).getFullYear() !== new Date(x.end * 1000).getFullYear()) : '?') + ' – ' + fmtDate(x.end, true) +
-        (x.start && x.end ? ' · ' + days(x.start, x.end) : '') + '</b><span><strong>' + fmtInt(x.motor) + '</strong> Motorläufe · <strong>' + fmtInt(x.conn) + '</strong> Verbindungen</span></div>').join('') + '</div>';
+      const span = (x) => (x.start ? fmtDate(x.start, x.end && new Date(x.start * 1000).getFullYear() !== new Date(x.end * 1000).getFullYear()) : '?') + ' – ' + fmtDate(x.end, true);
+      h += '<h4 class="bh">Letzte Batteriewechsel</h4><div class="bhist">' + b.hist.map((x, i) => S.confirm === 'bdel' + i ?
+        '<div class="ask"><span class="sq">Wechsel ' + esc(span(x)) + ' löschen?</span>' + btn('batt-nodel', 'Abbrechen', 'b sm') + btn('batt-del', 'Löschen', 'b sm danger', i) + '</div>' :
+        '<div><span class="bht"><b>' + span(x) + (x.start && x.end ? ' · ' + days(x.start, x.end) : '') + '</b><span><strong>' + fmtInt(x.motor) + '</strong> Motorläufe · <strong>' +
+          fmtInt(x.conn) + '</strong> Verbindungen</span></span>' +
+          '<button type="button" class="sdel" data-a="batt-askdel" data-x="' + i + '" aria-label="Batteriewechsel ' + esc(span(x)) + ' löschen"' + (S.busy ? ' disabled' : '') + '>' + icon('trash', 18) + '</button></div>').join('') + '</div>';
     }
     return card(h);
+  }
+  // Darstellung auf diesem Gerät (im Browser gespeichert)
+  function viewDisplay() {
+    const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const hint = { auto: reduced ? 'Dein Gerät wünscht weniger Bewegung – die Animationen laufen deshalb langsam.' : 'Normale Geschwindigkeit. Wünscht das Gerät weniger Bewegung, laufen sie langsam statt gar nicht.',
+      on: 'Immer normale Geschwindigkeit, auch wenn das Gerät weniger Bewegung wünscht.', slow: 'Etwa ein Drittel der normalen Geschwindigkeit.', off: 'Keine Lichtimpulse und kein Leuchten, der Bügel springt ohne Fahrt.' }[S.anim] || '';
+    return card('<h3>Darstellung auf diesem Gerät</h3><div class="fld"><span class="lbl">Animationen (Schloss)</span><div class="seg seg4">' +
+      ANIM.map((o) => '<button type="button" class="' + (S.anim === o[0] ? 'sel' : '') + '" data-a="anim" data-x="' + o[0] + '" aria-pressed="' + (S.anim === o[0]) + '">' + o[1] + '</button>').join('') +
+      '</div></div><p class="muted small">' + esc(hint) + ' Gilt nur für diesen Browser.</p>');
   }
   function viewMore() {
     if (S.pair) return viewPair();
@@ -838,6 +899,7 @@
       num('number/Ausgewogen: Verbindungsabstand', 'Ausgewogen: Abstand'), num('number/Sparsam: Trennen nach Leerlauf', 'Sparsam: trennen nach'),
       num('number/Sparsam: Status-Abfrage alle', 'Sparsam: Status alle')]);
     h += viewBattery();
+    h += viewDisplay();
     h += grp('Fingerprint', [choice('select/Standard-Aktion (Finger ohne Zuordnung)', 'Standard-Aktion'), toggle('switch/Klingel bei unbekanntem Finger', 'Klingel bei unbekanntem Finger'),
       toggle('switch/Bei Berührung vorab verbinden', 'Bei Berührung vorab verbinden (Sparmodus)'),
       has('switch/Bei Berührung vorab verbinden') ? '<p class="muted small">Baut schon beim Auflegen die Verbindung zum Schloss auf – der Befehl geht dann schneller raus. Höchstens einmal pro Minute.</p>' : '',
@@ -918,7 +980,7 @@
     if (!root || pending) return;
     // Offene Auswahlliste / Zeitwähler nicht durch Neuzeichnen schließen – nach dem Verlassen nachholen
     const ae = document.activeElement;
-    if (ae && root.contains(ae) && (ae.tagName === 'SELECT' || ae.type === 'time')) { held = true; return; }
+    if (ae && root.contains(ae) && (ae.tagName === 'SELECT' || ae.type === 'time' || ae.type === 'date')) { held = true; return; }
     pending = true;
     requestAnimationFrame(() => {
       pending = false;
@@ -928,7 +990,12 @@
       const sel = key && a.selectionStart !== undefined ? [a.selectionStart, a.selectionEnd] : null;
       const keepVal = key ? a.value : null;
       const sy = root.scrollTop;
-      root.classList.toggle('swapc', txt('select/Zustandsfarben') === 'Verriegelt rot');
+      // Zustandsfarben merken: beim Neuladen kommt der Zustand oft vor der Farbwahl – dann die zuletzt gesehene nehmen
+      const sc = txt('select/Zustandsfarben');
+      if (sc && sc !== S.sc) { S.sc = sc; save('eqa-sc', sc); }
+      root.classList.toggle('swapc', (sc || S.sc) === 'Verriegelt rot');
+      const am = animMode();
+      root.classList.toggle('an-slow', am === 'slow'); root.classList.toggle('an-off', am === 'off');
       root.style.setProperty('--ph', -Math.round(performance.now() % 600000) + 'ms');   // Animationen laufen über Neuzeichnen hinweg weiter
       root.innerHTML = page();
       root.scrollTop = sy;
@@ -982,6 +1049,32 @@
       case 'ask-batt': S.confirm = 'batt'; break;
       case 'no-batt': S.confirm = ''; break;
       case 'batt': S.confirm = ''; return run([['button/Batterien gewechselt', 'press']], 'Batterien gewechselt – Zähler auf 0');
+      case 'be-open': {
+        const bi = battInfo() || { since: 0, motor: 0 };
+        S.bedit = { date: bi.since ? isoDay(bi.since) : isoDay(Date.now() / 1000), motor: String(has('sensor/Motorläufe') ? Math.round(val('sensor/Motorläufe', bi.motor)) : bi.motor || 0), conn: '' };
+        break;
+      }
+      case 'be-cancel': S.bedit = null; break;
+      case 'be-save': {
+        const e = S.bedit, t = dayToUnix(e.date), mo = String(e.motor).trim(), co = String(e.conn).trim();
+        if (!t) { toast('Bitte ein Datum bis heute wählen'); return; }
+        if (!/^\d{1,7}$/.test(mo) || (co && !/^\d{1,7}$/.test(co))) { toast('Bitte ganze Zahlen ab 0 eintragen'); return; }
+        S.bedit = null;
+        return run([['text/Batterie-Befehl', 'set', { value: 'set|' + t + '|' + (+mo) + '|' + (co ? +co : '') }]], 'Batteriesatz gespeichert');
+      }
+      case 'batt-askdel': {   // wie bei den Zeitplänen: Zeile fragt nach, springt nach 5 s ohne Antwort zurück
+        S.confirm = 'bdel' + x; const c = S.confirm;
+        clearTimeout(S.sdelT); S.sdelT = setTimeout(() => { if (S.confirm === c) { S.confirm = ''; draw(); } }, 5000);
+        break;
+      }
+      case 'batt-nodel': S.confirm = ''; break;
+      case 'batt-del': {
+        const bi = battInfo(), hx = bi && bi.hist[+x];
+        S.confirm = '';
+        if (!hx) return draw();
+        return run([['text/Batterie-Befehl', 'set', { value: 'del|' + (+x) + '|' + hx.start + '|' + hx.end }]], 'Batteriewechsel gelöscht');
+      }
+      case 'anim': S.anim = x; save('eqa-anim', x); break;
       case 'sched-askdel': {   // Mülleimer: Zeile fragt nach, springt nach 5 s ohne Antwort zurück
         S.confirm = 'sdel' + x; const c = S.confirm;
         clearTimeout(S.sdelT); S.sdelT = setTimeout(() => { if (S.confirm === c) { S.confirm = ''; draw(); } }, 5000);
@@ -1070,6 +1163,10 @@
     }
     if (n.dataset.c === 'sc-rmin' && S.sheet && n.value) { S.sheet.rmin = Math.min(60, Math.max(1, Math.round(+n.value) || 1)); draw(); }
     if (n.dataset.c === 'pair-key' && S.pair) { S.pair.key = n.value; draw(); }
+    if (S.bedit && /^be-/.test(n.dataset.c || '')) {
+      S.bedit[n.dataset.c.slice(3)] = n.value;
+      if (n.dataset.c === 'be-date') { const d = document.querySelector('#eqa .bedays'); if (d) d.textContent = beDaysText(n.value); }
+    }
   }
   function onChange(e) {
     const n = e.target, c = n.dataset && n.dataset.c;
@@ -1141,7 +1238,7 @@ color:var(--muted);font:600 12px system-ui,sans-serif;font-variant-numeric:tabul
 #eqa{--nedge:currentColor;--npulse:currentColor;--nglass:.24;--nglow:.22;--nkey:#0F172A;--nfilt:url(#eqnL);--nbase:.55}
 #eqa .nlock{color:var(--sl);width:300px;max-width:100%;margin:6px auto 0}
 #eqa .nlock svg{display:block;width:100%;height:auto;overflow:visible}
-#eqa .s-ul{color:var(--su)}#eqa .s-mv{color:#D97706}#eqa .s-wr{color:#CA8A04}#eqa .s-np{color:#9CA3AF}
+#eqa .s-ul{color:var(--su)}#eqa .s-mv{color:#D97706}#eqa .s-wr{color:#CA8A04}#eqa .s-np,#eqa .s-ld{color:#9CA3AF}
 #eqa .nlock .ne{filter:var(--nfilt)}
 #eqa .nlock .ncore{fill:currentColor;opacity:var(--nglow);animation:eqnglow 2.2s ease-in-out infinite;animation-delay:var(--ph,0ms)}
 #eqa .nlock .ntr{fill:none;stroke-linecap:round;stroke-linejoin:round}
@@ -1157,8 +1254,10 @@ color:var(--muted);font:600 12px system-ui,sans-serif;font-variant-numeric:tabul
 @keyframes eqflow{from{stroke-dashoffset:108}to{stroke-dashoffset:-60}}
 @keyframes eqnglow{0%,100%{opacity:calc(var(--nglow) * .4)}50%{opacity:var(--nglow)}}
 @keyframes eqshk{from{transform:translateY(var(--y0))}to{transform:translateY(var(--y1))}}
-@media (prefers-reduced-motion:reduce){#eqa .nlock .npuls{display:none}#eqa .nlock .ncore{animation:none}}
-#eqa .nlbl{text-align:center;color:var(--sl);margin:2px 0 4px}#eqa .nlbl.s-ul{color:var(--su)}#eqa .nlbl.s-mv{color:#D97706}#eqa .nlbl.s-wr{color:#CA8A04}#eqa .nlbl.s-np{color:#9CA3AF}
+/* Animationen je Gerät (Einstellung): langsam ≈ ⅓ Tempo, aus = keine Impulse/kein Leuchten */
+#eqa.an-slow .nlock .npuls path{animation-duration:7.8s}#eqa.an-slow .nlock.s-mv .npuls path{animation-duration:3.9s}#eqa.an-slow .nlock .ncore{animation-duration:6.6s}
+#eqa.an-off .nlock .npuls{display:none}#eqa.an-off .nlock .ncore{animation:none}
+#eqa .nlbl{text-align:center;color:var(--sl);margin:2px 0 4px}#eqa .nlbl.s-ul{color:var(--su)}#eqa .nlbl.s-mv{color:#D97706}#eqa .nlbl.s-wr{color:#CA8A04}#eqa .nlbl.s-np,#eqa .nlbl.s-ld{color:#9CA3AF}
 #eqa .nlbl b{display:block;font-size:26px;font-weight:800;letter-spacing:-.01em}#eqa .nlbl small{display:block;font-size:13px;color:var(--muted);margin-top:2px}
 #eqa .hstand{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:2px}
 #eqa .hchip{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:8px;font-size:13px;font-weight:600;background:var(--soft);color:var(--fg)}
@@ -1219,7 +1318,7 @@ color:var(--muted);font:600 12px system-ui,sans-serif;font-variant-numeric:tabul
 #eqa .row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:50px;border-top:1px solid var(--line)}#eqa h3+.row,#eqa .sum .row:first-child{border-top:0}
 #eqa .row>span:first-child{font-weight:600}#eqa .row .v{font-weight:400;color:var(--muted);text-align:right;overflow-wrap:anywhere}
 #eqa .fld{display:block;padding:8px 0}
-#eqa input[type=text],#eqa input[type=number],#eqa select{min-height:44px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif;width:100%}
+#eqa input[type=text],#eqa input[type=number],#eqa input[type=date],#eqa select{min-height:44px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif;width:100%}
 #eqa .numw{display:flex;align-items:center;gap:6px;flex:none}#eqa .numw input{width:96px;text-align:right}#eqa .uom{font-size:13px;color:var(--muted)}
 #eqa .seg{display:grid;grid-auto-columns:minmax(0,1fr);grid-auto-flow:column;gap:6px}
 #eqa .seg button{min-height:42px;border:1px solid var(--bline);border-radius:10px;background:transparent;color:var(--fg);font:600 13px system-ui,sans-serif;cursor:pointer}
@@ -1258,7 +1357,12 @@ color:var(--muted);font:600 12px system-ui,sans-serif;font-variant-numeric:tabul
 #eqa .bcur span{display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}#eqa .bcur b{font-size:20px;font-variant-numeric:tabular-nums}
 #eqa .bwide{width:100%;justify-content:center;border-color:var(--acc);background:var(--accs);color:var(--acci)}#eqa .bconf{background:var(--wrb);border:1.5px solid #F59E0B;border-radius:12px;padding:10px 12px;color:var(--wr);font-size:13.5px}#eqa .bconf b{display:block}
 #eqa .bh{font-size:14px;margin:16px 0 8px;color:var(--acci)}#eqa .bhist{display:flex;flex-direction:column;gap:8px}
-#eqa .bhist div{border:1px solid var(--line);border-radius:12px;padding:8px 10px}#eqa .bhist b{display:block;font-size:13.5px}#eqa .bhist span{font-size:13px;color:var(--muted)}#eqa .bhist strong{color:var(--fg);font-variant-numeric:tabular-nums}
+#eqa .bhist>div{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:12px;padding:8px 10px}#eqa .bhist .bht{flex:1;min-width:0}
+#eqa .bhist>div.ask{background:var(--ulb);border-color:var(--ul)}#eqa .bhist .sq{flex:1;font-weight:700;color:var(--ul);font-size:13.5px}
+#eqa .bedit{display:flex;flex-direction:column;gap:10px;background:var(--soft);border:1.5px solid var(--acc);border-radius:12px;padding:12px}#eqa .bedit .foot{margin-top:4px}
+#eqa .bedit input{width:100%;box-sizing:border-box}#eqa .bedit .lbl i{font-style:normal;font-weight:400;color:var(--muted)}
+#eqa .bedate{display:flex;align-items:center;gap:10px}#eqa .bedate input{flex:1;min-width:0}#eqa .bedays{flex:none;font-size:13px;font-weight:600;color:var(--acci)}
+#eqa .seg4 button{padding-left:4px;padding-right:4px;font-size:13.5px}#eqa .bhist b{display:block;font-size:13.5px}#eqa .bhist span{font-size:13px;color:var(--muted)}#eqa .bhist strong{color:var(--fg);font-variant-numeric:tabular-nums}
 #eqa .sadd{min-height:52px;border:1.5px dashed var(--bline);border-radius:16px;background:transparent;color:var(--acci);font:700 15px system-ui,sans-serif;cursor:pointer}
 #eqa .stbig{display:block;width:100%;text-align:center;font-size:44px;margin:4px 0 8px}
 #eqa .presets{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}#eqa .presets .chip{min-height:34px;font-weight:600}

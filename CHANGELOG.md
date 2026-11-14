@@ -23,6 +23,33 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.6.1 – 2026-11-14
+
+### Neu
+- **Batteriesatz bearbeiten** (Einstellungen → Batterie → „Bearbeiten“): Eingelegt am (mit „= vor X Tagen“), Motorläufe bisher
+  und optional Verbindungen bisher eintragen – z. B. wenn die Batterien schon vor dem Update drin waren. Der ESP zählt von dort weiter.
+- **Vergangene Batteriewechsel löschen:** Mülleimer hinter jedem Eintrag im Verlauf, mit Rückfrage (springt nach 5 s zurück).
+  Vergangene Wechsel lassen sich nicht nachtragen oder bearbeiten.
+- **Kachel „Max gesamt“** zeigt darunter, wann (Wochentag + Uhrzeit, älter als eine Woche mit Datum) und wodurch die längste
+  Messung ausgelöst wurde. Dafür hat jede Messung in der Liste „Reaktionszeiten“ jetzt einen Zeitpunkt (Messungen von vor 3.6.1: nur die Quelle).
+- **Einstellung „Animationen“** (Einstellungen → Darstellung auf diesem Gerät, im Browser gespeichert): Automatisch · An · Langsam · Aus.
+  „Automatisch“ läuft bei „weniger Bewegung“ am Gerät langsam statt gar nicht – bisher fehlten dann die Lichtimpulse (z. B. auf Android).
+
+### Geändert
+- **Knöpfe in der Reihenfolge Zu · Auf · Öffnen.**
+- **Kein Farbsprung beim Neuladen:** Bis der Zustand da ist, bleibt das Schloss grau (statt orange „Motor läuft“). Die Web-App merkt sich
+  die Zustandsfarben im Browser, damit z. B. bei „Verriegelt rot“ nicht erst grün und dann rot erscheint.
+
+### Technisch
+- Neuer Text „Batterie-Befehl“ (Befehlskanal der Web-App, in HA standardmäßig ausgeblendet), Komponente: `battery_command()`,
+  `battery_edit()`, `battery_delete()`.
+- Liste „Reaktionszeiten“: `Aktion|Gesamt|Verbindung|Motor|Quelle|Zeit` (Unix-Sekunden, 0 = unbekannt). Gespeicherte Ereignisse und
+  Messungen aus 3.6.0 werden beim ersten Start übernommen.
+
+### ⚠️ Handlungsbedarf
+- Nur bei **eigenen Kopien der Hauptdatei**: den Eintrag `text:` → „Batterie-Befehl“ aus der neuen `eqiva-smart-lock-1.yaml` übernehmen
+  (sonst funktionieren „Bearbeiten“ und das Löschen im Batterie-Verlauf nicht) und `config_version` auf 3.6.1 setzen.
+
 ## 3.6.0 – 2026-11-14
 
 ### Neu
