@@ -3,7 +3,7 @@
 Fork von [digaus/esphome-components-eqiva](https://github.com/digaus/esphome-components-eqiva).
 Protokoll und Verschlüsselung sind unverändert. Die wichtigsten Änderungen:
 
-- **Sicherheit:** User Key beim Pairing aus dem Hardware-Zufallsgenerator (vorher per `rand()` erratbar), keine Schlüssel mehr im Log
+- **Sicherheit:** User Key beim Pairing aus dem Hardware-Zufallsgenerator (vorher per `rand()` erratbar), keine Schlüssel im Log, in Home Assistant oder in der Web-API, Längenprüfung aller Schloss-Antworten
 - **Zuverlässigkeit:** Watchdog für verlorene Antworten, Befehle verfallen statt verspätet ausgeführt zu werden, Speicherfehler und Abstürze behoben
 - **Energiemodi:** Schnell / Ausgewogen / Sparsam, live umschaltbar
 - **Web-App direkt auf dem ESP:** Bedienung, Pairing per QR-Text, Schlossantrieb einstellen, Kopplung entfernen (Schloss tauschen)
@@ -12,6 +12,8 @@ Protokoll und Verschlüsselung sind unverändert. Die wichtigsten Änderungen:
 - **Pairing abgesichert:** bei Fehlschlag oder Abbruch bleibt die bisherige Kopplung, Hinweis „Schloss nicht erreichbar“
 - **Neu in der Komponente:** RSSI-Sensor der Verbindung, `on_paired`-Auslöser, klare Meldungen bei fehlendem Pairing oder Pairing-Modus
 - **Beispiel-Konfiguration** in [`examples/`](examples/): Energiemodi, Testmodus ohne Schloss und optionale Pakete für R503-Fingerprint, Status-LED und bis zu 6 Zeitpläne; Zähler für Motorläufe und Verbindungen mit Batteriewechsel-Verlauf (optional mit zufälliger Abweichung, offline per SNTP)
+
+**Zuletzt im Betrieb mit ESPHome 2026.10.2** (je Version im [CHANGELOG](CHANGELOG.md); die laufende Version zeigt die Web-App unter Diagnose).
 
 Alle Details: [FORK-CHANGES.md](FORK-CHANGES.md)
 Versionen und Änderungen: [CHANGELOG.md](CHANGELOG.md)
@@ -43,7 +45,7 @@ Die Bilder zeigen Testdaten, keine echten Personen oder Bedienungen.
 
    ```yaml
    external_components:
-     - source: github://2nice4u/esphome-components-eqiva@v3.6.1
+     - source: github://2nice4u/esphome-components-eqiva@v3.6.2
    ```
 
    YAMLs und Komponente gehören zusammen. Für ein Update die Dateien des neuen

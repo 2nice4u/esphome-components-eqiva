@@ -1,6 +1,6 @@
 # Eqiva Key-BLE – gepatchte Version
 
-**Version 3.6.1** (2026-11-14) – Komponente mit Testmodus (simulate) und Ereignisprotokoll (`events`), Reaktionszeit (`reaction_time`, `reaction_list`, jetzt mit Aufschlüsselung Verbindung/Fingerprint/Motor), Zähler (`motor_runs`, `connects`, `battery_info`, `battery_changed()`, `battery_command()` zum Bearbeiten/Löschen), passend zu den Beispiel-YAMLs und der Anleitung mit gleicher Version.
+**Version 3.6.2** (2026-11-16) – Komponente mit Testmodus (simulate) und Ereignisprotokoll (`events`), Reaktionszeit (`reaction_time`, `reaction_list`, jetzt mit Aufschlüsselung Verbindung/Fingerprint/Motor), Zähler (`motor_runs`, `connects`, `battery_info`, `battery_changed()`, `battery_command()` zum Bearbeiten/Löschen), passend zu den Beispiel-YAMLs und der Anleitung mit gleicher Version.
 
 Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (Fix für ESPHome 2026.8).
 
@@ -50,6 +50,7 @@ Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (
 | 24 | (neu) | – | `forget_pairing()`: Kopplung vergessen (trennen, Schlüssel löschen, nicht mehr verbinden), z. B. beim Tausch des Schlosses |
 | 25 | Pairing überschrieb Schlüssel/User-ID sofort | Gescheitertes Neu-Pairing machte eine funktionierende Kopplung ungültig | Neue Daten erst nach Bestätigung, sonst alte Kopplung wiederhergestellt; Status-Abfrage direkt nach dem Pairing |
 | 26 | (neu) | – | `cancel_pair()`, Erreichbarkeit `unreachable_since()` (ab 2 gescheiterten Verbindungsversuchen), Ereignisse „Schloss nicht/wieder erreichbar“ |
+| 27 | Antworten des Schlosses ohne Längenprüfung gelesen (`substr()`/Index hinter dem Ende) | Zu kurze Antwort (z. B. von einem Gerät, das sich als Schloss ausgibt) bringt den ESP zum Absturz/Neustart | Fragment, Nonce- (≥ 10 Byte) und Statusantwort (≥ 3 Byte) werden geprüft und sonst verworfen; Getter in `eQ3_message.cpp` abgesichert |
 
 Ereignisprotokoll (optional):
 

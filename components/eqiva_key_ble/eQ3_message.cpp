@@ -9,7 +9,7 @@ using namespace std;
 // --[getStatusByte]------------------------------------------------------------
 // -----------------------------------------------------------------------------
 char eQ3Message::MessageFragment::getStatusByte() {
-    return data[0];
+    return data.empty() ? 0 : data[0];   // Patch: Längenprüfung
 }
 
 // -----------------------------------------------------------------------------
@@ -44,7 +44,7 @@ bool eQ3Message::MessageFragment::isComplete() {
 // --[getType]-----------------------------------------......-------------------
 // -----------------------------------------------------------------------------
 char eQ3Message::MessageFragment::getType() {
-    if (isFirst()) {
+    if (isFirst() && data.size() >= 2) {   // Patch: Längenprüfung
         return data[1];
     }
     return false;
@@ -54,7 +54,7 @@ char eQ3Message::MessageFragment::getType() {
 // --[getData]------------------------------------------------------------------
 // -----------------------------------------------------------------------------
 std::string eQ3Message::MessageFragment::getData() {
-    return data.substr(1);
+    return data.size() > 1 ? data.substr(1) : std::string();   // Patch: substr() hinter dem Ende = Absturz
 }
 
 // -----------------------------------------------------------------------------
@@ -99,28 +99,28 @@ eQ3Message::Connection_Info_Message::Connection_Info_Message() {
 // --[getUserId]----------------------------------------------------------------
 // -----------------------------------------------------------------------------
 char eQ3Message::Connection_Info_Message::getUserId() {
-    return data[1];
+    return data.size() > 1 ? data[1] : (char) 0xFF;   // Patch: Längenprüfung (0xFF = unbekannt)
 }
 
 // -----------------------------------------------------------------------------
 // --[getRemoteSessionNonce]----------------------------------------------------
 // -----------------------------------------------------------------------------
 string eQ3Message::Connection_Info_Message::getRemoteSessionNonce() {
-    return data.substr(2, 8);
+    return data.size() >= 10 ? data.substr(2, 8) : string();   // Patch: substr() hinter dem Ende = Absturz
 }
 
 // -----------------------------------------------------------------------------
 // --[getBootloaderVersion]-----------------------------------------------------
 // -----------------------------------------------------------------------------
 char eQ3Message::Connection_Info_Message::getBootloaderVersion() {
-    return data[11];
+    return data.size() > 11 ? data[11] : 0;   // Patch: Längenprüfung
 }
 
 // -----------------------------------------------------------------------------
 // --[getAppVersion]------------------------------------------------------------
 // -----------------------------------------------------------------------------
 char eQ3Message::Connection_Info_Message::getAppVersion() {
-    return data[12];
+    return data.size() > 12 ? data[12] : 0;   // Patch: Längenprüfung
 }
 
 // -----------------------------------------------------------------------------
@@ -141,7 +141,7 @@ eQ3Message::Status_Info_Message::Status_Info_Message() {
 // --[getLockStatus]------------------------------------------------------------
 // -----------------------------------------------------------------------------
 int eQ3Message::Status_Info_Message::getLockStatus() {
-    return data[2] & 0x07;
+    return data.size() > 2 ? (data[2] & 0x07) : 0;   // Patch: Längenprüfung
 }
 
 
@@ -149,14 +149,14 @@ int eQ3Message::Status_Info_Message::getLockStatus() {
 // --[isBatteryLow]------------------------------------------------------------
 // -----------------------------------------------------------------------------
 bool eQ3Message::Status_Info_Message::isBatteryLow() {
-    return (data[1] & (1 << 7)) != 0;
+    return data.size() > 1 && (data[1] & (1 << 7)) != 0;   // Patch: Längenprüfung
 }
 
 // -----------------------------------------------------------------------------
 // --[getUserRightType]---------------------------------------------------------
 // -----------------------------------------------------------------------------
 int eQ3Message::Status_Info_Message::getUserRightType() {
-    return (data[1] & 0x30) >> 4;
+    return data.size() > 1 ? (data[1] & 0x30) >> 4 : 0;   // Patch: Längenprüfung
 }
 
 // -----------------------------------------------------------------------------
@@ -242,14 +242,14 @@ eQ3Message::AnswerWithSecurityMessage::AnswerWithSecurityMessage() {
 // --[getA]---------------------------------------------------------------------
 // -----------------------------------------------------------------------------
 bool eQ3Message::AnswerWithSecurityMessage::getA() {
-    return (data[1] & 0x80) == 0;
+    return data.size() > 1 && (data[1] & 0x80) == 0;   // Patch: Längenprüfung
 }
 
 // -----------------------------------------------------------------------------
 // --[getB]---------------------------------------------------------------------
 // -----------------------------------------------------------------------------
 bool eQ3Message::AnswerWithSecurityMessage::getB() {
-    return (data[1] & 0x81) == 0;
+    return data.size() > 1 && (data[1] & 0x81) == 0;   // Patch: Längenprüfung
 }
 
 // -----------------------------------------------------------------------------

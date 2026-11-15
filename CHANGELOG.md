@@ -23,6 +23,35 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.6.2 – 2026-11-16
+
+Zuletzt im Betrieb mit **ESPHome 2026.10.2**.
+
+### Sicherheit
+- **User Key nicht mehr in Home Assistant und der Web-API:** „BLE Settings User Key“ ist jetzt intern. Der Schlüssel liegt nur
+  noch im Flash des ESP. Er erscheint nicht mehr als Zustand in HA (also auch nicht im Verlauf und in HA-Backups), lässt sich nicht
+  über die Web-API abrufen und wird beim Laden der Expertenansicht nicht mehr übertragen. Der gespeicherte Schlüssel bleibt beim
+  Update erhalten, **kein neues Pairing nötig**.
+  Zum Eintragen von Hand (z. B. Schlüssel aus keyble) gibt es „BLE Settings User Key eingeben“. Das Feld nimmt nur an und zeigt nichts an.
+- **Card Key nur noch im Arbeitsspeicher:** „BLE Pair Card Key“ behält keinen Wert mehr, der QR-Text wird nur fürs Pairing übergeben
+  und nach dem bestätigten Pairing gelöscht.
+- **Längenprüfungen beim Lesen der Schloss-Antworten:** Eine zu kurze oder verstümmelte Antwort wird verworfen. Vorher konnte sie den
+  ESP zum Absturz und Neustart bringen. So ließen sich Fingerprint und Zeitplan von außen lahmlegen.
+
+### Neu
+- **ESPHome-Version** als Diagnose-Sensor, in der Web-App unter Einstellungen → Diagnose. Die zuletzt funktionierende ESPHome-Version
+  steht ab jetzt bei jeder Version in diesem Changelog, in der README und oben in der Hauptdatei.
+
+### ⚠️ Handlungsbedarf
+- **Home Assistant aufräumen (empfohlen):** Die alte Entität „BLE Settings User Key“ zeigt danach „nicht verfügbar“. In HA löschen
+  (Einstellungen → Entitäten) und den alten Verlauf entfernen: Entwicklerwerkzeuge → Aktionen → `recorder.purge_entities` mit
+  `text.eqiva_smart_lock_1_ble_settings_user_key` und `text.eqiva_smart_lock_1_ble_pair_card_key`.
+  Ältere HA-Backups enthalten den Schlüssel weiterhin. Wer ganz sicher gehen will, paart neu (neuer Schlüssel) und trägt den alten
+  Benutzer in der Eqiva-App aus.
+- **Eigene Kopien der Hauptdatei:** Die Einträge `user_key`, `user_key_input` und `card_key` unter `text:`, `card_key_mem` unter
+  `globals:` sowie alle Stellen mit `id(card_key_mem)` (Pairing, `on_paired`, „Kopplung entfernen“) und den Sensor „ESPHome Version“
+  übernehmen; `config_version` auf 3.6.2.
+
 ## 3.6.1 – 2026-11-14
 
 ### Neu
