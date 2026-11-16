@@ -393,7 +393,10 @@ bool EqivaKeyBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t 
         eQ3Message::MessageFragment frag;
 
         frag.data = std::string((char *) param->notify.value, param->notify.value_len);
-        if (frag.data.empty()) {
+        // Längenprüfung: verstümmelte oder gefälschte Antworten verwerfen, statt über das Ende zu lesen
+        // (vorher konnte eine zu kurze Antwort den ESP zum Absturz/Neustart bringen)
+        if (frag.data.empty() || (frag.isFirst() && frag.data.size() < 2)) {
+          ESP_LOGW(TAG, "Antwort zu kurz (%u Bytes) – verworfen", (unsigned) frag.data.size());
           break;
         }
         auto msgtype = frag.getType();
@@ -479,6 +482,10 @@ bool EqivaKeyBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t 
           case 0x03: {
               // Nonce success
               ESP_LOGD(TAG, "Case 0x03");
+              if (msgdata.length() < 10) {   // Typ + User-ID + 8 Byte Nonce
+                ESP_LOGW(TAG, "Nonce-Antwort zu kurz (%u Bytes) – verworfen, neuer Versuch folgt", (unsigned) msgdata.length());
+                break;
+              }
               eQ3Message::Connection_Info_Message message;
               message.data = msgdata;
               clientState.user_id = message.getUserId();
@@ -544,6 +551,10 @@ bool EqivaKeyBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t 
           case 0x83: {
               ESP_LOGD(TAG, "Case 0x83");
               // status info
+              if (msgdata.length() < 3) {    // Typ + Flags + Zustand
+                ESP_LOGW(TAG, "Statusantwort zu kurz (%u Bytes) – verworfen", (unsigned) msgdata.length());
+                break;
+              }
               eQ3Message::Status_Info_Message message;
               message.data = msgdata;
               this->publish_(this->low_battery_sensor_, message.isBatteryLow() ? "true" : "false");

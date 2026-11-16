@@ -251,6 +251,16 @@ Zum Testen von Fingerprint, LEDs und Zeitplan, ohne das Schloss zu belasten: in 
 
 ## 11. Sicherheit
 
+**Schlüssel zum Schloss:** Der User Key (entsteht beim Pairing) liegt nur im Flash des ESP. Er erscheint nicht in Home Assistant und
+lässt sich nicht über die Web-Oberfläche abrufen, auch nicht mit dem Web-Passwort. Wer ihn hätte, könnte mit einem eigenen Gerät
+per Bluetooth öffnen, ohne über Ihren ESP zu gehen. Den Card Key (QR-Text der Keycard) behält der ESP nur bis zum bestätigten
+Pairing im Arbeitsspeicher. Einen Schlüssel von Hand übernehmen (z. B. aus keyble): bei **BLE Settings User Key eingeben**
+(Expertenansicht) die 32 Hex-Zeichen eintragen, dann **BLE Settings _Save_**. Das Feld zeigt den Schlüssel nie an.
+
+**ESPHome-Version:** Die Firmware wurde mit der Version gebaut, die unter Einstellungen → Diagnose steht. Mit welcher Version
+es zuletzt sicher lief, steht oben in `eqiva-smart-lock-1.yaml` und im Changelog. Klappt es nach einem ESPHome-Update nicht mehr,
+mit dieser Version kompilieren.
+
 **Montage:** Nur der Sensor gehört nach außen. ESP, Transistor und das Kabel zum Sensor bleiben innen und dürfen von außen nicht erreichbar sein – wer an das Kabel kommt, kann dem ESP einen „erkannten Finger“ vorspielen. Den Sensor von innen verschrauben bzw. verkleben, sodass er sich von außen nicht herausziehen lässt.
 
 **Sensor-Passwort** (empfohlen): Ohne Passwort kann jeder, der den Sensor abschraubt, ihn an einem eigenen Gerät auslesen oder Finger hinzufügen. So setzen Sie eines (8 Hex-Ziffern, z. B. `0x1A2B3C4D`):

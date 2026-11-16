@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.6.1 (2026-11-14) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.6.2 (2026-11-16) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.6.1';
+  const APP_VERSION = '3.6.2';
   const REPO = '2nice4u/esphome-components-eqiva';   // eigener Fork: nur diese Zeile ändern
   const GUIDE_URL = 'https://github.com/' + REPO + '/blob/main/docs/ANLEITUNG.md';
   const RELEASES_URL = 'https://github.com/' + REPO + '/releases';
@@ -914,6 +914,7 @@
     const add = (id, label, f) => { if (!has(id)) return; const v = val(id, null); diag.push(row(label, f && v !== null && isFinite(Number(v)) ? f(v) : (txt(id) || '–'))); };
     diag.push(row('App', APP_VERSION));
     add('text_sensor/Konfiguration Version', 'Firmware');
+    add('text_sensor/ESPHome Version', 'ESPHome');
     add('text_sensor/Lock BLE State', 'Bluetooth');
     add('sensor/Schloss Signal', 'Schloss Signal', (v) => Math.round(v) + ' dBm');
     add('sensor/WLAN Signal', 'WLAN Signal', (v) => Math.round(v) + ' dBm');
