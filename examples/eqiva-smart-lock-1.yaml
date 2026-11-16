@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # Eqiva Smart Lock – ESP32-C3 + optional R503 Fingerprint
-# Version 3.6.2 (2026-11-16) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.6.3 (2026-11-16) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 # Zuletzt im Betrieb mit ESPHome 2026.10.2 (Verlauf: CHANGELOG.md). Läuft eine neuere ESPHome-Version
 # nicht, mit dieser Version kompilieren. Die laufende Version steht in der Web-App unter Diagnose.
 # Für ein weiteres Schloss: Datei kopieren (eqiva-smart-lock-2.yaml),
@@ -9,7 +9,7 @@
 # (!secret kann keine Substitutions verwenden).
 # ---------------------------------------------------------------
 substitutions:
-  config_version: "3.6.2"   # Version dieser Konfiguration (siehe Kopfzeile)
+  config_version: "3.6.3"   # Version dieser Konfiguration (siehe Kopfzeile)
   lock_nr: "1"
   # --- Funktionen ein-/ausschalten: true = an, false = aus ---
   # (Nicht vorhandene Hardware einfach auf false setzen, sonst nichts ändern.)
@@ -182,7 +182,7 @@ packages:
 # Bei einem Update die Nummer zusammen mit config_version anpassen (gleiche Version).
 # Alternativ lokal: source: { type: local, path: eqiva_components }
 external_components:
-  - source: github://2nice4u/esphome-components-eqiva@v3.6.2
+  - source: github://2nice4u/esphome-components-eqiva@v3.6.3
 
 # ---------------------------------------------------------------
 # Eqiva BLE
@@ -194,6 +194,9 @@ esp32_ble_tracker:
   scan_parameters:
     window: 300ms
     continuous: false
+    # Passiv scannen: der ESP hört nur zu und fragt beim Schloss nicht nach (keine Scan-Anfragen).
+    # Das Schloss muss dann keine Zusatzantworten senden – schont seine Batterie. Verbinden geht unverändert.
+    active: false
 
 # Nur zur Diagnose: meldet jedes gefundene Eqiva-Schloss im Log ("Found Eqiva device ...").
 # Für den Betrieb nicht nötig (MAC kommt aus dem QR-Code). Bei Bedarf wieder einkommentieren.

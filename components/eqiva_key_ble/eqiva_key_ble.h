@@ -29,13 +29,14 @@ namespace eqiva_key_ble {
 using namespace esp32_ble_client;
 
 // Version der gepatchten Komponente (gehört zu den Beispiel-YAMLs mit gleicher Version)
-#define EQIVA_PATCH_VERSION "3.6.2"
+#define EQIVA_PATCH_VERSION "3.6.3"
 
 // Patch-Konstanten
 static const uint32_t SEND_TIMEOUT_MS = 3000;      // Timeout für Fragment-Write / Nonce-Antwort
 static const uint8_t MAX_NONCE_RETRIES = 3;        // danach Verbindung neu aufbauen
 static const uint8_t MSG_ID_STATUS_REQUEST = 0x82;
 static const uint32_t KEEPALIVE_MS = 240000;       // Schloss trennt nach ~5 min Inaktivität
+static const uint32_t DEBOUNCE_MS = 3000;          // derselbe Befehl innerhalb dieser Zeit wird ignoriert (solange unbestätigt)
 
 // Patch: Energiemodi
 enum PowerMode : uint8_t {
@@ -308,11 +309,14 @@ class EqivaKeyBle : public BLEClientBase {
         // Befehlskanal der Web-App (Text "Batterie-Befehl"):
         //   "set|Eingelegt (Unix)|Motorläufe|Verbindungen"  aktuellen Satz bearbeiten (Verbindungen leer = bleibt)
         //   "del|Nr|Start|Ende (Unix)"                    vergangenen Wechsel Nr (0 = jüngster) löschen
+        //   "hist|Start|Ende|Motorläufe|Verbindungen"     Wechsel aus einer Sicherung wiederherstellen (nur Import)
         void battery_command(const std::string &cmd);
         // aktuellen Satz bearbeiten: eingelegt seit (Unix-Zeit), Zählerstände; connects < 0 = unverändert
         bool battery_edit(uint32_t since, uint32_t motor, int64_t connects);
         // vergangenen Wechsel löschen (0 = jüngster); Start und Ende müssen passen, sonst wird nichts gelöscht
         bool battery_delete(uint8_t idx, uint32_t start, uint32_t end);
+        // Wechsel aus einer Sicherung in den Verlauf übernehmen (neuester zuerst, max. 3, keine Doppelten)
+        bool battery_restore_hist(uint32_t start, uint32_t end, uint32_t motor, uint32_t connects);
         // Ereignisprotokoll: Eintrag mit Uhrzeit (sofern bekannt) hinzufügen
         void log_event(const std::string &text);
         // Auslöser für den nächsten Befehl setzen (z. B. "Max", "Zeitplan 1"); gilt 3 s, sonst "HA/Web"

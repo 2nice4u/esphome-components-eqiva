@@ -334,7 +334,13 @@ bool EqivaKeyBle::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_if_t 
           read->handle
         );
         if (errRc != ESP_OK) {
-          ESP_LOGW(TAG, "register_for_notify fehlgeschlagen: %d", errRc);
+          // Ohne Anmeldung kommen keine Antworten vom Schloss: sofort neu verbinden, statt erst
+          // drei Nonce-Timeouts abzuwarten (ein wartender Befehl bleibt bis zum Timeout erhalten)
+          ESP_LOGW(TAG, "Anmeldung für Schloss-Meldungen fehlgeschlagen (%d) - verbinde neu", errRc);
+          write = nullptr;
+          read = nullptr;
+          this->disconnect();
+          break;
         }
 
         touch_();
@@ -606,8 +612,16 @@ void EqivaKeyBle::sendCommand(CommandType command) {
   // Neuer Befehl = neuer Versuch: angezeigten Bluetooth-Fehler zurücksetzen
   if (!ble_fail_.empty() || attempt_open_error_) { ble_fail_.clear(); attempt_open_error_ = false; this->update_ble_status_(); }
   if (command == LOCK || command == UNLOCK || command == OPEN) {
-    // Ereignisprotokoll: Auslöser merken, Bestätigung kommt über den Status
     const uint32_t now = millis();
+    // Entprellen: derselbe Befehl innerhalb von 3 s, solange der erste noch nicht bestätigt ist
+    // (Doppelklick, zwei Automationen gleichzeitig) – sonst zieht z. B. "Öffnen" die Falle zweimal
+    if (ev_pending_ == (int) command && (now - ev_pending_at_) < DEBOUNCE_MS) {
+      ESP_LOGI(TAG, "Doppelter Befehl %s nach %u ms ignoriert (erster läuft noch)",
+               command == LOCK ? "Zu" : (command == UNLOCK ? "Auf" : "Öffnen"), (unsigned) (now - ev_pending_at_));
+      cmd_source_.clear();
+      return;
+    }
+    // Ereignisprotokoll: Auslöser merken, Bestätigung kommt über den Status
     const bool src_ok = !cmd_source_.empty() && (now - cmd_source_at_) < 3000;
     ev_pending_ = (int) command;
     ev_pending_src_ = src_ok ? cmd_source_ : std::string("HA/Web");
@@ -1350,6 +1364,26 @@ bool EqivaKeyBle::battery_delete(uint8_t idx, uint32_t start, uint32_t end) {
   return true;
 }
 
+bool EqivaKeyBle::battery_restore_hist(uint32_t start, uint32_t end, uint32_t motor, uint32_t connects) {
+  if (end < 1600000000 || (start != 0 && start > end) || motor > 9999999 || connects > 9999999) {
+    ESP_LOGW(TAG, "Batteriewechsel wiederherstellen: ungültige Werte");
+    return false;
+  }
+  for (uint8_t i = 0; i < batt_n_; i++)
+    if (batt_hist_[i].start == start && batt_hist_[i].end == end) return true;   // schon vorhanden
+  // nach Ende sortiert einfügen (neuester zuerst); ist der Verlauf voll, fällt der älteste weg
+  uint8_t pos = 0;
+  while (pos < batt_n_ && batt_hist_[pos].end >= end) pos++;
+  if (pos >= 3) return false;   // älter als alle drei vorhandenen
+  for (int i = 2; i > pos; i--) batt_hist_[i] = batt_hist_[i - 1];
+  batt_hist_[pos] = {start, end, motor, connects};
+  if (batt_n_ < 3) batt_n_++;
+  ESP_LOGI(TAG, "Batteriewechsel aus Sicherung übernommen (%u Motorläufe, %u Verbindungen)", (unsigned) motor, (unsigned) connects);
+  this->publish_counters_();
+  this->cnt_save_();
+  return true;
+}
+
 void EqivaKeyBle::battery_command(const std::string &cmd) {
   std::vector<std::string> f;
   size_t a = 0;
@@ -1374,6 +1408,12 @@ void EqivaKeyBle::battery_command(const std::string &cmd) {
   if (f.size() == 4 && f[0] == "del" && num(f[1], x) && num(f[2], y) && num(f[3], w) && x < 3 && y <= 0xFFFFFFFFLL &&
       w <= 0xFFFFFFFFLL) {
     this->battery_delete((uint8_t) x, (uint32_t) y, (uint32_t) w);
+    return;
+  }
+  int64_t v = 0;
+  if (f.size() == 5 && f[0] == "hist" && num(f[1], x) && num(f[2], y) && num(f[3], z) && num(f[4], v) &&
+      x <= 0xFFFFFFFFLL && y <= 0xFFFFFFFFLL && z <= 0xFFFFFFFFLL && v <= 0xFFFFFFFFLL) {
+    this->battery_restore_hist((uint32_t) x, (uint32_t) y, (uint32_t) z, (uint32_t) v);
     return;
   }
   if (!cmd.empty()) ESP_LOGW(TAG, "Batterie-Befehl nicht erkannt: %s", cmd.c_str());

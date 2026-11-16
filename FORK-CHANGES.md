@@ -1,6 +1,6 @@
 # Änderungen in diesem Fork
 
-**Version 3.6.2** (2026-11-16) – Komponente, Beispiel-YAMLs und Anleitung tragen dieselbe Versionsnummer.
+**Version 3.6.3** (2026-11-16) – Komponente, Beispiel-YAMLs und Anleitung tragen dieselbe Versionsnummer.
 1.1.0: Fingerprint-Paket mit Zuordnung Person/Hand/Finger, Aktion pro Finger (inkl. Umschalten), Ring-Rückmeldung und Scan-Pause.
 1.1.1: Pinbelegung als Substitutions, R503-Stromabschaltung per PNP-Transistor (sensor_power_pin), mehrere Status-LEDs.
 1.2.0: Paket Zeitplan (2 Zeitpläne mit Uhrzeit, Wochentagen und Aktion, SNTP).
@@ -52,6 +52,7 @@
 3.6.0: Neon-Schloss im Platinen-Stil statt Haus (Tag/Nacht, Zu · Öffnen · Auf), Zähler Motorläufe/Verbindungen fest eingebaut, „Batterien gewechselt“ mit Verlauf der letzten 3 Wechsel, Mülleimer in der Zeitplan-Liste; Statistik-Paket entfällt (leere Hülle).
 3.6.1: Batteriesatz bearbeiten, vergangene Batteriewechsel löschen, „Max gesamt“ mit Zeitpunkt und Quelle, Einstellung „Animationen“ (Automatisch/An/Langsam/Aus), Knöpfe Zu · Auf · Öffnen, graues Schloss beim Laden ohne Farbsprung.
 3.6.2: User Key nur noch intern im Flash (nicht in HA/Web-API), Card Key nur im Arbeitsspeicher, Längenprüfungen beim Lesen der Schloss-Antworten (kein Absturz durch verstümmelte Antworten), Sensor „ESPHome Version“; zuletzt im Betrieb mit ESPHome 2026.10.2.
+3.6.3: Sicherung der Einstellungen als Datei (ohne Schlüssel), passives Scannen, doppelte Befehle werden ignoriert, sofortiger Neuaufbau bei fehlgeschlagener Notify-Anmeldung, bündige Zahlenfelder, `address_str_to()` für ESPHome 2027.2, README auf Englisch + README.de.md.
 
 Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (Fix für ESPHome 2026.8).
 
@@ -59,7 +60,7 @@ Basis: github.com/digaus/esphome-components-eqiva, Stand `main` vom 22.08.2026 (
 
 ```yaml
 external_components:
-  - source: github://DEIN-GITHUB-NAME/esphome-components-eqiva@v3.6.2
+  - source: github://DEIN-GITHUB-NAME/esphome-components-eqiva@v3.6.3
 ```
 
 Vollständiges Beispiel mit Web-GUI, Energiemodi, Pairing-Info, optionalem R503-Fingerprint und Status-LED:
