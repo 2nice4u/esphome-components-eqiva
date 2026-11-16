@@ -23,6 +23,32 @@ Die Nummern bis 1.3.0 wurden nicht ganz nach diesen Regeln vergeben; der Handlun
 dort nur die unter „Handlungsbedarf“ genannten Stellen übernehmen. Pakete, `app.js` und `eqiva_components/`
 werden von allen Schlössern gemeinsam genutzt und einfach ersetzt.
 
+## 3.6.3 – 2026-11-16
+
+Zuletzt im Betrieb mit **ESPHome 2026.10.2**.
+
+### Neu
+- **Sicherung der Einstellungen** (Einstellungen → Sicherung): Exportieren lädt eine Datei mit allen Einstellungen, Zeitplänen
+  und den Batterie-Daten herunter. **Ohne Schlüssel** (User Key, Card Key), User-ID und MAC, also lässt sich damit keine Tür öffnen.
+  Einspielen zeigt vorher jede Änderung (alt → neu) und schickt nur geänderte Werte; die Batterie-Daten sind abschaltbar.
+- **README auf Englisch** (`README.md`) mit deutscher Fassung (`README.de.md`) und Sprachumschalter oben.
+
+### Geändert
+- **Passiv scannen:** Der ESP fragt beim Schloss nicht mehr per Scan-Anfrage nach, das Schloss muss keine Zusatzantworten
+  mehr senden. Das schont die Batterie im Schloss; Verbinden und Reaktionszeit bleiben gleich.
+- **Doppelte Befehle werden ignoriert:** derselbe Befehl innerhalb von 3 s, solange der erste noch läuft (z. B. Doppelklick in HA,
+  zwei Automationen gleichzeitig). Vorher zog „Öffnen“ die Falle dann zweimal. Ein anderer Befehl geht immer durch.
+- **Anmeldung für Schloss-Meldungen fehlgeschlagen:** sofort neu verbinden, statt erst drei Nonce-Timeouts abzuwarten.
+- **Einstellungen:** Zahlenfelder stehen bündig untereinander, auch wenn bei manchen eine Einheit (s, min, ms) dahinter steht.
+- **ESPHome 2027.2 vorbereitet:** `eqiva_ble` nutzt `address_str_to()` statt des veralteten `address_str()`.
+
+### Technisch
+- Batterie-Befehl `hist|Start|Ende|Motorläufe|Verbindungen` (nur für das Einspielen einer Sicherung; neuester zuerst, max. 3, keine Doppelten).
+
+### ⚠️ Handlungsbedarf
+- Nur bei **eigenen Kopien der Hauptdatei:** unter `esp32_ble_tracker: scan_parameters:` die Zeile `active: false` ergänzen
+  (empfohlen, nicht nötig) und `config_version` auf 3.6.3 setzen.
+
 ## 3.6.2 – 2026-11-16
 
 Zuletzt im Betrieb mit **ESPHome 2026.10.2**.

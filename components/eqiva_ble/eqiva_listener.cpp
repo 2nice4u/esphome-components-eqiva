@@ -13,7 +13,8 @@ bool EqivaListener::parse_device(const esp32_ble_tracker::ESPBTDevice &device) {
     for (auto &it : device.get_manufacturer_datas()) {
         if (it.uuid == esp32_ble_tracker::ESPBTUUID::from_uint16(0x1A00)) {
             char uuid_buf[37];  // ESPBTUUID::UUID_STR_LEN
-            ESP_LOGI(TAG, "Found Eqiva device (MAC: %s) (UUID): %s  (Name): %s", device.address_str().c_str(), it.uuid.to_str(uuid_buf), device.get_name().c_str());
+            char addr_buf[18];  // "XX:XX:XX:XX:XX:XX" – address_str() entfällt in ESPHome 2027.2
+            ESP_LOGI(TAG, "Found Eqiva device (MAC: %s) (UUID): %s  (Name): %s", device.address_str_to(addr_buf), it.uuid.to_str(uuid_buf), device.get_name().c_str());
             return true;
         }
     }

@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------
 # Statistik – ENTFÄLLT ab 3.6.0 (leere Hülle)
-# Version 3.6.2 (2026-11-16) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+# Version 3.6.3 (2026-11-16) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 #
 # Die Zähler (Motorläufe, Verbindungsaufbauten) sind jetzt fest in der Komponente eingebaut und
 # werden mit "Batterien gewechselt" zurückgesetzt (Verlauf der letzten 3 Wechsel in der Web-App).
@@ -20,6 +20,6 @@ script:
   - id: ver_check_stats
     then:
       - lambda: |-
-          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.6.2") == 0,
-                        "Versionskonflikt: eqiva-smart-lock-stats.yaml ist 3.6.2, Hauptdatei ist ${config_version} "
+          static_assert(!(${version_check}) || __builtin_strcmp("${config_version}", "3.6.3") == 0,
+                        "Versionskonflikt: eqiva-smart-lock-stats.yaml ist 3.6.3, Hauptdatei ist ${config_version} "
                         "(alle Dateien gleicher Version verwenden oder version_check: false)");

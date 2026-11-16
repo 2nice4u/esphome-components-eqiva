@@ -1,5 +1,5 @@
 // Eqiva Smart Lock – Web-App für die ESPHome-Web-GUI
-// Version 3.6.2 (2026-11-16) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
+// Version 3.6.3 (2026-11-16) – alle Dateien mit gleicher Version gehören zusammen (inkl. eqiva_components)
 // Wird über "web_server: js_include: eqiva-smart-lock-app.js" in die Firmware eingebettet (gzip, ca. 15 KB).
 // Liest alle Werte live über /events (Server-Sent Events) und bedient über die REST-Schnittstelle
 // des ESP (POST /<domain>/<Name>/<aktion>). Läuft ohne Internet. Die ESPHome-Tabelle bleibt als
@@ -7,7 +7,7 @@
 // Fehlt ein Paket (Fingerprint, Zeitplan, …), blendet die App den Bereich einfach aus.
 (function () {
   'use strict';
-  const APP_VERSION = '3.6.2';
+  const APP_VERSION = '3.6.3';
   const REPO = '2nice4u/esphome-components-eqiva';   // eigener Fork: nur diese Zeile ändern
   const GUIDE_URL = 'https://github.com/' + REPO + '/blob/main/docs/ANLEITUNG.md';
   const RELEASES_URL = 'https://github.com/' + REPO + '/releases';
@@ -20,6 +20,7 @@
     anim: load('eqa-anim', 'auto'),  // Animationen auf diesem Gerät: auto / on / slow / off
     sc: load('eqa-sc', ''),          // zuletzt gesehene Zustandsfarben (gegen Farbsprung beim Neuladen)
     bedit: null,                     // Batteriesatz bearbeiten (Formular)
+    imp: null,                       // Sicherung einspielen: geprüfte Datei mit Änderungen
     wiz: null,                       // Anlern-/Zuordnungs-Assistent
     pair: null,                      // Pairing-Assistent (Card Key nur im Speicher der Seite)
     sheet: null,                     // geöffnetes Detailfenster (Finger, Person, Platz)
@@ -286,6 +287,8 @@
     check: '<path d="M5 12l5 5L20 7"/>',
     x: '<path d="M6 6l12 12M18 6L6 18"/>',
     edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
+    download: '<path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/>',
+    upload: '<path d="M12 20V9"/><path d="M7 14l5-5 5 5"/><path d="M5 4h14"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     auto: '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>',
     bt: '<path d="M7 7l10 10-5 5V2l5 5L7 17"/>',
@@ -343,7 +346,7 @@
     const e = E[id];
     return '<label class="row"><span>' + esc(label || e.name) + '</span><span class="numw"><input type="number" inputmode="decimal" data-c="num" data-x="' + esc(id) +
       '" data-k="' + esc(id) + '" value="' + esc(val(id, '')) + '" min="' + esc(e.min_value || '') + '" max="' + esc(e.max_value || '') + '" step="' + esc(e.step || 1) + '">' +
-      (e.uom ? '<span class="uom">' + esc(e.uom) + '</span>' : '') + '</span></label>';
+      '<span class="uom">' + esc(e.uom || '') + '</span></span></label>';   // feste Breite, auch ohne Einheit: Felder bündig
   }
 
   // ---------------------------------------------------------------- Ansichten
@@ -872,6 +875,87 @@
     }
     return card(h);
   }
+  // Sicherung: Einstellungen als Datei exportieren und wieder einspielen – OHNE Schlüssel (User Key, Card Key)
+  // und ohne Kopplungsdaten. Damit lässt sich mit der Datei keine Tür öffnen; nach einem neuen Pairing
+  // (z. B. ESP getauscht oder Speicher neu aufgeteilt) stellt sie alles andere wieder her.
+  const BK_SKIP = /^(text\/(BLE |Batterie-Befehl$|Person$|Neuer Name$)|select\/(Hand|Finger|Aktion dieses Fingers|Log-Stufe)$|number\/(BLE Settings User ID|Speicherplatz \(Nr\.\))$|(switch|number)\/Simulation)/;
+  const BK_DOMAINS = ['select', 'number', 'switch', 'text'];
+  const bkValue = (id) => { const d = id.slice(0, id.indexOf('/'));
+    return d === 'switch' ? on(id) : d === 'number' ? Number(val(id, NaN)) : txt(id); };
+  function bkCollect() {
+    const set = {};
+    Object.keys(E).sort().forEach((id) => {
+      if (!BK_DOMAINS.includes(id.slice(0, id.indexOf('/'))) || BK_SKIP.test(id)) return;
+      const v = bkValue(id);
+      if (typeof v === 'number' && !isFinite(v)) return;
+      set[id] = v;
+    });
+    const b = battInfo();
+    return { format: 'eqiva-smart-lock-settings', version: 1, app: APP_VERSION, device: S.title || '', exported: new Date().toISOString(),
+      note: 'Ohne Schlüssel und Kopplungsdaten – Schloss danach neu pairen', settings: set,
+      battery: b ? { since: b.since, motor: Math.round(Number(val('sensor/Motorläufe', b.motor))), conn: Math.round(Number(val('sensor/Verbindungsaufbauten', b.conn))), hist: b.hist } : null };
+  }
+  function bkExport() {
+    const d = bkCollect(), day = isoDay(Date.now() / 1000);
+    const name = (S.title || 'eqiva-smart-lock').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-einstellungen-' + day + '.json';
+    const url = URL.createObjectURL(new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' }));
+    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast(Object.keys(d.settings).length + ' Einstellungen gesichert (ohne Schlüssel)');
+  }
+  // Datei prüfen und Änderungen gegenüber dem jetzigen Stand ermitteln (nur geänderte Werte werden geschickt)
+  function bkPrepare(text) {
+    let d;
+    try { d = JSON.parse(text); } catch (e) { return { err: 'Die Datei ist keine gültige Sicherung (kein JSON).' }; }
+    if (!d || d.format !== 'eqiva-smart-lock-settings' || typeof d.settings !== 'object') return { err: 'Die Datei ist keine Sicherung dieser Web-App.' };
+    const changes = [], missing = [];
+    Object.keys(d.settings).forEach((id) => {
+      if (BK_SKIP.test(id) || !BK_DOMAINS.includes(id.slice(0, id.indexOf('/')))) return;   // Schlüssel o. Ä. nie übernehmen
+      if (!has(id)) { missing.push(id); return; }
+      const v = d.settings[id], cur = bkValue(id), dom = id.slice(0, id.indexOf('/'));
+      if (dom === 'switch' ? !!v === cur : dom === 'number' ? Number(v) === cur : String(v) === cur) return;
+      if (dom === 'select' && E[id].option && E[id].option.length && !E[id].option.includes(String(v))) { missing.push(id); return; }
+      changes.push({ id, v, cur });
+    });
+    const b = d.battery && d.battery.since > 1600000000 ? d.battery : null;
+    return { d, changes, missing, batt: !!b, battData: b };
+  }
+  function bkSteps(imp) {
+    const st = imp.changes.map((c) => { const dom = c.id.slice(0, c.id.indexOf('/'));
+      return dom === 'switch' ? [c.id, c.v ? 'turn_on' : 'turn_off'] : dom === 'select' ? [c.id, 'set', { option: String(c.v) }] : [c.id, 'set', { value: String(c.v) }]; });
+    const b = imp.battData;
+    if (imp.batt && b && has('text/Batterie-Befehl')) {
+      st.push(['text/Batterie-Befehl', 'set', { value: 'set|' + b.since + '|' + Math.max(0, Math.round(b.motor || 0)) + '|' + Math.max(0, Math.round(b.conn || 0)) }]);
+      (b.hist || []).slice(0, 3).forEach((x) => { if (x && x.end > 1600000000)
+        st.push(['text/Batterie-Befehl', 'set', { value: 'hist|' + (x.start || 0) + '|' + x.end + '|' + Math.max(0, Math.round(x.motor || 0)) + '|' + Math.max(0, Math.round(x.conn || 0)) }]); });
+    }
+    return st;
+  }
+  function viewBackup() {
+    const label = (id) => id.slice(id.indexOf('/') + 1);
+    const fmt = (v) => v === true ? 'an' : v === false ? 'aus' : v === '' ? '(leer)' : String(v);
+    let h = '<h3>Sicherung</h3><p class="muted small">Exportiert alle Einstellungen, Zeitpläne und den Batterie-Verlauf als Datei – <b>ohne Schlüssel</b> und ohne Kopplung. ' +
+      'Mit der Datei lässt sich also keine Tür öffnen. Nach dem Einspielen das Schloss bei Bedarf neu pairen; die Finger bleiben im Sensor gespeichert.</p>';
+    const imp = S.imp;
+    if (imp && imp.err) {
+      h += '<div class="bconf"><b>Einspielen nicht möglich</b><span>' + esc(imp.err) + '</span><div class="foot">' + btn('imp-cancel', 'OK', 'b') + '</div></div>';
+    } else if (imp) {
+      const b = imp.battData, other = imp.d.device && S.title && imp.d.device !== S.title;
+      h += '<div class="bedit"><b>Sicherung einspielen?</b><span class="muted small">Vom ' + esc(new Date(imp.d.exported).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })) +
+        (imp.d.device ? ' · ' + esc(imp.d.device) : '') + (imp.d.app ? ' · App ' + esc(imp.d.app) : '') + '</span>' +
+        (other ? '<div class="knauf sm">' + icon('alert', 18) + '<span>Die Sicherung stammt von „' + esc(imp.d.device) + '“, dieses Gerät heißt „' + esc(S.title) + '“.</span></div>' : '') +
+        (imp.changes.length ? '<div class="bkl">' + imp.changes.map((c) => '<div><span>' + esc(label(c.id)) + '</span><span><s>' + esc(fmt(c.cur)) + '</s> → <b>' + esc(fmt(c.v)) + '</b></span></div>').join('') + '</div>' :
+          '<span>Alle Einstellungen sind schon auf diesem Stand.</span>') +
+        (b ? '<div class="row"><span>Batterie-Daten übernehmen<small class="muted"> seit ' + esc(fmtDate(b.since, true)) + ' · ' + esc(fmtInt(b.motor)) + ' Motorläufe · ' + ((b.hist || []).length) + ' Wechsel</small></span>' +
+          '<button type="button" class="sw' + (imp.batt ? ' on' : '') + '" role="switch" aria-checked="' + imp.batt + '" aria-label="Batterie-Daten übernehmen" data-a="imp-batt"><span></span></button></div>' : '') +
+        (imp.missing.length ? '<span class="muted small">' + imp.missing.length + ' Einträge gibt es auf diesem Gerät nicht (z. B. Paket nicht aktiv) – werden übersprungen.</span>' : '') +
+        '<div class="foot">' + btn('imp-cancel', 'Abbrechen', 'b') + btn('imp-apply', 'Einspielen', 'b pri', undefined, (imp.changes.length || (b && imp.batt)) ? '' : ' disabled') + '</div></div>';
+    } else {
+      h += '<div class="foot">' + btn('bk-export', icon('download', 18) + 'Exportieren', 'b') + btn('imp-pick', icon('upload', 18) + 'Einspielen', 'b') + '</div>' +
+        '<input type="file" accept=".json,application/json" data-c="imp-file" hidden>';
+    }
+    return card(h);
+  }
   // Darstellung auf diesem Gerät (im Browser gespeichert)
   function viewDisplay() {
     const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -922,6 +1006,7 @@
     add('sensor/Uptime', 'Laufzeit', (v) => { v = +v; const d = Math.floor(v / 86400), hh = Math.floor(v % 86400 / 3600), mm = Math.floor(v % 3600 / 60); return (d ? d + ' T ' : '') + hh + ' h ' + mm + ' min'; });
     add('text_sensor/Pairing-Info', 'Pairing');
     add('sensor/Fingerabdrücke gespeichert', 'Fingerabdrücke', (v) => Math.round(v));
+    h += viewBackup();
     h += card('<h3>Diagnose</h3>' + diag.join(''));
     h += '<div class="links"><a class="b lnk" href="' + GUIDE_URL + '" target="_blank" rel="noopener">' + icon('book', 18) + 'Anleitung</a>' +
       btn('expert', icon('table', 18) + 'Expertenansicht', 'b lnk') + '</div>';
@@ -1076,6 +1161,16 @@
         return run([['text/Batterie-Befehl', 'set', { value: 'del|' + (+x) + '|' + hx.start + '|' + hx.end }]], 'Batteriewechsel gelöscht');
       }
       case 'anim': S.anim = x; save('eqa-anim', x); break;
+      case 'bk-export': bkExport(); return;
+      case 'imp-pick': { const f = root.querySelector('input[data-c="imp-file"]'); if (f) f.click(); return; }
+      case 'imp-cancel': S.imp = null; break;
+      case 'imp-batt': if (S.imp) S.imp.batt = !S.imp.batt; break;
+      case 'imp-apply': {
+        const imp = S.imp, st = imp ? bkSteps(imp) : [];
+        S.imp = null;
+        if (!st.length) break;
+        return run(st, 'Sicherung eingespielt (' + imp.changes.length + ' Einstellungen' + (imp.batt && imp.battData ? ', Batterie-Daten' : '') + ')');
+      }
       case 'sched-askdel': {   // Mülleimer: Zeile fragt nach, springt nach 5 s ohne Antwort zurück
         S.confirm = 'sdel' + x; const c = S.confirm;
         clearTimeout(S.sdelT); S.sdelT = setTimeout(() => { if (S.confirm === c) { S.confirm = ''; draw(); } }, 5000);
@@ -1175,6 +1270,11 @@
     else if (c === 'num' && n.value !== '') run([[n.dataset.x, 'set', { value: n.value }]]);
     else if (c === 'time' && n.value) run([[n.dataset.x, 'set', { value: n.value.length === 5 ? n.value + ':00' : n.value }]]);
     else if (c === 'w-newperson') { n.blur(); draw(); }
+    else if (c === 'imp-file' && n.files && n.files[0]) {
+      const f = n.files[0];
+      if (f.size > 200000) { S.imp = { err: 'Die Datei ist zu groß für eine Sicherung.' }; draw(); return; }
+      f.text().then((t) => { S.imp = bkPrepare(t); draw(); }, () => { S.imp = { err: 'Die Datei konnte nicht gelesen werden.' }; draw(); });
+    }
   }
 
   // ---------------------------------------------------------------- Darstellung, Expertenansicht
@@ -1320,7 +1420,7 @@ color:var(--muted);font:600 12px system-ui,sans-serif;font-variant-numeric:tabul
 #eqa .row>span:first-child{font-weight:600}#eqa .row .v{font-weight:400;color:var(--muted);text-align:right;overflow-wrap:anywhere}
 #eqa .fld{display:block;padding:8px 0}
 #eqa input[type=text],#eqa input[type=number],#eqa input[type=date],#eqa select{min-height:44px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif;width:100%}
-#eqa .numw{display:flex;align-items:center;gap:6px;flex:none}#eqa .numw input{width:96px;text-align:right}#eqa .uom{font-size:13px;color:var(--muted)}
+#eqa .numw{display:flex;align-items:center;gap:6px;flex:none}#eqa .numw input{width:96px;text-align:right}#eqa .uom{font-size:13px;color:var(--muted);width:2.6em;flex:none}
 #eqa .seg{display:grid;grid-auto-columns:minmax(0,1fr);grid-auto-flow:column;gap:6px}
 #eqa .seg button{min-height:42px;border:1px solid var(--bline);border-radius:10px;background:transparent;color:var(--fg);font:600 13px system-ui,sans-serif;cursor:pointer}
 #eqa .seg button.sel,#eqa .pick.sel,#eqa .opt.sel,#eqa .days button.sel{border-color:var(--acc);box-shadow:0 0 0 1.5px var(--acc);background:var(--accs);color:var(--acci);font-weight:800}
@@ -1363,6 +1463,10 @@ color:var(--muted);font:600 12px system-ui,sans-serif;font-variant-numeric:tabul
 #eqa .bedit{display:flex;flex-direction:column;gap:10px;background:var(--soft);border:1.5px solid var(--acc);border-radius:12px;padding:12px}#eqa .bedit .foot{margin-top:4px}
 #eqa .bedit input{width:100%;box-sizing:border-box}#eqa .bedit .lbl i{font-style:normal;font-weight:400;color:var(--muted)}
 #eqa .bedate{display:flex;align-items:center;gap:10px}#eqa .bedate input{flex:1;min-width:0}#eqa .bedays{flex:none;font-size:13px;font-weight:600;color:var(--acci)}
+#eqa .bedit .row{min-height:44px;border-top:0}#eqa .bedit .row small{display:block;font-size:12px;font-weight:400}
+#eqa .bkl{display:flex;flex-direction:column;max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+#eqa .bkl div{display:flex;justify-content:space-between;gap:10px;padding:6px 10px;font-size:13px;border-top:1px solid var(--line)}#eqa .bkl div:first-child{border-top:0}
+#eqa .bkl s{color:var(--muted)}#eqa .bkl span:last-child{text-align:right;flex:none;max-width:55%;overflow-wrap:anywhere}
 #eqa .seg4 button{padding-left:4px;padding-right:4px;font-size:13.5px}#eqa .bhist b{display:block;font-size:13.5px}#eqa .bhist span{font-size:13px;color:var(--muted)}#eqa .bhist strong{color:var(--fg);font-variant-numeric:tabular-nums}
 #eqa .sadd{min-height:52px;border:1.5px dashed var(--bline);border-radius:16px;background:transparent;color:var(--acci);font:700 15px system-ui,sans-serif;cursor:pointer}
 #eqa .stbig{display:block;width:100%;text-align:center;font-size:44px;margin:4px 0 8px}

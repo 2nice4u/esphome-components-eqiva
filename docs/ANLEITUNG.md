@@ -13,7 +13,7 @@ Sie läuft direkt auf dem ESP, auch ohne Internet, am Handy und am PC.
 | **Schloss** | Bedienfeld mit Neon-Schloss (Zustand, Zu · Auf · Öffnen), Batterie, Empfang, Motorläufe, Verbindungen, Energiemodus, Bluetooth, „Ereignisse und Reaktionszeit“ |
 | **Fingerprint** | Personen mit ihren Fingern; Finger antippen = Aktion ändern, neu anlernen, löschen; Stift = Person umbenennen; „+ Anlernen“ = Assistent |
 | **Zeitplan** | bis zu 6 Zeitpläne als Liste: antippen = bearbeiten, Schalter Ein/Aus, 🗑 = löschen, + Zeitplan |
-| **Einstellungen** | Einrichtung (Pairing, Schlossantrieb, Neustart), Energiemodus, Zustandsfarben, Türgriff, Batterie, Animationen, Fingerprint, Sabotage-Erkennung, Diagnose |
+| **Einstellungen** | Einrichtung (Pairing, Schlossantrieb, Neustart), Energiemodus, Zustandsfarben, Türgriff, Batterie, Animationen, Fingerprint, Sabotage-Erkennung, Sicherung, Diagnose |
 
 - **Kopfzeile** (auf allen Seiten): links das Schloss-Symbol in der Farbe des Zustands (grün zu, rot auf, blau geöffnet, grau Motor läuft) und der Zustand als Wort, daneben die **Version** (z. B. „v3.5.9 ↗“, öffnet die Release-Übersicht auf GitHub; leuchtet blau und pulsiert, wenn es eine neuere Version gibt); rechts der Umschalter **Automatisch · Hell · Dunkel** (drei runde Knöpfe, der gewählte mit blauem Ring) und darunter die **Uhrzeit des ESP**. Steht dort ein gelbes „⚠ --:--“, kennt der ESP keine Uhrzeit – der Zeitplan pausiert dann.
 - **Bedienfeld (Startseite):** ein gläsernes Neon-Schloss auf Leiterbahnen mit Vias, über die Lichtimpulse laufen – grün verriegelt, rot aufgeschlossen/geöffnet, orange Motor läuft, gelb unbekannt. Aufgeschlossen fährt der **Bügel nach oben** (rechts offen), verriegelt sitzt er unten. Im Tagmodus mit farbigen Konturen, im Nachtmodus mit hellen Neon-Konturen; das Schloss hat keinen eigenen Hintergrund. Darunter groß der Zustand und drei Knöpfe **Zu · Auf · Öffnen** mit farbigem Doppelring (der Knopf des aktuellen Zustands ist kräftig gefüllt). Beim Laden der Seite ist das Schloss grau, bis der Zustand vom ESP da ist.
@@ -99,7 +99,9 @@ Was „Öffnen“ macht, hängt von der Auswahl **„Türgriff außen“** (Schl
 
 > **Am Tisch (ohne Tür und Zylinder)** findet das Schloss beim Öffnen keinen Anschlag: Der Motor dreht dann lange (ca. 25 s) und meldet danach nur „auf“. Die Ereignisse zeigen trotzdem „🚪 …“, sobald 10 s nach „auf“ kein OPENED kommt. Zum Testen am Tisch „Türgriff außen“ auf **Türklinke** stellen.
 
-**Ereignisse** zeigt die letzten 10 Ereignisse, neueste zuerst, z. B. `18:42 🔓 Max R-Daumen (1,6 s) · 18:05 🔒 Zeitplan 1 (2,4 s) · 17:30 🖐 🔓 von Hand · 06.11. 22:10 🔔 unbekannter Finger`. **HA/Web** = Home Assistant oder die Web-GUI · **🖐 von Hand** = Schlüssel, Drehknauf oder Taste am Schloss · **✗** = Befehl nicht ausgeführt (Grund in Klammern) · ⛔ abgewiesen · ❓ unbekannter Finger · ⚠️ Sabotage. Ältere Einträge fallen weg, wenn die 255 Zeichen von Home Assistant voll sind; alle stehen im Log. „Von Hand“ erkennt der ESP, sobald das Schloss den neuen Zustand meldet – auch direkt nach einem Befehl (z. B. zugeschlossen und gleich wieder von Hand aufgedreht). Nur 10 s nach „Öffnen“ (Falle springt zurück) und nach einem nicht ausgeführten Befehl zählt eine Drehung nicht. Im Energiemodus „Sparsam“ meldet das Schloss nur, solange die Verbindung besteht (nach einem Befehl standardmäßig 30 s); sonst sieht der ESP die Handbedienung erst beim nächsten Verbinden und nur den Endzustand. Nach einem Neustart ist die Liste leer.
+**Ereignisse** zeigt die letzten 10 Ereignisse, neueste zuerst, z. B. `18:42 🔓 Max R-Daumen (1,6 s) · 18:05 🔒 Zeitplan 1 (2,4 s) · 17:30 🖐 🔓 von Hand · 06.11. 22:10 🔔 unbekannter Finger`. **HA/Web** = Home Assistant oder die Web-GUI · **🖐 von Hand** = Schlüssel, Drehknauf oder Taste am Schloss · **✗** = Befehl nicht ausgeführt (Grund in Klammern) · ⛔ abgewiesen · ❓ unbekannter Finger · ⚠️ Sabotage. Ältere Einträge fallen weg, wenn die 255 Zeichen von Home Assistant voll sind; alle stehen im Log. „Von Hand“ erkennt der ESP, sobald das Schloss den neuen Zustand meldet – auch direkt nach einem Befehl (z. B. zugeschlossen und gleich wieder von Hand aufgedreht). Nur 10 s nach „Öffnen“ (Falle springt zurück) und nach einem nicht ausgeführten Befehl zählt eine Drehung nicht. Im Energiemodus „Sparsam“ meldet das Schloss nur, solange die Verbindung besteht (nach einem Befehl standardmäßig 30 s); sonst sieht der ESP die Handbedienung erst beim nächsten Verbinden und nur den Endzustand. Die Liste bleibt über einen Neustart erhalten.
+
+**Doppelte Befehle:** Kommt derselbe Befehl innerhalb von 3 s noch einmal, während der erste noch läuft (Doppelklick, zwei Automationen gleichzeitig), wird der zweite ignoriert und nur im Log vermerkt. Sonst würde z. B. „Öffnen“ die Falle zweimal ziehen. Ein anderer Befehl (z. B. erst „Zu“, dann „Auf“) geht immer durch.
 
 ## 5. Eqiva-App zusätzlich nutzen
 
@@ -285,6 +287,15 @@ mit dieser Version kompilieren.
 Bei einem Alarm: **„Fingerprint Sabotage“** wird „an“ (in Home Assistant als Manipulationssensor für Automationen, z. B. Push-Nachricht), in der Web-App erscheint oben ein rotes Band **Sabotage-Alarm** (mit „Quittieren“), der Grund steht in „Letzte Aktion“ und „Ereignisse“, und – solange **„Bei Sabotage Fingerprint sperren“** an ist – öffnet kein Finger mehr. Der Alarm bleibt auch nach einem Neustart, bis Sie den Sensor geprüft und **„Sabotage quittieren“** gedrückt haben (unabhängig von „Fingerprint Sperre aufheben“). Was dabei im Sensor vorgefunden wurde, gilt danach als richtig. Wurde der Sensor bewusst getauscht: quittieren, dann „Alle Finger löschen“ und neu anlernen.
 
 > Die Prüfung läuft alle „Sabotage-Prüfintervall“ Minuten (Standard 10) und nur, wenn am Sensor gerade nichts passiert. Der Sensor wird dafür kurz eingeschaltet (Ring geht dabei kurz aus).
+
+## 12. Sicherung der Einstellungen
+
+Einstellungen → **Sicherung**:
+
+- **Exportieren** lädt eine Datei (`…-einstellungen-JJJJ-MM-TT.json`) herunter: Energiemodus, Zustandsfarben, Türgriff, Schlossantrieb, alle Fingerprint- und Sabotage-Einstellungen, die Zeitpläne und die Batterie-Daten (aktueller Satz und Verlauf).
+- **Nicht** in der Datei: User Key, Card Key, User-ID und MAC-Adresse. Mit der Datei lässt sich also keine Tür öffnen. Die Finger selbst liegen im Sensor und brauchen keine Sicherung.
+- **Einspielen**: Datei wählen, die App zeigt jede Änderung (alter → neuer Wert) und ob die Batterie-Daten übernommen werden sollen (abschaltbar). Erst mit **„Einspielen“** wird etwas geändert, und nur die Werte, die sich unterscheiden. Einträge, die es auf dem Gerät nicht gibt (z. B. Paket nicht aktiv), werden übersprungen.
+- Gedacht für: ESP getauscht, neu geflasht, Speicher neu aufgeteilt oder ein zweites Schloss gleich einrichten. Danach das Schloss bei Bedarf neu pairen (Abschnitt 2).
 
 ## Wenn es nicht klappt
 
